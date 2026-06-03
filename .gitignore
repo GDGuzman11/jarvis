@@ -1,0 +1,96 @@
+# =============================================================================
+# Jarvis — .gitignore
+# =============================================================================
+
+# --- Python ---
+.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# --- uv / pip ---
+# uv.lock IS committed (reproducible installs) — do not add it here
+
+# --- Environment / Secrets ---
+# NEVER commit a populated .env — only .env.example is safe
+.env
+.env.local
+.env.*.local
+*.secret
+*.key
+
+# --- Databases & generated data ---
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+data/
+
+# --- Vector store / ML model artifacts ---
+*.bin
+*.meta.json
+*.faiss
+*.index
+*.pkl
+*.npy
+
+# --- Audio / Media (generated at runtime) ---
+*.wav
+*.mp3
+*.ogg
+*.flac
+*.m4a
+
+# --- Frontend ---
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+frontend/.svelte-kit/
+node_modules/
+
+# --- Tauri ---
+frontend/src-tauri/target/
+frontend/src-tauri/WixTools/
+*.exe
+*.msi
+*.deb
+*.rpm
+*.AppImage
+*.dmg
+*.app
+
+# --- Rust ---
+target/
+Cargo.lock
+*.rlib
+
+# --- IDE / OS ---
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Claude Code local settings (machine-specific, not project config) ---
+.claude/settings.local.json
+
+# --- Logs ---
+*.log
+logs/

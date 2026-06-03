@@ -1,0 +1,33 @@
+# Pre-commit hooks for Jarvis
+# Install once:  .venv\Scripts\pre-commit install
+# Run on demand: .venv\Scripts\pre-commit run --all-files
+#
+# Ruff rev is pinned to match the ruff version in pyproject.toml's dev extra
+# (ruff>=0.8.0, currently 0.15.15 installed) so the hook and the local venv
+# lint with identical rules. Ruff config itself lives in [tool.ruff] in
+# pyproject.toml — these hooks only invoke it.
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.15
+    hooks:
+      # Linter — autofix what it safely can, fail on anything remaining.
+      - id: ruff
+        name: ruff (lint)
+        args: [--fix, --exit-non-zero-on-fix]
+      # Formatter — keep style consistent across the backend.
+      - id: ruff-format
+        name: ruff (format)
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      # Belt-and-suspenders against committing real secrets (see Security Rules).
+      - id: detect-private-key
