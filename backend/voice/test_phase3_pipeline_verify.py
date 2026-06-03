@@ -8,7 +8,7 @@ no API keys, no hardware):
 * Empty transcript short-circuits before Claude / speaking.
 * Spoken "stop" cancels an in-flight (slow) response and returns to idle.
 * Every state transition broadcasts a VoiceStateEvent with the right state.
-* Lifespan gating: voice_pipeline only starts when the Porcupine key exists.
+* Lifespan: voice_pipeline always starts (OpenWakeWord needs no API key).
 
 Run with:
     .venv\\Scripts\\python.exe -m pytest backend/voice/test_phase3_pipeline_verify.py -v
@@ -315,23 +315,17 @@ async def test_each_transition_broadcasts_voice_state_event(monkeypatch):
     await pipeline.stop()
 
 
-# --- Test 5: lifespan gating on the Porcupine credential ---------------------
+# --- Test 5: lifespan always starts the pipeline (no key required) -----------
 
 
-def _run_lifespan_and_get_pipeline(monkeypatch, has_key: bool):
-    """Drive the FastAPI app lifespan via Starlette TestClient (which actually
-    runs lifespan, unlike httpx ASGITransport) and return app.state.voice_pipeline.
+def _run_lifespan_and_get_pipeline(monkeypatch):
+    """Drive the FastAPI app lifespan via Starlette TestClient and return
+    app.state.voice_pipeline. Stubs out DB, vector-store, and VoicePipeline to
+    avoid real audio/network side effects.
     """
     import backend.main as main_mod
     from starlette.testclient import TestClient
 
-    monkeypatch.setattr(
-        main_mod.keystore,
-        "has_credential",
-        lambda username: has_key,
-    )
-
-    # Avoid real DB / vector-store / network side effects during startup.
     async def _noop_init_db():
         return None
 
@@ -341,7 +335,7 @@ def _run_lifespan_and_get_pipeline(monkeypatch, has_key: bool):
         def load(self):
             raise FileNotFoundError
 
-        def save(self):  # pragma: no cover - not reached when empty
+        def save(self):  # pragma: no cover
             pass
 
         def __len__(self):
@@ -349,34 +343,24 @@ def _run_lifespan_and_get_pipeline(monkeypatch, has_key: bool):
 
     monkeypatch.setattr(main_mod, "VectorStore", _FakeVectorStore)
 
-    captured = {"pipeline": "unset"}
+    class _FakePipeline:
+        def __init__(self, *a, **k):
+            pass
 
-    if has_key:
-        # Replace VoicePipeline with a fake so start()/stop() don't touch audio.
-        class _FakePipeline:
-            def __init__(self, *a, **k):
-                pass
+        async def start(self):
+            pass
 
-            async def start(self):
-                pass
+        async def stop(self):
+            pass
 
-            async def stop(self):
-                pass
-
-        monkeypatch.setattr(main_mod, "VoicePipeline", _FakePipeline)
+    monkeypatch.setattr(main_mod, "VoicePipeline", _FakePipeline)
 
     with TestClient(main_mod.app) as client:
         client.get("/health")
-        captured["pipeline"] = main_mod.app.state.voice_pipeline
-
-    return captured["pipeline"]
+        return main_mod.app.state.voice_pipeline
 
 
-def test_lifespan_skips_pipeline_without_key(monkeypatch):
-    result = _run_lifespan_and_get_pipeline(monkeypatch, has_key=False)
-    assert result is None, "voice_pipeline must be None when Porcupine key is absent"
-
-
-def test_lifespan_starts_pipeline_with_key(monkeypatch):
-    result = _run_lifespan_and_get_pipeline(monkeypatch, has_key=True)
-    assert result is not None, "voice_pipeline must be started when Porcupine key exists"
+def test_lifespan_always_starts_pipeline(monkeypatch):
+    """OpenWakeWord needs no API key — the pipeline starts unconditionally."""
+    result = _run_lifespan_and_get_pipeline(monkeypatch)
+    assert result is not None, "voice_pipeline must always be started"

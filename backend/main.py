@@ -28,7 +28,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.logging_config import configure_logging, get_logger
 from backend.memory.database import init_db
 from backend.memory.vector_store import VectorStore
-from backend.security import keystore
 from backend.voice.pipeline import VoicePipeline
 from backend.websocket_hub import hub
 
@@ -87,19 +86,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.vector_store = vector_store
 
     # Voice pipeline (Phase 3): wake -> listen -> STT -> Claude -> TTS -> play.
-    # Only arm it when the Porcupine wake-word key is configured; without it the
-    # detector would no-op anyway, so we skip the whole pipeline silently and the
-    # backend (HTTP, WebSocket, agents) runs unaffected. Start is non-blocking —
-    # detection runs in its own background task.
-    voice_pipeline: VoicePipeline | None = None
-    if keystore.has_credential(keystore.PORCUPINE_ACCESS_KEY):
-        voice_pipeline = VoicePipeline(hub=hub)
-        await voice_pipeline.start()
-        app.state.voice_pipeline = voice_pipeline
-        log.info("Voice pipeline started")
-    else:
-        app.state.voice_pipeline = None
-        log.info("Voice pipeline skipped (no Porcupine key configured)")
+    # OpenWakeWord needs no API key, so the pipeline always starts. The detector
+    # disables itself gracefully if the openwakeword library is not installed.
+    # Start is non-blocking — detection runs in its own background task.
+    voice_pipeline = VoicePipeline(hub=hub)
+    await voice_pipeline.start()
+    app.state.voice_pipeline = voice_pipeline
+    log.info("Voice pipeline started")
 
     try:
         yield
@@ -107,9 +100,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Shutdown / cleanup. Stop the voice pipeline (cancels any in-flight
         # turn), persist semantic memory, then close every live WebSocket so
         # clients see a clean disconnect.
-        if voice_pipeline is not None:
-            await voice_pipeline.stop()
-            log.info("Voice pipeline stopped")
+        await voice_pipeline.stop()
+        log.info("Voice pipeline stopped")
         if len(vector_store):
             vector_store.save()
             log.info("Vector store saved", entries=len(vector_store))

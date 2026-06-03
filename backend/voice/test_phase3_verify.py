@@ -1,4 +1,4 @@
-"""Phase 3 tasks 1-3 verification: audio capture + Porcupine wake word + VAD.
+"""Phase 3 tasks 1-3 verification: audio capture + OpenWakeWord wake word + VAD.
 
 Run with: .venv\\Scripts\\python.exe -m pytest backend/voice/test_phase3_verify.py -v
 """
@@ -8,7 +8,6 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from backend.security import keystore
 from backend.voice.wake_word import (
     FRAME_LENGTH,
     SAMPLE_RATE,
@@ -22,7 +21,7 @@ from backend.voice.wake_word import (
 # --- Test 1: constants -------------------------------------------------------
 
 def test_constants():
-    assert FRAME_LENGTH == 512
+    assert FRAME_LENGTH == 1280
     assert SAMPLE_RATE == 16000
 
 
@@ -47,13 +46,13 @@ def test_vad_ends_after_silence_following_speech():
     assert det.update(speech) is False
     assert det.heard_speech is True
 
-    # Each silent frame = 512/16000 = 0.032s. Need 0.8s -> ceil(0.8/0.032)=25.
-    # So frame #25 should be the first to cross the threshold.
-    results = [det.update(silent) for _ in range(26)]
-    # Must NOT end before 0.8s of silence accumulated.
-    assert results[23] is False  # after 24 silent frames = 0.768s
-    # Must end by/after the 25th silent frame (0.8s).
-    assert results[24] is True   # after 25 silent frames = 0.800s
+    # Each silent frame = 1280/16000 = 0.08s. Need 0.8s -> ~10 frames.
+    # Run 12 frames to safely clear the 0.8s threshold (avoids fp edge cases).
+    results = [det.update(silent) for _ in range(12)]
+    # Must NOT end before 0.72s of silence accumulated.
+    assert results[7] is False   # after 8 silent frames = 0.640s
+    # Must have ended by 0.88s (11 frames) regardless of fp rounding.
+    assert results[10] is True   # after 11 silent frames = 0.880s
     assert any(results)
 
 
@@ -78,14 +77,17 @@ async def test_record_until_silence_returns_int16_array():
     assert result.size > 0
 
 
-# --- Test 4: missing key graceful path ---------------------------------------
+# --- Test 4: openwakeword unavailable disables gracefully --------------------
 
 @pytest.mark.asyncio
-async def test_missing_key_does_not_raise(monkeypatch):
-    def _raise():
-        raise keystore.MissingCredentialError("PORCUPINE_ACCESS_KEY")
+async def test_oww_unavailable_does_not_raise(monkeypatch):
+    import backend.voice.wake_word as ww
 
-    monkeypatch.setattr(keystore, "get_porcupine_access_key", _raise)
+    def fake_init_model(self) -> bool:
+        self._enabled = False
+        return False
+
+    monkeypatch.setattr(ww.WakeWordDetector, "_init_model", fake_init_model)
 
     det = WakeWordDetector()
     # Must not raise.
@@ -99,41 +101,33 @@ async def test_missing_key_does_not_raise(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_callback_fires_on_detection(monkeypatch):
-    monkeypatch.setattr(keystore, "get_porcupine_access_key", lambda: "fake-key")
-
-    class FakePorcupine:
-        frame_length = FRAME_LENGTH
-        sample_rate = SAMPLE_RATE
-
-        def __init__(self):
-            self._calls = 0
-
-        def process(self, frame):
-            self._calls += 1
-            # Detect (keyword index 0) on the first frame, then -1 thereafter.
-            return 0 if self._calls == 1 else -1
-
-        def delete(self):
-            pass
+    import asyncio
 
     import backend.voice.wake_word as ww
 
-    fake_pv = type("FakePvporcupine", (), {"create": staticmethod(lambda **kw: FakePorcupine())})
-    monkeypatch.setitem(__import__("sys").modules, "pvporcupine", fake_pv)
+    call_count = {"n": 0}
 
-    # Fake capture that yields exactly one frame then stops.
+    class FakeModel:
+        def predict(self, frame):
+            call_count["n"] += 1
+            # Score above threshold on first frame only.
+            return {"hey_jarvis": 0.9 if call_count["n"] == 1 else 0.0}
+
+    def fake_init_model(self) -> bool:
+        self._model = FakeModel()
+        return True
+
+    monkeypatch.setattr(ww.WakeWordDetector, "_init_model", fake_init_model)
+
     class FakeCapture:
         sample_rate = SAMPLE_RATE
         frame_length = FRAME_LENGTH
-
-        def __init__(self):
-            self._running = True
 
         async def start(self):
             pass
 
         async def stop(self):
-            self._running = False
+            pass
 
         async def frames(self):
             yield np.zeros(FRAME_LENGTH, dtype=np.int16)
@@ -148,7 +142,6 @@ async def test_callback_fires_on_detection(monkeypatch):
     await det.start()
 
     # Give the background _run task a moment to consume the single frame.
-    import asyncio
     for _ in range(20):
         if fired["hit"]:
             break

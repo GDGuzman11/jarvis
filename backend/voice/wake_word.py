@@ -1,7 +1,7 @@
-"""Continuous audio capture + Porcupine wake-word detection + VAD (Phase 3).
+"""Continuous audio capture + OpenWakeWord wake-word detection + VAD (Phase 3).
 
 This module owns the *front* of the Jarvis voice pipeline — the part that runs
-forever in the background, listening for the user to say "Jarvis", and then
+forever in the background, listening for the user to say "hey Jarvis", and then
 capturing the utterance that follows until they stop speaking.
 
 It is built from three cooperating pieces, all living here because they share
@@ -12,16 +12,15 @@ one audio stream and one frame format:
    ``sounddevice``. sounddevice delivers audio on its *own* PortAudio thread,
    so the loop bridges that thread onto the asyncio event loop via an
    :class:`asyncio.Queue`. Consumers ``await`` :meth:`AudioCaptureLoop.frames`
-   to receive 16-bit PCM frames of exactly :data:`FRAME_LENGTH` samples — the
-   block size Porcupine requires.
+   to receive 16-bit PCM frames of exactly :data:`FRAME_LENGTH` samples.
 
 2. :class:`WakeWordDetector`
-   Wraps ``pvporcupine`` with the built-in ``"jarvis"`` keyword. It consumes
-   frames from the capture loop, feeds each to Porcupine, and invokes a
-   registered async callback when the wake word fires. If the Porcupine access
-   key is missing from the keyring it logs a warning and disables itself rather
-   than crashing the backend — Jarvis can still run (text path, agents) without
-   the wake word.
+   Wraps ``openwakeword`` with the built-in ``"hey_jarvis"`` model. It consumes
+   frames from the capture loop, feeds each to the model, and invokes a
+   registered async callback when the detection score exceeds the threshold.
+   No API key is required — the library is fully open-source (Apache 2.0) and
+   runs entirely locally. If the library is not installed it logs a warning and
+   disables itself rather than crashing the backend.
 
 3. :func:`record_until_silence` + :class:`SilenceDetector`
    Voice-activity detection. After the wake word fires the pipeline switches to
@@ -30,12 +29,12 @@ one audio stream and one frame format:
    :data:`SILENCE_DURATION_S` consecutive seconds — at which point the buffered
    speech is returned as a single ``numpy`` array for the STT stage.
 
-Audio format (fixed across the whole pipeline, matching Porcupine + Whisper):
+Audio format (fixed across the whole pipeline, matching OpenWakeWord + Whisper):
 
 * Sample rate : :data:`SAMPLE_RATE` (16 kHz)
 * Channels    : 1 (mono)
 * Sample dtype: ``int16`` (16-bit signed PCM)
-* Frame size  : :data:`FRAME_LENGTH` (512 samples ≈ 32 ms per frame)
+* Frame size  : :data:`FRAME_LENGTH` (1280 samples = 80 ms per frame)
 """
 
 from __future__ import annotations
@@ -46,26 +45,29 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 import numpy as np
 
 from backend.logging_config import get_logger
-from backend.security import keystore
 
 log = get_logger(__name__)
 
 # --- Audio format constants --------------------------------------------------
 
-# Porcupine (and faster-whisper's base.en) both operate at 16 kHz mono.
+# OpenWakeWord (and faster-whisper's base.en) both operate at 16 kHz mono.
 SAMPLE_RATE: int = 16000
 
-# Mono capture — Porcupine expects a single channel.
+# Mono capture.
 CHANNELS: int = 1
 
-# Samples per frame. Porcupine's ``frame_length`` is fixed at 512 for the
-# default models; we capture in exactly that block size so every captured frame
-# can be passed straight to ``Porcupine.process`` with no buffering/repacking.
-FRAME_LENGTH: int = 512
+# Samples per frame. 1280 samples = 80 ms at 16 kHz — OpenWakeWord's optimal
+# chunk size; each call to model.predict() advances its mel-spectrogram buffer
+# by exactly 8 steps (10 ms each), giving fine-grained, low-latency detection.
+FRAME_LENGTH: int = 1280
 
-# Built-in Porcupine keyword. "jarvis" ships with pvporcupine, so no custom
-# ``.ppn`` keyword file (or its access-key-bound download) is required.
-KEYWORD: str = "jarvis"
+# Built-in OpenWakeWord model name. "hey_jarvis" ships with the library and is
+# downloaded automatically on first use — no API key or custom file required.
+KEYWORD: str = "hey_jarvis"
+
+# Detection score threshold. Scores range [0, 1]; 0.5 is the recommended
+# default for the "hey_jarvis" model. Raise to reduce false positives.
+WAKE_THRESHOLD: float = 0.5
 
 # --- Voice-activity-detection constants --------------------------------------
 
@@ -352,17 +354,16 @@ async def record_until_silence(
 
 
 class WakeWordDetector:
-    """Porcupine "Jarvis" wake-word detector over a continuous audio stream.
+    """OpenWakeWord "hey Jarvis" detector over a continuous audio stream.
 
     Owns (or shares) an :class:`AudioCaptureLoop`, runs every captured frame
-    through Porcupine, and fires a registered async callback when the keyword is
-    detected. Designed to run as a long-lived asyncio background task started in
-    the FastAPI lifespan.
+    through the ``openwakeword`` model, and fires a registered async callback
+    when the detection score crosses :data:`WAKE_THRESHOLD`. Designed to run as
+    a long-lived asyncio background task started in the FastAPI lifespan.
 
-    Resilience: if the Porcupine access key is absent from the keyring, the
-    detector logs a warning and stays disabled — :meth:`start` becomes a no-op —
-    so a missing key degrades the wake word gracefully instead of crashing the
-    whole backend.
+    No API key is required — OpenWakeWord is fully open-source (Apache 2.0) and
+    runs entirely locally. If the library is not installed it logs a warning and
+    stays disabled rather than crashing the backend.
 
     Usage::
 
@@ -378,11 +379,13 @@ class WakeWordDetector:
         *,
         capture: AudioCaptureLoop | None = None,
         keyword: str = KEYWORD,
+        threshold: float = WAKE_THRESHOLD,
     ) -> None:
         self.keyword = keyword
+        self.threshold = threshold
         self._owns_capture = capture is None
         self._capture = capture or AudioCaptureLoop()
-        self._porcupine: object | None = None  # pvporcupine.Porcupine
+        self._model: object | None = None  # openwakeword.model.Model
         self._callback: WakeCallback | None = None
         self._task: asyncio.Task[None] | None = None
         self._running: bool = False
@@ -394,66 +397,50 @@ class WakeWordDetector:
 
     @property
     def is_enabled(self) -> bool:
-        """False once a missing access key has disabled the detector."""
+        """False if the openwakeword library failed to load at start time."""
         return self._enabled
 
     def on_detected(self, callback: WakeCallback) -> None:
         """Register the async callback fired on each wake-word detection."""
         self._callback = callback
 
-    def _init_porcupine(self) -> bool:
-        """Create the Porcupine handle. Returns False (disabled) if no key.
+    def _init_model(self) -> bool:
+        """Load the OpenWakeWord model. Returns False (disabled) on ImportError.
 
-        A missing access key is an expected, recoverable condition (the user
-        simply hasn't configured Porcupine yet), so we warn and disable rather
-        than propagate. Any *other* construction error is unexpected and is
-        re-raised.
+        The library downloads its pretrained models automatically on first use
+        (from a GitHub release asset). Any subsequent load is instant from the
+        local cache. ImportError means the package is not installed and is the
+        only expected failure mode; all other errors are re-raised.
         """
         try:
-            access_key = keystore.get_porcupine_access_key()
-        except keystore.MissingCredentialError:
+            import openwakeword
+            import openwakeword.utils
+            from openwakeword.model import Model
+        except ImportError:
             log.warning(
-                "wake_word_disabled_no_key",
-                reason="PORCUPINE_ACCESS_KEY not set in keyring",
-                hint="store it via keystore.set_porcupine_access_key(...)",
+                "wake_word_disabled_no_openwakeword",
+                reason="openwakeword library not installed",
+                hint="pip install openwakeword",
             )
             self._enabled = False
             return False
 
-        import pvporcupine
-
-        self._porcupine = pvporcupine.create(
-            access_key=access_key,
-            keywords=[self.keyword],
+        openwakeword.utils.download_models()
+        self._model = Model(
+            wakeword_models=[self.keyword],
+            inference_framework="onnx",
         )
-        # Sanity-check the audio format matches what Porcupine expects so frames
-        # line up exactly with ``process``.
-        expected_len = self._porcupine.frame_length
-        expected_rate = self._porcupine.sample_rate
-        if expected_len != self._capture.frame_length:
-            log.warning(
-                "wake_word_frame_length_mismatch",
-                porcupine=expected_len,
-                capture=self._capture.frame_length,
-            )
-        if expected_rate != self._capture.sample_rate:
-            log.warning(
-                "wake_word_sample_rate_mismatch",
-                porcupine=expected_rate,
-                capture=self._capture.sample_rate,
-            )
         return True
 
     async def start(self) -> None:
         """Start capture + detection as a background task. Idempotent.
 
-        No-op (with a warning already logged) when the access key is missing.
+        No-op (with a warning already logged) when openwakeword is not installed.
         """
         if self._running:
             return
 
-        if not self._init_porcupine():
-            # Disabled: leave the backend running without a wake word.
+        if not self._init_model():
             return
 
         if self._owns_capture:
@@ -461,20 +448,20 @@ class WakeWordDetector:
 
         self._running = True
         self._task = asyncio.create_task(self._run(), name="wake-word-detector")
-        log.info("wake_word_started", keyword=self.keyword)
+        log.info("wake_word_started", keyword=self.keyword, threshold=self.threshold)
 
     async def _run(self) -> None:
-        """Main loop: feed each captured frame to Porcupine, fire on detection."""
-        porcupine = self._porcupine
-        assert porcupine is not None  # guaranteed by start() gating on _init
+        """Main loop: score each captured frame, fire on threshold crossing."""
+        model = self._model
+        assert model is not None  # guaranteed by start() gating on _init_model
         try:
             async for frame in self._capture.frames():
                 if not self._running:
                     break
-                # Porcupine wants a list/sequence of ``frame_length`` int16s.
-                result = porcupine.process(frame)
-                if result >= 0:
-                    log.info("wake_word_detected", keyword=self.keyword)
+                prediction: dict[str, float] = model.predict(frame)
+                score = prediction.get(self.keyword, 0.0)
+                if score >= self.threshold:
+                    log.info("wake_word_detected", keyword=self.keyword, score=round(score, 3))
                     await self._fire()
         except asyncio.CancelledError:
             raise
@@ -493,7 +480,7 @@ class WakeWordDetector:
 
     async def stop(self) -> None:
         """Stop detection, cancel the task, and release resources. Idempotent."""
-        if not self._running and self._task is None and self._porcupine is None:
+        if not self._running and self._task is None and self._model is None:
             return
         self._running = False
 
@@ -509,14 +496,7 @@ class WakeWordDetector:
         if self._owns_capture:
             await self._capture.stop()
 
-        porcupine = self._porcupine
-        self._porcupine = None
-        if porcupine is not None:
-            try:
-                porcupine.delete()
-            except Exception:  # noqa: BLE001 — best-effort cleanup
-                log.warning("wake_word_porcupine_delete_error", exc_info=True)
-
+        self._model = None
         log.info("wake_word_stopped")
 
 
@@ -525,6 +505,7 @@ __all__ = [
     "CHANNELS",
     "FRAME_LENGTH",
     "KEYWORD",
+    "WAKE_THRESHOLD",
     "SILENCE_RMS_THRESHOLD",
     "SILENCE_DURATION_S",
     "MAX_UTTERANCE_S",

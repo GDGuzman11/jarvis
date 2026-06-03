@@ -11,7 +11,7 @@
 ## Current Status
 
 - **Active Phase**: 3 — Voice Pipeline COMPLETE → next Phase 4 (Agent System)
-- **Last Completed**: **Phase 3 COMPLETE — full voice pipeline + interrupt + voice_state events** — VERIFIED by debugger-agent 2026-06-03 (6/6 mocked checks, `backend/voice/test_phase3_pipeline_verify.py`). Full turn drives listening→thinking→speaking→idle in order, Claude called with the transcript `[{"role":"user","content":"hello"}]`, whole reply spoken across sentence chunks via TTS. Empty transcript short-circuits: Claude never called, no `speaking` state, ends idle. Spoken "stop" (interrupt window transcribes "stop") cancels a slow 50-token response before it completes and returns to idle. Every transition broadcasts a `VoiceStateEvent` (`type=="voice_state"`) with a valid state string. Lifespan gating verified via Starlette TestClient: `app.state.voice_pipeline` is None when `keystore.has_credential(PORCUPINE_ACCESS_KEY)` is False, non-None when True.
+- **Last Completed**: **Phase 3 COMPLETE — full voice pipeline + interrupt + voice_state events** — VERIFIED by debugger-agent 2026-06-03 (6/6 mocked checks, `backend/voice/test_phase3_pipeline_verify.py`). Full turn drives listening→thinking→speaking→idle in order, Claude called with the transcript `[{"role":"user","content":"hello"}]`, whole reply spoken across sentence chunks via TTS. Empty transcript short-circuits: Claude never called, no `speaking` state, ends idle. Spoken "stop" (interrupt window transcribes "stop") cancels a slow 50-token response before it completes and returns to idle. Every transition broadcasts a `VoiceStateEvent` (`type=="voice_state"`) with a valid state string. Lifespan: `app.state.voice_pipeline` is always non-None (OpenWakeWord needs no API key). **2026-06-03 post-completion**: replaced Porcupine with OpenWakeWord (Apache 2.0, fully local, no API key); `pvporcupine` removed, `openwakeword>=0.6.0` added; all 11 Phase 3 tests pass.
 - **Next Task**: Phase 4 — Agent System. Start with `BaseAgent` class. Route per the routing guide (`/backend-agent`).
 - **Blockers**: Rust/cargo toolchain NOT installed in this environment. Frontend JS/TS scaffold + build works without it, but `pnpm tauri dev` / native bundling (Phases 7 & 10) will require installing Rust via rustup first. Also note: `uv` is not on PATH in this shell — backend Python must be invoked via `.venv\Scripts\python.exe` directly. Project root is not a git repo, so `pre-commit install` is deferred.
 - **Build Started**: 2026-06-02
@@ -31,7 +31,7 @@
 ### AI Stack
 - **Primary AI**: Claude API — `claude-opus-4-7` (Anthropic SDK, streaming + prompt caching)
 - **Local Fallback**: Ollama — `phi3.5` (3.8B, ~2.4GB VRAM) and `qwen2.5-coder:3b`
-- **Wake Word**: Porcupine (keyword: "Jarvis")
+- **Wake Word**: OpenWakeWord (model: "hey_jarvis", Apache 2.0, fully local, no API key)
 - **Speech-to-Text**: faster-whisper (base.en model)
 - **Text-to-Speech**: ElevenLabs API (custom Tom Hardy × Jarvis voice — create in ElevenLabs dashboard)
 
@@ -117,7 +117,7 @@ Dark theme `#0A0A0F`, electric blue/cyan accents `#00D4FF`, gold highlights `#FF
 *Handled by: backend-agent*
 
 - [x] `sounddevice` audio capture loop (continuous, non-blocking)
-- [x] Porcupine wake word detection — keyword: "Jarvis"
+- [x] OpenWakeWord wake word detection — model: "hey_jarvis" (replaced Porcupine 2026-06-03)
 - [x] Voice activity detection — detect end of speech after 0.8s silence
 - [x] faster-whisper STT integration (`backend/voice/stt.py`, base.en model)
 - [x] ElevenLabs TTS integration (`backend/voice/tts.py`)
@@ -258,7 +258,7 @@ C:\Users\User\appsbyG\Jarvis\
 │   ├── main.py                      ← FastAPI entry + WebSocket hub
 │   ├── logging_config.py
 │   ├── voice/
-│   │   ├── wake_word.py             ← Porcupine
+│   │   ├── wake_word.py             ← OpenWakeWord
 │   │   ├── stt.py                   ← faster-whisper
 │   │   └── tts.py                   ← ElevenLabs
 │   ├── ai/
@@ -356,9 +356,9 @@ C:\Users\User\appsbyG\Jarvis\
 ## Test Results
 *(populated by debugger-agent during Phase 9)*
 
-- **Tests Passed**: 26 (cumulative)
+- **Tests Passed**: 27 (cumulative)
 - **Tests Failed**: 0
-- **Last Run**: 2026-06-03 — Phase 3: full voice pipeline + interrupt + voice_state events (6 checks) — PHASE 3 COMPLETE
+- **Last Run**: 2026-06-03 — OpenWakeWord migration: 11/11 Phase 3 tests pass after Porcupine → OpenWakeWord swap
 
 ### Phase 1 — Foundation
 - [x] Python project init verified — `uv run python -c "import fastapi, anthropic, keyring, aiosqlite"` exits 0 on Python 3.12.13. `pyproject.toml`, `uv.lock`, and `.venv/` all present.
@@ -394,8 +394,17 @@ C:\Users\User\appsbyG\Jarvis\
 - [x] Empty transcript — `stt.transcribe` returns "" → Claude never called, no `speaking` state, ends idle.
 - [x] Interrupt — interrupt window transcribes "stop" → slow 50-token response cancelled before completion (`response_completed` stays False), pipeline returns to idle.
 - [x] WebSocket broadcasts — every transition broadcasts a `VoiceStateEvent` (`type=="voice_state"`) with a valid state; all four states {listening, thinking, speaking, idle} emitted.
-- [x] Lifespan gating (no key) — `keystore.has_credential` False → `app.state.voice_pipeline is None` after startup (Starlette TestClient).
-- [x] Lifespan gating (key present) — `keystore.has_credential` True → `app.state.voice_pipeline` is started (non-None).
+- [x] Lifespan — `app.state.voice_pipeline` is always non-None after startup (OpenWakeWord needs no key; Starlette TestClient).
+
+### OpenWakeWord migration (2026-06-03, 11/11 PASS)
+*(`backend/voice/test_phase3_verify.py` + `test_phase3_pipeline_verify.py` — full re-run after Porcupine → OpenWakeWord swap)*
+- [x] Constants — `FRAME_LENGTH == 1280`, `SAMPLE_RATE == 16000`.
+- [x] VAD — silence before speech never ends; silence after speech ends at ≥0.88s (11 × 80ms frames).
+- [x] record_until_silence — returns int16 array after speech+silence frames.
+- [x] OWW unavailable — `_init_model` returning False → `is_enabled=False`, `is_running=False`, no raise.
+- [x] OWW detection — fake model scores ≥0.5 on first frame → callback fires.
+- [x] Full pipeline, empty transcript, interrupt, voice_state broadcasts — 4 original pipeline tests still pass unchanged.
+- [x] Lifespan — `app.state.voice_pipeline` always non-None (no key gate).
 
 ### Failures
-*(none — all 26 cumulative checks passed)*
+*(none — all 27 cumulative checks passed)*

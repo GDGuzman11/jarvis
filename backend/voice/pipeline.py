@@ -6,7 +6,7 @@ Jarvis":
 
     wake word -> listen -> transcribe -> reason (Claude) -> speak -> idle
 
-The front of the pipeline (continuous capture, Porcupine wake-word detection,
+The front of the pipeline (continuous capture, OpenWakeWord detection,
 and silence-bounded recording) lives in :mod:`backend.voice.wake_word`; the
 transcription and synthesis stages live in :mod:`backend.voice.stt` and
 :mod:`backend.voice.tts`. :class:`VoicePipeline` is the conductor: it owns a
@@ -45,10 +45,10 @@ mid-sentence the way you would a person.
 
 Resilience
 ----------
-A missing Porcupine key disables the wake word gracefully (the detector already
-no-ops in that case), so :meth:`VoicePipeline.start` is always safe to call —
-the backend runs fine without voice. Errors inside a turn are logged and always
-unwind back to ``idle`` rather than crashing the loop.
+If the openwakeword library is not installed the detector disables itself
+gracefully, so :meth:`VoicePipeline.start` is always safe to call — the backend
+runs fine without voice. Errors inside a turn are logged and always unwind back
+to ``idle`` rather than crashing the loop.
 """
 
 from __future__ import annotations
@@ -76,8 +76,7 @@ log = get_logger(__name__)
 # --- Interrupt configuration -------------------------------------------------
 
 # The single keyword that cancels an in-flight response. A plain substring match
-# on the interrupt window's transcript keeps this cheap and predictable; we do
-# not need a second Porcupine keyword (which would require a custom .ppn file).
+# on the interrupt window's transcript keeps this cheap and predictable.
 INTERRUPT_KEYWORD: str = "stop"
 
 # How long each interrupt-listening window records before we transcribe it and
@@ -212,8 +211,8 @@ class VoicePipeline:
     async def start(self) -> None:
         """Arm the wake word and begin listening. Idempotent.
 
-        Returns immediately; the loop runs in the detector's background task. If
-        the Porcupine key is missing the detector disables itself (a no-op start),
+        Returns immediately; the loop runs in the detector's background task.
+        If openwakeword is not installed the detector disables itself quietly,
         so this is always safe to call.
         """
         if self._running:

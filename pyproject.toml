@@ -23,7 +23,7 @@ dependencies = [
     # --- Voice pipeline ---
     "sounddevice>=0.5.1",
     "faster-whisper>=1.1.0",
-    "pvporcupine>=3.0.3",
+    "openwakeword>=0.6.0",
     "elevenlabs>=1.50.0",
     # --- Integrations ---
     "slack-bolt>=1.21.0",
@@ -65,3 +65,11 @@ ignore = ["S101"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.uv]
+# openwakeword declares tflite-runtime as a Linux-only dep, but tflite-runtime
+# has no Python 3.12 wheels. On Windows we use the ONNX inference path instead.
+# This override restricts the dep to Linux + Python < 3.12 so uv sync succeeds.
+override-dependencies = [
+    "tflite-runtime>=0.1.0 ; sys_platform == 'linux' and python_version < '3.12'",
+]

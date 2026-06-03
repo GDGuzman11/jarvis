@@ -35,7 +35,6 @@ SERVICE_NAME: str = "jarvis"
 ANTHROPIC_API_KEY: str = "ANTHROPIC_API_KEY"
 ELEVENLABS_API_KEY: str = "ELEVENLABS_API_KEY"
 ELEVENLABS_VOICE_ID: str = "ELEVENLABS_VOICE_ID"
-PORCUPINE_ACCESS_KEY: str = "PORCUPINE_ACCESS_KEY"
 SLACK_BOT_TOKEN: str = "SLACK_BOT_TOKEN"
 SLACK_APP_TOKEN: str = "SLACK_APP_TOKEN"
 SLACK_SIGNING_SECRET: str = "SLACK_SIGNING_SECRET"
@@ -50,7 +49,6 @@ ALL_CREDENTIALS: tuple[str, ...] = (
     ANTHROPIC_API_KEY,
     ELEVENLABS_API_KEY,
     ELEVENLABS_VOICE_ID,
-    PORCUPINE_ACCESS_KEY,
     SLACK_BOT_TOKEN,
     SLACK_APP_TOKEN,
     SLACK_SIGNING_SECRET,
@@ -139,17 +137,6 @@ def get_elevenlabs_voice_id() -> str:
 
 def set_elevenlabs_voice_id(value: str) -> None:
     _set(ELEVENLABS_VOICE_ID, value)
-
-
-# ---------------------------------------------------------------------------
-# Porcupine (wake word)
-# ---------------------------------------------------------------------------
-def get_porcupine_access_key() -> str:
-    return _get(PORCUPINE_ACCESS_KEY)
-
-
-def set_porcupine_access_key(value: str) -> None:
-    _set(PORCUPINE_ACCESS_KEY, value)
 
 
 # ---------------------------------------------------------------------------
