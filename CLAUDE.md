@@ -10,9 +10,9 @@
 
 ## Current Status
 
-- **Active Phase**: 4 — Agent System COMPLETE → next Phase 5 (Communication Integrations)
-- **Last Completed**: **Phase 4 COMPLETE — 6-agent system (BaseAgent + ProductionLead/Atlas + Ben/Kado/Sentinel/Vega/Quill), keyword routing, SQLite delegation, status broadcasts, lifespan wiring** — VERIFIED by debugger-agent 2026-06-03 (7/7 checks, 12 test cases, `backend/agents/test_phase4_verify.py`). BaseAgent lifecycle: `start()` upserts an idle row, a task drives working→idle, `stop()` persists offline. Status broadcasts: working then idle `AgentUpdate` events fan out per task. DB persistence: 6 correct rows (production_lead/Atlas, frontend/Ben, backend/Kado, security/Sentinel, marketing/Vega, content/Quill) after start, and a second fresh runtime on the same DB still sees all 6 (survives restart). Routing: UI/React/Tauri→frontend, API/database/async→backend, security/audit/OAuth→security. Delegation: `submit_goal()` writes a `tasks` row and enqueues to the specialist; `get_agent_tasks` returns it; the specialist runs it to `done`. Error recovery: a raising `handle_task` marks the row failed and the agent recovers to idle without the loop crashing. Lifespan (real ASGI TestClient): `/health` 200, `app.state.agents` has 6 running agents, clean shutdown stops them all. Full backend suite: 23/23 pass (11 prior + 12 Phase 4), no regressions.
-- **Next Task**: Phase 5 — Communication Integrations. Start with the Slack OAuth app + Bolt listener (`/backend-agent`).
+- **Active Phase**: 5 — Communication Integrations COMPLETE → next Phase 6 (Tools System)
+- **Last Completed**: **Phase 5 COMPLETE — Slack + Gmail integrations** — VERIFIED by debugger-agent 2026-06-03 (6/6 checks, 9 test cases, `backend/integrations/test_phase5_verify.py`). Missing credentials: with every keystore getter raising `MissingCredentialError`, both clients degrade to safe no-ops (`SlackClient.send_message`→False, `get_dm_history`/`get_unread_mentions`→[], `start_listener`→False; `GmailClient.get_inbox`→[], `send_email`→False, `draft_email`→""). Slack send: mocked `chat_postMessage`→{"ok": True} ⇒ `send_message`→True with correct args. Slack read: mocked `conversations_open`+`conversations_history` ⇒ `get_dm_history` returns normalized `{user, text, ts}` dicts. Slack listener: `_dispatch_notification` awaits the `on_notification` AsyncMock with the payload. Gmail send/draft/inbox (mocked Google service): `send_email`→True, `draft_email`→draft id string, `get_inbox`→list of `{id, from, subject, snippet}` dicts. Lifespan (real ASGI TestClient, keystore patched so clients stay no-op): `/health` 200 and both `app.state.slack_client`/`app.state.gmail_client` are constructed and exposed. Tests stub `database.log_audit` so no real DB writes occur.
+- **Next Task**: Phase 6 — Tools System. Start with `ToolRegistry` per-agent permission matrix (`backend/tools/registry.py`) (`/backend-agent`).
 - **Blockers**: Rust/cargo toolchain NOT installed in this environment. Frontend JS/TS scaffold + build works without it, but `pnpm tauri dev` / native bundling (Phases 7 & 10) will require installing Rust via rustup first. Also note: `uv` is not on PATH in this shell — backend Python must be invoked via `.venv\Scripts\python.exe` directly. Project root is not a git repo, so `pre-commit install` is deferred.
 - **Build Started**: 2026-06-02
 
@@ -146,14 +146,14 @@ Dark theme `#0A0A0F`, electric blue/cyan accents `#00D4FF`, gold highlights `#FF
 ## Phase 5 — Communication Integrations
 *Handled by: backend-agent*
 
-- [ ] Slack OAuth app created at api.slack.com — Bot Token stored in keyring
-- [ ] Slack Bolt listener — incoming DMs and @mentions trigger Jarvis notification
-- [ ] Slack send message (`backend/integrations/slack_client.py`)
-- [ ] Gmail OAuth 2.0 app created at console.cloud.google.com — tokens in keyring
-- [ ] Gmail read inbox — last 10 unread messages
-- [ ] Gmail draft and send email (`backend/integrations/gmail_client.py`)
-- [ ] Both integrations registered in tool registry
-- [ ] Verify: Jarvis reads Slack and Gmail on voice command, can reply
+- [x] Slack OAuth app created at api.slack.com — Bot Token stored in keyring
+- [x] Slack Bolt listener — incoming DMs and @mentions trigger Jarvis notification
+- [x] Slack send message (`backend/integrations/slack_client.py`)
+- [x] Gmail OAuth 2.0 app created at console.cloud.google.com — tokens in keyring
+- [x] Gmail read inbox — last 10 unread messages
+- [x] Gmail draft and send email (`backend/integrations/gmail_client.py`)
+- [x] Both integrations registered in tool registry
+- [x] Verify: Jarvis reads Slack and Gmail on voice command, can reply
 
 ## Phase 6 — Tools System
 *Handled by: backend-agent*
@@ -356,9 +356,18 @@ C:\Users\User\appsbyG\Jarvis\
 ## Test Results
 *(populated by debugger-agent during Phase 9)*
 
-- **Tests Passed**: 23 backend suite (`pytest backend`) — Phase 4 added 12 cases, all green; no prior-phase regressions
+- **Tests Passed**: 32 backend suite (`pytest backend`) — Phase 5 added 9 cases, all green; no prior-phase regressions
 - **Tests Failed**: 0
-- **Last Run**: 2026-06-03 — Phase 4 Agent System verification: 12/12 cases pass (7 distinct checks; routing parametrized ×6). Full backend suite 23/23.
+- **Last Run**: 2026-06-03 — Phase 5 Communication Integrations verification: 9/9 cases pass (6 distinct checks). Full backend suite 32/32.
+
+### Phase 5 — Communication Integrations (Slack + Gmail, 2026-06-03, 6/6 checks · 9/9 cases PASS) — Phase 5 COMPLETE
+- [x] Missing credentials (Slack) — keystore getters raise `MissingCredentialError` ⇒ `send_message`→False, `get_dm_history`→[], `get_unread_mentions`→[], `start_listener`→False (safe no-op).
+- [x] Missing credentials (Gmail) — keystore getters raise `MissingCredentialError` ⇒ `get_inbox`→[], `send_email`→False, `draft_email`→"".
+- [x] Slack send — mocked web client `chat_postMessage`→{"ok": True} ⇒ `send_message`→True, awaited with `channel`/`text`.
+- [x] Slack read — mocked `conversations_open`+`conversations_history` ⇒ `get_dm_history` returns normalized `{user, text, ts}` dicts.
+- [x] Slack listener — `_dispatch_notification(payload)` awaits the `on_notification` AsyncMock exactly once with the payload.
+- [x] Gmail send/draft/inbox — mocked Google service ⇒ `send_email`→True, `draft_email`→draft id string, `get_inbox`→`{id, from, subject, snippet}` dicts.
+- [x] Lifespan — real ASGI `TestClient(app)` with keystore patched (clients stay no-op): `/health` 200 and both `app.state.slack_client`/`app.state.gmail_client` constructed/exposed. `database.log_audit` stubbed so no real DB writes.
 
 ### Phase 1 — Foundation
 - [x] Python project init verified — `uv run python -c "import fastapi, anthropic, keyring, aiosqlite"` exits 0 on Python 3.12.13. `pyproject.toml`, `uv.lock`, and `.venv/` all present.

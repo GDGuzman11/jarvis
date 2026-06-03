@@ -21,11 +21,14 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.agents.runtime import AgentRuntime
+from backend.integrations.gmail_client import GmailClient
+from backend.integrations.slack_client import SlackClient
 from backend.logging_config import configure_logging, get_logger
 from backend.memory.database import init_db
 from backend.memory.vector_store import VectorStore
@@ -105,9 +108,37 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.agent_runtime = agent_runtime
     log.info("Agent runtime started", agents=len(agent_runtime.agents))
 
+    # Communication integrations (Phase 5): Slack + Gmail. Both construct
+    # cheaply and read their credentials lazily, so they are always created and
+    # exposed on app.state for the tool system (Phase 6) and agents to use. When
+    # a credential is missing each client degrades to a safe no-op rather than
+    # crashing startup (Security Rule 1 + graceful-degradation rule).
+    async def _on_slack_message(payload: dict[str, Any]) -> None:
+        # Fan an inbound DM/mention out to the UI so the Communications window
+        # (and, in future, the voice pipeline) can surface "new Slack message".
+        # Metadata only — the text rides the same event the UI already trusts.
+        log.info(
+            "slack_inbound_notification",
+            kind=payload.get("kind"),
+            channel=payload.get("channel"),
+        )
+        await hub.broadcast(payload)
+
+    slack_client = SlackClient(on_notification=_on_slack_message)
+    started = await slack_client.start_listener()
+    app.state.slack_client = slack_client
+    log.info("Slack integration ready", listener_running=started)
+
+    gmail_client = GmailClient()
+    app.state.gmail_client = gmail_client
+    log.info("Gmail integration ready")
+
     try:
         yield
     finally:
+        # Stop the Slack listener first so no inbound event fires mid-teardown.
+        await slack_client.stop()
+        log.info("Slack integration stopped")
         # Shutdown / cleanup. Stop the agents and the voice pipeline (cancels any
         # in-flight turn), persist semantic memory, then close every live
         # WebSocket so clients see a clean disconnect.
