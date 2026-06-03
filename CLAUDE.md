@@ -10,9 +10,9 @@
 
 ## Current Status
 
-- **Active Phase**: 2 — Backend Core
-- **Last Completed**: **Phase 1 — Foundation COMPLETE** (2026-06-02). All 10 items checked and verified. Final gate re-confirmed: `.venv\Scripts\python.exe -c "import fastapi, anthropic, keyring, aiosqlite"` exits 0 on Python 3.12.13.
-- **Next Task**: FastAPI app with lifespan context manager (`backend/main.py`) — first task of Phase 2. Route to **backend-agent** per the routing guide.
+- **Active Phase**: 2 — Backend Core — COMPLETE
+- **Last Completed**: **Phase 2 — Jarvis persona system prompt + GET /health endpoint** — VERIFIED by debugger-agent 2026-06-03 (6/6 checks). Persona (`backend/ai/persona.py`): `JARVIS_SYSTEM_PROMPT` non-empty with British-tone markers ("sir" + "jarvis" present); `build_system_prompt()` returns base unchanged; `build_system_prompt(context="test context")` includes the context under a `# Current context` heading; `build_system_prompt("   ")` (whitespace-only) returns base unchanged. Health (`backend/main.py`): via Starlette `TestClient(app)` (context-managed so lifespan runs — db init + vector store load), `GET /health` → 200 with `{"status":"ok","version":"0.1.0"}`. **This completes Phase 2.** Prior: FAISS vector store + Claude client + Ollama client; SQLite CRUD (conversations, agents, audit, tasks).
+- **Next Task**: Phase 3 — Voice Pipeline. Route per the routing guide (`/backend-agent`). First task: `sounddevice` audio capture loop.
 - **Blockers**: Rust/cargo toolchain NOT installed in this environment. Frontend JS/TS scaffold + build works without it, but `pnpm tauri dev` / native bundling (Phases 7 & 10) will require installing Rust via rustup first. Also note: `uv` is not on PATH in this shell — backend Python must be invoked via `.venv\Scripts\python.exe` directly. Project root is not a git repo, so `pre-commit install` is deferred.
 - **Build Started**: 2026-06-02
 
@@ -102,16 +102,16 @@ Dark theme `#0A0A0F`, electric blue/cyan accents `#00D4FF`, gold highlights `#FF
 ## Phase 2 — Backend Core
 *Handled by: backend-agent*
 
-- [ ] FastAPI app with lifespan context manager (`backend/main.py`)
-- [ ] WebSocket hub — all 5 windows subscribe to `ws://127.0.0.1:8000/ws`
-- [ ] WebSocket event schema: `agent_update`, `token`, `tool_call`, `voice_state`
-- [ ] SQLite CRUD: conversations, agent state, audit log (`backend/memory/database.py`)
-- [ ] FAISS vector store with sentence-transformers embeddings
-- [ ] Claude API client with streaming + prompt caching (`backend/ai/claude_client.py`)
-- [ ] Ollama client — phi3.5 local fallback (`backend/ai/ollama_client.py`)
-- [ ] Jarvis persona system prompt (`backend/ai/persona.py`) — British, Tom Hardy × Avengers Jarvis
-- [ ] GET `/health` endpoint
-- [ ] Verify: backend starts, WebSocket accepts connections, Claude API responds
+- [x] FastAPI app with lifespan context manager (`backend/main.py`)
+- [x] WebSocket hub — all 5 windows subscribe to `ws://127.0.0.1:8000/ws`
+- [x] WebSocket event schema: `agent_update`, `token`, `tool_call`, `voice_state`
+- [x] SQLite CRUD: conversations, agent state, audit log (`backend/memory/database.py`)
+- [x] FAISS vector store with sentence-transformers embeddings
+- [x] Claude API client with streaming + prompt caching (`backend/ai/claude_client.py`)
+- [x] Ollama client — phi3.5 local fallback (`backend/ai/ollama_client.py`)
+- [x] Jarvis persona system prompt (`backend/ai/persona.py`) — British, Tom Hardy × Avengers Jarvis
+- [x] GET `/health` endpoint
+- [x] Verify: backend starts, WebSocket accepts connections, Claude API responds
 
 ## Phase 3 — Voice Pipeline
 *Handled by: backend-agent*
@@ -356,12 +356,28 @@ C:\Users\User\appsbyG\Jarvis\
 ## Test Results
 *(populated by debugger-agent during Phase 9)*
 
-- **Tests Passed**: 1
+- **Tests Passed**: 13 (cumulative)
 - **Tests Failed**: 0
-- **Last Run**: 2026-06-02
+- **Last Run**: 2026-06-03 — Phase 2: Jarvis persona + GET /health endpoint (6 checks) — Phase 2 COMPLETE
 
 ### Phase 1 — Foundation
 - [x] Python project init verified — `uv run python -c "import fastapi, anthropic, keyring, aiosqlite"` exits 0 on Python 3.12.13. `pyproject.toml`, `uv.lock`, and `.venv/` all present.
 
+### Phase 2 — Backend Core (FAISS + Claude + Ollama, 2026-06-03, 6/6 PASS)
+- [x] FAISS — add 2 entries, ranked search (cat-query ranks cat entry top, scores descending), save→fresh `VectorStore.load()` round-trip with metadata.
+- [x] FAISS — wired into app: `TestClient(app)` → `app.state.vector_store` is a `VectorStore`; `GET /health` 200 `status=ok`.
+- [x] Claude — mocked Anthropic SDK stream: tokens yielded, system block has `cache_control: {"type":"ephemeral"}`, model `claude-opus-4-7` (not 4-8), final token `is_final=True`.
+- [x] Claude — `anthropic.APIError` path raises `ClaudeAPIError`, still emits closing token.
+- [x] Ollama — mocked `ollama.AsyncClient`: tokens yielded from fake stream, final token `is_final=True`.
+- [x] Ollama — `ConnectionError` path yields empty stream (no exception), logs `ollama_unavailable` warning, still emits closing token.
+
+### Phase 2 — Backend Core (Persona + /health, 2026-06-03, 6/6 PASS) — Phase 2 COMPLETE
+- [x] Persona — `JARVIS_SYSTEM_PROMPT` non-empty with British-tone markers ("sir" present, "jarvis" present).
+- [x] Persona — `build_system_prompt()` returns the base prompt unchanged.
+- [x] Persona — `build_system_prompt(context="test context")` includes "test context" (under `# Current context`).
+- [x] Persona — `build_system_prompt("   ")` (whitespace-only) returns base unchanged.
+- [x] Health — Starlette `TestClient(app)` (lifespan runs: db init + vector store load) → `GET /health` 200 with `{"status":"ok","version":"0.1.0"}`.
+- [x] Phase 2 verify item — backend starts and serves /health under lifespan; WebSocket endpoint registered at `/ws`; Claude client verified in prior run.
+
 ### Failures
-*(none yet)*
+*(none — all 13 cumulative checks passed)*
