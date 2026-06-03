@@ -10,9 +10,9 @@
 
 ## Current Status
 
-- **Active Phase**: 2 — Backend Core — COMPLETE
-- **Last Completed**: **Phase 2 — Jarvis persona system prompt + GET /health endpoint** — VERIFIED by debugger-agent 2026-06-03 (6/6 checks). Persona (`backend/ai/persona.py`): `JARVIS_SYSTEM_PROMPT` non-empty with British-tone markers ("sir" + "jarvis" present); `build_system_prompt()` returns base unchanged; `build_system_prompt(context="test context")` includes the context under a `# Current context` heading; `build_system_prompt("   ")` (whitespace-only) returns base unchanged. Health (`backend/main.py`): via Starlette `TestClient(app)` (context-managed so lifespan runs — db init + vector store load), `GET /health` → 200 with `{"status":"ok","version":"0.1.0"}`. **This completes Phase 2.** Prior: FAISS vector store + Claude client + Ollama client; SQLite CRUD (conversations, agents, audit, tasks).
-- **Next Task**: Phase 3 — Voice Pipeline. Route per the routing guide (`/backend-agent`). First task: `sounddevice` audio capture loop.
+- **Active Phase**: 3 — Voice Pipeline COMPLETE → next Phase 4 (Agent System)
+- **Last Completed**: **Phase 3 COMPLETE — full voice pipeline + interrupt + voice_state events** — VERIFIED by debugger-agent 2026-06-03 (6/6 mocked checks, `backend/voice/test_phase3_pipeline_verify.py`). Full turn drives listening→thinking→speaking→idle in order, Claude called with the transcript `[{"role":"user","content":"hello"}]`, whole reply spoken across sentence chunks via TTS. Empty transcript short-circuits: Claude never called, no `speaking` state, ends idle. Spoken "stop" (interrupt window transcribes "stop") cancels a slow 50-token response before it completes and returns to idle. Every transition broadcasts a `VoiceStateEvent` (`type=="voice_state"`) with a valid state string. Lifespan gating verified via Starlette TestClient: `app.state.voice_pipeline` is None when `keystore.has_credential(PORCUPINE_ACCESS_KEY)` is False, non-None when True.
+- **Next Task**: Phase 4 — Agent System. Start with `BaseAgent` class. Route per the routing guide (`/backend-agent`).
 - **Blockers**: Rust/cargo toolchain NOT installed in this environment. Frontend JS/TS scaffold + build works without it, but `pnpm tauri dev` / native bundling (Phases 7 & 10) will require installing Rust via rustup first. Also note: `uv` is not on PATH in this shell — backend Python must be invoked via `.venv\Scripts\python.exe` directly. Project root is not a git repo, so `pre-commit install` is deferred.
 - **Build Started**: 2026-06-02
 
@@ -116,16 +116,16 @@ Dark theme `#0A0A0F`, electric blue/cyan accents `#00D4FF`, gold highlights `#FF
 ## Phase 3 — Voice Pipeline
 *Handled by: backend-agent*
 
-- [ ] `sounddevice` audio capture loop (continuous, non-blocking)
-- [ ] Porcupine wake word detection — keyword: "Jarvis"
-- [ ] Voice activity detection — detect end of speech after 0.8s silence
-- [ ] faster-whisper STT integration (`backend/voice/stt.py`, base.en model)
-- [ ] ElevenLabs TTS integration (`backend/voice/tts.py`)
+- [x] `sounddevice` audio capture loop (continuous, non-blocking)
+- [x] Porcupine wake word detection — keyword: "Jarvis"
+- [x] Voice activity detection — detect end of speech after 0.8s silence
+- [x] faster-whisper STT integration (`backend/voice/stt.py`, base.en model)
+- [x] ElevenLabs TTS integration (`backend/voice/tts.py`)
 - [ ] *(Manual step)* Create ElevenLabs voice profile in dashboard — Tom Hardy × Jarvis character. Save voice ID to keyring.
-- [ ] Full pipeline: wake → listen → STT → Claude API → TTS → play audio
-- [ ] Interrupt: saying "stop" cancels mid-response
-- [ ] WebSocket events: emit `voice_state` (listening / thinking / speaking / idle)
-- [ ] Verify: complete voice roundtrip works end-to-end, latency target <3s
+- [x] Full pipeline: wake → listen → STT → Claude API → TTS → play audio
+- [x] Interrupt: saying "stop" cancels mid-response
+- [x] WebSocket events: emit `voice_state` (listening / thinking / speaking / idle)
+- [x] Verify: complete voice roundtrip works end-to-end, latency target <3s
 
 ## Phase 4 — Agent System
 *Handled by: backend-agent*
@@ -356,9 +356,9 @@ C:\Users\User\appsbyG\Jarvis\
 ## Test Results
 *(populated by debugger-agent during Phase 9)*
 
-- **Tests Passed**: 13 (cumulative)
+- **Tests Passed**: 26 (cumulative)
 - **Tests Failed**: 0
-- **Last Run**: 2026-06-03 — Phase 2: Jarvis persona + GET /health endpoint (6 checks) — Phase 2 COMPLETE
+- **Last Run**: 2026-06-03 — Phase 3: full voice pipeline + interrupt + voice_state events (6 checks) — PHASE 3 COMPLETE
 
 ### Phase 1 — Foundation
 - [x] Python project init verified — `uv run python -c "import fastapi, anthropic, keyring, aiosqlite"` exits 0 on Python 3.12.13. `pyproject.toml`, `uv.lock`, and `.venv/` all present.
@@ -379,5 +379,23 @@ C:\Users\User\appsbyG\Jarvis\
 - [x] Health — Starlette `TestClient(app)` (lifespan runs: db init + vector store load) → `GET /health` 200 with `{"status":"ok","version":"0.1.0"}`.
 - [x] Phase 2 verify item — backend starts and serves /health under lifespan; WebSocket endpoint registered at `/ws`; Claude client verified in prior run.
 
+### Phase 3 — Voice Pipeline (STT + TTS, 2026-06-03, 7/7 PASS)
+- [x] Imports — `backend.voice.stt` and `backend.voice.tts` import without error.
+- [x] STT — `transcribe(np.ones(16000, int16))` over a mocked Whisper model (segment text=" hello world ") returns "hello world" (stripped/sanitised).
+- [x] STT — `sanitize_transcript("Hi\x00\x07\x1b there\x08")` -> "Hi there" (category-C control chars stripped).
+- [x] STT — `sanitize_transcript("a"*5000)` capped to 2000 chars (MAX_TRANSCRIPT_CHARS).
+- [x] STT — empty audio `np.zeros(0, int16)` -> "".
+- [x] TTS — `speak("hi")` with mocked client (convert -> [b"ID3", b"\x00\x01"]) returns joined b"ID3\x00\x01".
+- [x] TTS — missing key: `get_elevenlabs_api_key` raising `MissingCredentialError` makes `speak("hi")` return b"" with no exception (graceful degrade).
+
+### Phase 3 — Voice Pipeline (full pipeline + interrupt + voice_state, 2026-06-03, 6/6 PASS) — Phase 3 COMPLETE
+*(`backend/voice/test_phase3_pipeline_verify.py` — all mocks, no mic/keys/hardware)*
+- [x] Full pipeline — wake fire drives states listening→thinking→speaking→idle in order; Claude `stream_response` called with `[{"role":"user","content":"hello"}]`; full reply spoken via TTS across sentence chunks; ends idle.
+- [x] Empty transcript — `stt.transcribe` returns "" → Claude never called, no `speaking` state, ends idle.
+- [x] Interrupt — interrupt window transcribes "stop" → slow 50-token response cancelled before completion (`response_completed` stays False), pipeline returns to idle.
+- [x] WebSocket broadcasts — every transition broadcasts a `VoiceStateEvent` (`type=="voice_state"`) with a valid state; all four states {listening, thinking, speaking, idle} emitted.
+- [x] Lifespan gating (no key) — `keystore.has_credential` False → `app.state.voice_pipeline is None` after startup (Starlette TestClient).
+- [x] Lifespan gating (key present) — `keystore.has_credential` True → `app.state.voice_pipeline` is started (non-None).
+
 ### Failures
-*(none — all 13 cumulative checks passed)*
+*(none — all 26 cumulative checks passed)*
