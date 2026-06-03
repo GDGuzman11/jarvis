@@ -40,7 +40,7 @@ Built on the Claude API with local LLM fallback — all data stays on-device, al
 | Backend | Python 3.12 · FastAPI · WebSockets · Uvicorn |
 | Primary AI | Anthropic Claude API (`claude-opus-4-7`, streaming + prompt caching) |
 | Local AI | Ollama (`phi3.5`, `qwen2.5-coder:3b`) |
-| Wake Word | Porcupine (Picovoice) |
+| Wake Word | openWakeWord (local, "hey_jarvis" model — no API key) |
 | Speech-to-Text | faster-whisper (local Whisper base.en) |
 | Text-to-Speech | ElevenLabs (custom voice — Tom Hardy × Avengers Jarvis) |
 | Frontend | Tauri 2 · React 19 · TypeScript 5 · Vite 6 |
@@ -106,7 +106,7 @@ from backend.security import keystore
 
 keystore.set_anthropic_api_key("sk-ant-...")
 keystore.set_elevenlabs_api_key("your-elevenlabs-key")
-keystore.set_porcupine_access_key("your-porcupine-key")
+# Note: wake word uses openWakeWord (fully local, no API key required)
 keystore.set_slack_bot_token("xoxb-...")
 keystore.set_slack_app_token("xapp-...")
 keystore.set_slack_signing_secret("your-signing-secret")

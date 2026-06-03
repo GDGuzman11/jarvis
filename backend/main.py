@@ -25,6 +25,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.agents.runtime import AgentRuntime
 from backend.logging_config import configure_logging, get_logger
 from backend.memory.database import init_db
 from backend.memory.vector_store import VectorStore
@@ -94,12 +95,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.voice_pipeline = voice_pipeline
     log.info("Voice pipeline started")
 
+    # Agent system (Phase 4): the Production Lead (Atlas) plus five specialists
+    # (Ben, Kado, Sentinel, Vega, Quill). Each runs as its own asyncio task and
+    # upserts its row into the agents table on start, so the roster persists
+    # across restarts. The runtime shares the singleton hub for status fan-out.
+    agent_runtime = AgentRuntime(hub=hub)
+    await agent_runtime.start()
+    app.state.agents = agent_runtime.agents
+    app.state.agent_runtime = agent_runtime
+    log.info("Agent runtime started", agents=len(agent_runtime.agents))
+
     try:
         yield
     finally:
-        # Shutdown / cleanup. Stop the voice pipeline (cancels any in-flight
-        # turn), persist semantic memory, then close every live WebSocket so
-        # clients see a clean disconnect.
+        # Shutdown / cleanup. Stop the agents and the voice pipeline (cancels any
+        # in-flight turn), persist semantic memory, then close every live
+        # WebSocket so clients see a clean disconnect.
+        await agent_runtime.stop()
+        log.info("Agent runtime stopped")
         await voice_pipeline.stop()
         log.info("Voice pipeline stopped")
         if len(vector_store):

@@ -10,9 +10,9 @@
 
 ## Current Status
 
-- **Active Phase**: 3 — Voice Pipeline COMPLETE → next Phase 4 (Agent System)
-- **Last Completed**: **Phase 3 COMPLETE — full voice pipeline + interrupt + voice_state events** — VERIFIED by debugger-agent 2026-06-03 (6/6 mocked checks, `backend/voice/test_phase3_pipeline_verify.py`). Full turn drives listening→thinking→speaking→idle in order, Claude called with the transcript `[{"role":"user","content":"hello"}]`, whole reply spoken across sentence chunks via TTS. Empty transcript short-circuits: Claude never called, no `speaking` state, ends idle. Spoken "stop" (interrupt window transcribes "stop") cancels a slow 50-token response before it completes and returns to idle. Every transition broadcasts a `VoiceStateEvent` (`type=="voice_state"`) with a valid state string. Lifespan: `app.state.voice_pipeline` is always non-None (OpenWakeWord needs no API key). **2026-06-03 post-completion**: replaced Porcupine with OpenWakeWord (Apache 2.0, fully local, no API key); `pvporcupine` removed, `openwakeword>=0.6.0` added; all 11 Phase 3 tests pass.
-- **Next Task**: Phase 4 — Agent System. Start with `BaseAgent` class. Route per the routing guide (`/backend-agent`).
+- **Active Phase**: 4 — Agent System COMPLETE → next Phase 5 (Communication Integrations)
+- **Last Completed**: **Phase 4 COMPLETE — 6-agent system (BaseAgent + ProductionLead/Atlas + Ben/Kado/Sentinel/Vega/Quill), keyword routing, SQLite delegation, status broadcasts, lifespan wiring** — VERIFIED by debugger-agent 2026-06-03 (7/7 checks, 12 test cases, `backend/agents/test_phase4_verify.py`). BaseAgent lifecycle: `start()` upserts an idle row, a task drives working→idle, `stop()` persists offline. Status broadcasts: working then idle `AgentUpdate` events fan out per task. DB persistence: 6 correct rows (production_lead/Atlas, frontend/Ben, backend/Kado, security/Sentinel, marketing/Vega, content/Quill) after start, and a second fresh runtime on the same DB still sees all 6 (survives restart). Routing: UI/React/Tauri→frontend, API/database/async→backend, security/audit/OAuth→security. Delegation: `submit_goal()` writes a `tasks` row and enqueues to the specialist; `get_agent_tasks` returns it; the specialist runs it to `done`. Error recovery: a raising `handle_task` marks the row failed and the agent recovers to idle without the loop crashing. Lifespan (real ASGI TestClient): `/health` 200, `app.state.agents` has 6 running agents, clean shutdown stops them all. Full backend suite: 23/23 pass (11 prior + 12 Phase 4), no regressions.
+- **Next Task**: Phase 5 — Communication Integrations. Start with the Slack OAuth app + Bolt listener (`/backend-agent`).
 - **Blockers**: Rust/cargo toolchain NOT installed in this environment. Frontend JS/TS scaffold + build works without it, but `pnpm tauri dev` / native bundling (Phases 7 & 10) will require installing Rust via rustup first. Also note: `uv` is not on PATH in this shell — backend Python must be invoked via `.venv\Scripts\python.exe` directly. Project root is not a git repo, so `pre-commit install` is deferred.
 - **Build Started**: 2026-06-02
 
@@ -130,18 +130,18 @@ Dark theme `#0A0A0F`, electric blue/cyan accents `#00D4FF`, gold highlights `#FF
 ## Phase 4 — Agent System
 *Handled by: backend-agent*
 
-- [ ] `BaseAgent` class — task queue, tool access list, Claude context, status (`backend/agents/base_agent.py`)
-- [ ] Production Lead agent — task routing logic (`backend/agents/production_lead.py`)
-- [ ] Ben (Frontend) agent (`backend/agents/frontend_agent.py`)
-- [ ] Kado (Backend) agent (`backend/agents/backend_agent.py`)
-- [ ] Security agent (`backend/agents/security_agent.py`)
-- [ ] Marketing agent (`backend/agents/marketing_agent.py`)
-- [ ] Content Creator agent (`backend/agents/content_creator.py`)
-- [ ] Agent-to-agent messaging — insert tasks into SQLite `tasks` table
-- [ ] All 6 agents start as asyncio background tasks in FastAPI lifespan
-- [ ] Agent state persists across backend restarts
-- [ ] Agent status broadcasts to WebSocket on every state change
-- [ ] Verify: all 6 agents running after startup, delegation routes correctly
+- [x] `BaseAgent` class — task queue, tool access list, Claude context, status (`backend/agents/base_agent.py`)
+- [x] Production Lead agent — task routing logic (`backend/agents/production_lead.py`)
+- [x] Ben (Frontend) agent (`backend/agents/frontend_agent.py`)
+- [x] Kado (Backend) agent (`backend/agents/backend_agent.py`)
+- [x] Security agent (`backend/agents/security_agent.py`)
+- [x] Marketing agent (`backend/agents/marketing_agent.py`)
+- [x] Content Creator agent (`backend/agents/content_creator.py`)
+- [x] Agent-to-agent messaging — insert tasks into SQLite `tasks` table
+- [x] All 6 agents start as asyncio background tasks in FastAPI lifespan
+- [x] Agent state persists across backend restarts
+- [x] Agent status broadcasts to WebSocket on every state change
+- [x] Verify: all 6 agents running after startup, delegation routes correctly
 
 ## Phase 5 — Communication Integrations
 *Handled by: backend-agent*
@@ -356,9 +356,9 @@ C:\Users\User\appsbyG\Jarvis\
 ## Test Results
 *(populated by debugger-agent during Phase 9)*
 
-- **Tests Passed**: 27 (cumulative)
+- **Tests Passed**: 23 backend suite (`pytest backend`) — Phase 4 added 12 cases, all green; no prior-phase regressions
 - **Tests Failed**: 0
-- **Last Run**: 2026-06-03 — OpenWakeWord migration: 11/11 Phase 3 tests pass after Porcupine → OpenWakeWord swap
+- **Last Run**: 2026-06-03 — Phase 4 Agent System verification: 12/12 cases pass (7 distinct checks; routing parametrized ×6). Full backend suite 23/23.
 
 ### Phase 1 — Foundation
 - [x] Python project init verified — `uv run python -c "import fastapi, anthropic, keyring, aiosqlite"` exits 0 on Python 3.12.13. `pyproject.toml`, `uv.lock`, and `.venv/` all present.
@@ -406,5 +406,15 @@ C:\Users\User\appsbyG\Jarvis\
 - [x] Full pipeline, empty transcript, interrupt, voice_state broadcasts — 4 original pipeline tests still pass unchanged.
 - [x] Lifespan — `app.state.voice_pipeline` always non-None (no key gate).
 
+### Phase 4 — Agent System (2026-06-03, 12/12 PASS) — Phase 4 COMPLETE
+*(`backend/agents/test_phase4_verify.py` — temp SQLite DB + fake hub + stub reasoners; no API keys, network, or shared on-disk state)*
+- [x] BaseAgent lifecycle — `start()` upserts an idle agents row; an enqueued task drives working→idle and drains the queue; `stop()` sets in-memory + persisted status to offline.
+- [x] Status broadcasts — fake hub collects `AgentUpdate` events; a processed task fans out a `working` then a returning-to-`idle` event in order.
+- [x] DB persistence — after `AgentRuntime.start()`, `get_all_agents()` returns 6 rows with correct ids/names (production_lead/Atlas, frontend/Ben, backend/Kado, security/Sentinel, marketing/Vega, content/Quill). A second fresh runtime on the same DB still sees all 6 (offline) and can restart them — survives restarts.
+- [x] Routing (×6 parametrized) — React/UI/Tauri→frontend, FastAPI/database/async-query→backend, security-audit/OAuth-vuln→security.
+- [x] Delegation — `submit_goal("...FastAPI server")` → target backend, `delegated=True`, integer `task_id`; the `tasks` row is created_by production_lead / assigned_to backend and `get_agent_tasks` returns it; specialist runs it to `done`.
+- [x] Error recovery — a `handle_task` that raises marks the `tasks` row `failed`, the agent recovers to `idle`, the run loop survives (still running), and a subsequent task is still accepted and drained.
+- [x] Lifespan — real ASGI `TestClient(app)`: `/health` 200 `{"status":"ok"}`; `app.state.agents` has 6 running agents; on context exit the shutdown stops every agent loop.
+
 ### Failures
-*(none — all 27 cumulative checks passed)*
+*(none — Phase 4: 12/12 pass; full backend suite 23/23, no regressions)*
