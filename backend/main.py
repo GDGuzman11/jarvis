@@ -32,6 +32,7 @@ from backend.integrations.slack_client import SlackClient
 from backend.logging_config import configure_logging, get_logger
 from backend.memory.database import init_db
 from backend.memory.vector_store import VectorStore
+from backend.tools.wiring import build_tool_registry
 from backend.voice.pipeline import VoicePipeline
 from backend.websocket_hub import hub
 
@@ -132,6 +133,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     gmail_client = GmailClient()
     app.state.gmail_client = gmail_client
     log.info("Gmail integration ready")
+
+    # Tools system (Phase 6): one ToolRegistry holds every tool (web search,
+    # browser, sandboxed file ops + code executor, and the Slack/Gmail wrappers)
+    # behind the per-agent permission matrix. Built after the integration clients
+    # so their tool wrappers share the same authenticated client. Exposed on
+    # app.state for the agents and the Tools window (Phase 7) to consume.
+    tool_registry = build_tool_registry(
+        slack_client=slack_client, gmail_client=gmail_client
+    )
+    app.state.tool_registry = tool_registry
+    log.info("Tool registry ready", tools=len(tool_registry.list_tools()))
 
     try:
         yield

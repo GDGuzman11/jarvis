@@ -10,9 +10,9 @@
 
 ## Current Status
 
-- **Active Phase**: 5 — Communication Integrations COMPLETE → next Phase 6 (Tools System)
-- **Last Completed**: **Phase 5 COMPLETE — Slack + Gmail integrations** — VERIFIED by debugger-agent 2026-06-03 (6/6 checks, 9 test cases, `backend/integrations/test_phase5_verify.py`). Missing credentials: with every keystore getter raising `MissingCredentialError`, both clients degrade to safe no-ops (`SlackClient.send_message`→False, `get_dm_history`/`get_unread_mentions`→[], `start_listener`→False; `GmailClient.get_inbox`→[], `send_email`→False, `draft_email`→""). Slack send: mocked `chat_postMessage`→{"ok": True} ⇒ `send_message`→True with correct args. Slack read: mocked `conversations_open`+`conversations_history` ⇒ `get_dm_history` returns normalized `{user, text, ts}` dicts. Slack listener: `_dispatch_notification` awaits the `on_notification` AsyncMock with the payload. Gmail send/draft/inbox (mocked Google service): `send_email`→True, `draft_email`→draft id string, `get_inbox`→list of `{id, from, subject, snippet}` dicts. Lifespan (real ASGI TestClient, keystore patched so clients stay no-op): `/health` 200 and both `app.state.slack_client`/`app.state.gmail_client` are constructed and exposed. Tests stub `database.log_audit` so no real DB writes occur.
-- **Next Task**: Phase 6 — Tools System. Start with `ToolRegistry` per-agent permission matrix (`backend/tools/registry.py`) (`/backend-agent`).
+- **Active Phase**: 6 — Tools System COMPLETE (verified by debugger-agent 2026-06-03). Next up: Phase 7 — Multi-Window UI.
+- **Last Completed**: **Phase 6 VERIFIED — Tools System**. All boxes checked. `backend/tools/`: `registry.py` (`ToolRegistry` + per-agent matrix `DEFAULT_PERMISSIONS`), `web_search.py` (DuckDuckGo/ddgs, async), `browser.py` (Playwright, http(s)-only), `file_ops.py` (read/write/list sandboxed to `WORKSPACE_DIR`, `JARVIS_WORKSPACE` env override, `PathTraversalError`), `code_executor.py` (RestrictedPython, 10s timeout, blocks imports/os/subprocess/dunder), `slack_tool.py` + `gmail_tool.py`, `wiring.py` (`build_tool_registry()` registers all 12 tools). Wired into `main.py` lifespan → `app.state.tool_registry`. Debugger-agent verification: `backend/tools/test_phase6_verify.py` (14 cases) — permission enforcement (production_lead=all, security=read-only, denied write_file raises PermissionError), sandbox blocks os.system/subprocess + runs safe print, path-traversal rejection (../ + absolute-outside) + file roundtrip, web_search schema valid + empty-query returns [], all registered schemas well-formed, Slack+Gmail registered, lifespan sets app.state.tool_registry + /health 200. Result: 14/14 pass, full backend suite 46/46 pass, no regressions.
+- **Next Task**: Phase 7 — Multi-Window UI (`/frontend-agent`).
 - **Blockers**: Rust/cargo toolchain NOT installed in this environment. Frontend JS/TS scaffold + build works without it, but `pnpm tauri dev` / native bundling (Phases 7 & 10) will require installing Rust via rustup first. Also note: `uv` is not on PATH in this shell — backend Python must be invoked via `.venv\Scripts\python.exe` directly. Project root is not a git repo, so `pre-commit install` is deferred.
 - **Build Started**: 2026-06-02
 
@@ -158,15 +158,15 @@ Dark theme `#0A0A0F`, electric blue/cyan accents `#00D4FF`, gold highlights `#FF
 ## Phase 6 — Tools System
 *Handled by: backend-agent*
 
-- [ ] `ToolRegistry` — per-agent permission matrix (`backend/tools/registry.py`)
-- [ ] DuckDuckGo web search tool (`backend/tools/web_search.py`)
-- [ ] Playwright browser automation tool (`backend/tools/browser.py`)
-- [ ] File read/write tool — sandboxed to workspace directory only (`backend/tools/file_ops.py`)
-- [ ] Sandboxed Python code executor — RestrictedPython (`backend/tools/code_executor.py`)
-- [ ] Slack tool wrapper
-- [ ] Gmail tool wrapper
-- [ ] All tools defined as Claude API `tool_use` JSON schemas
-- [ ] Verify: each tool callable, permissions matrix enforced, sandbox blocks `os.system()`
+- [x] `ToolRegistry` — per-agent permission matrix (`backend/tools/registry.py`)
+- [x] DuckDuckGo web search tool (`backend/tools/web_search.py`)
+- [x] Playwright browser automation tool (`backend/tools/browser.py`)
+- [x] File read/write tool — sandboxed to workspace directory only (`backend/tools/file_ops.py`)
+- [x] Sandboxed Python code executor — RestrictedPython (`backend/tools/code_executor.py`)
+- [x] Slack tool wrapper
+- [x] Gmail tool wrapper
+- [x] All tools defined as Claude API `tool_use` JSON schemas
+- [x] Verify: each tool callable, permissions matrix enforced, sandbox blocks `os.system()`
 
 ## Phase 7 — Multi-Window UI (Tauri + React)
 *Handled by: frontend-agent*
@@ -356,9 +356,17 @@ C:\Users\User\appsbyG\Jarvis\
 ## Test Results
 *(populated by debugger-agent during Phase 9)*
 
-- **Tests Passed**: 32 backend suite (`pytest backend`) — Phase 5 added 9 cases, all green; no prior-phase regressions
+- **Tests Passed**: 46 backend suite (`pytest backend`) — Phase 6 added 14 cases, all green; no prior-phase regressions
 - **Tests Failed**: 0
-- **Last Run**: 2026-06-03 — Phase 5 Communication Integrations verification: 9/9 cases pass (6 distinct checks). Full backend suite 32/32.
+- **Last Run**: 2026-06-03 — Phase 6 Tools System verification: 14/14 cases pass (6 checklist areas). Full backend suite 46/46.
+
+### Phase 6 — Tools System (registry · sandbox · file ops · web search · schemas, 2026-06-03, 6/6 areas · 14/14 cases PASS) — Phase 6 COMPLETE
+- [x] Permission enforcement — `get_tools_for_agent("production_lead")` returns all 12 (== `ALL_TOOLS`); `get_tools_for_agent("security")` returns exactly the 7 read-only tools (no write/comms leak); `call_tool("security","write_file",…)` raises `PermissionError`.
+- [x] Sandbox blocks dangerous code — `execute_code("import os\nos.system(…)")`→`success=False`; `execute_code("import subprocess")`→`success=False`; `execute_code("print('hello')")`→`success=True`, stdout contains "hello".
+- [x] Path traversal rejected — `write_file("../escape.txt",…)` and absolute-outside path both raise `PathTraversalError`; `write_file("safe.txt","hello")`+`read_file` roundtrip returns "hello". Workspace pinned to temp dir via `JARVIS_WORKSPACE`.
+- [x] Web search — `WEB_SEARCH_SCHEMA` has name/description/input_schema with `type:"object"`; `web_search("")` returns `[]` (no crash, no network).
+- [x] Claude schemas — every registered tool schema is well-formed (name matches, non-empty description, `input_schema.type=="object"`); Slack (3) + Gmail (3) wrappers registered with schemas.
+- [x] Lifespan — real `TestClient(app)` with keystore patched (clients stay no-op): `app.state.tool_registry` is a populated `ToolRegistry` (≥6 tools), `/health` 200. Temp audit DB seeded with 6 agent rows for the FK on `audit_log.agent_id`.
 
 ### Phase 5 — Communication Integrations (Slack + Gmail, 2026-06-03, 6/6 checks · 9/9 cases PASS) — Phase 5 COMPLETE
 - [x] Missing credentials (Slack) — keystore getters raise `MissingCredentialError` ⇒ `send_message`→False, `get_dm_history`→[], `get_unread_mentions`→[], `start_listener`→False (safe no-op).
