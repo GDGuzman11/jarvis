@@ -156,15 +156,55 @@ See `.env.example` for the full list of credential names and where to obtain eac
 
 ---
 
+## First-Run ElevenLabs Voice Setup (manual)
+
+The Jarvis voice is a custom ElevenLabs profile and must be created once by hand:
+
+1. Sign in at the [ElevenLabs dashboard](https://elevenlabs.io/).
+2. Create (or clone) a voice tuned to the Jarvis character -- a measured, dry,
+   subtly British delivery (Tom Hardy's cadence x Jarvis from the Avengers).
+3. Copy the **Voice ID** from that voice's settings.
+4. Store both the voice id and your API key so the text-to-speech stage can
+   authenticate:
+
+   ```powershell
+   .venv\Scripts\python.exe -c "
+   from backend.security import keystore
+   keystore.set_elevenlabs_api_key('your-elevenlabs-key')
+   keystore.set_elevenlabs_voice_id('your-voice-id')
+   "
+   ```
+
+Without both values Jarvis runs text-only and skips spoken output.
+
+---
+
 ## Running
 
 ### Backend
 
 ```powershell
-.venv\Scripts\python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+.venv\Scripts\python.exe backend/main.py
 ```
 
-### Frontend (Tauri dev mode)
+This runs the FastAPI app under Uvicorn, bound to local loopback only. It serves
+HTTP on `http://127.0.0.1:8000` and the WebSocket hub on `ws://127.0.0.1:8000/ws`.
+Confirm it is up with `GET http://127.0.0.1:8000/health`.
+
+(Equivalent: `.venv\Scripts\python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 8000`.)
+
+### Frontend (dev mode)
+
+Browser dev UI (no Rust required):
+
+```powershell
+cd frontend
+pnpm dev
+```
+
+Vite serves the React app on `http://localhost:1420`.
+
+For the full native multi-window experience (requires the Rust toolchain):
 
 ```powershell
 cd frontend
@@ -172,6 +212,17 @@ pnpm tauri dev
 ```
 
 This opens all five windows. Vite serves the React app on `localhost:1420`; Tauri wraps it in native windows.
+
+### First-run setup wizard
+
+If you have not already stored your API keys, open the wizard in your browser:
+
+```
+http://localhost:1420/?window=setup
+```
+
+It prompts for each credential and writes it to the Windows Credential Manager --
+the same store the CLI snippets above use, so the two approaches are interchangeable.
 
 ### Tests
 
@@ -295,6 +346,21 @@ See [CLAUDE.md](CLAUDE.md) for the detailed per-task checklist. Each phase is bu
 | Sandboxed code execution | RestrictedPython blocks `os`, `sys`, `subprocess`; filesystem scoped to `workspace/` |
 | Minimal OAuth scopes | Gmail: `readonly` + `send`; Slack: `chat:write`, `im:read`, `channels:read` |
 | Audit logging | Every agent action written to SQLite `audit_log` (metadata only, no message content) |
+
+---
+
+## Known Limitations
+
+- **Rust is required for the native windows.** The five-window native Tauri
+  desktop app needs a working Rust toolchain (`rustup`) to build and run via
+  `pnpm tauri dev`. The browser dev UI (`pnpm dev` at `http://localhost:1420`)
+  runs without Rust, but the packaged `.exe` and native multi-window experience
+  do not.
+- **Vitest is not yet wired.** Frontend unit tests are planned but the Vitest
+  harness is not set up yet, so there is no `pnpm test` for the frontend. Backend
+  tests run via pytest (see **Tests** above).
+- The local Ollama fallback and faster-whisper run best with an NVIDIA GPU; on
+  CPU-only machines, voice latency will exceed the <3s roundtrip target.
 
 ---
 

@@ -34,7 +34,10 @@ export function WindowFrame({ title, index = 0, children }: WindowFrameProps) {
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.5, delay: index * 0.2, ease: "easeOut" }}
     >
-      <header className="flex items-center justify-between border-b border-jarvis-cyan/15 px-5 py-3">
+      <header
+        data-tauri-drag-region
+        className="flex cursor-grab items-center justify-between border-b border-jarvis-cyan/15 px-5 py-3 active:cursor-grabbing"
+      >
         <div className="flex items-center gap-3">
           <span className="h-3 w-3 rotate-45 border border-jarvis-cyan" style={{ boxShadow: "0 0 10px rgba(0,212,255,0.6)" }} />
           <h1 className="text-sm font-bold uppercase tracking-[0.3em] text-glow-cyan">{title}</h1>

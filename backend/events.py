@@ -44,11 +44,15 @@ from typing import Any, Literal
 AgentStatus = Literal["idle", "working", "error", "offline"]
 
 # Voice pipeline state — drives the Animation window orb colour. Per the Phase 3
-# pipeline: idle -> listening -> thinking -> speaking -> idle.
-VoiceState = Literal["idle", "listening", "thinking", "speaking"]
+# pipeline: idle -> listening -> thinking -> speaking -> idle. ``error`` is the
+# parked state the pipeline enters after exhausting its crash retries (Phase 10
+# crash recovery), so the orb can surface a hard fault.
+VoiceState = Literal["idle", "listening", "thinking", "speaking", "error"]
 
 # The set of valid event ``type`` discriminators.
-EventType = Literal["agent_update", "token", "tool_call", "voice_state"]
+EventType = Literal[
+    "agent_update", "token", "tool_call", "voice_state", "audio_level"
+]
 
 
 def _utc_now_iso() -> str:
@@ -143,6 +147,22 @@ class VoiceStateEvent(Event):
     timestamp: str = field(default_factory=_utc_now_iso)
 
 
+@dataclass(slots=True)
+class AudioLevelEvent(Event):
+    """A sampled audio amplitude during TTS playback (Phase 2 / Phase 10).
+
+    Broadcast every ~50 ms while Jarvis is speaking so the Animation window's
+    orb can pulse in time with the audio. ``level`` is the RMS amplitude of the
+    playback buffer normalised to the ``0.0``-``1.0`` range (clipped at ``1.0``).
+    A final event with ``level=0.0`` is broadcast when playback stops so the orb
+    settles back to rest.
+    """
+
+    level: float = 0.0
+    type: Literal["audio_level"] = "audio_level"
+    timestamp: str = field(default_factory=_utc_now_iso)
+
+
 # --- Serialisation helpers ---------------------------------------------------
 
 
@@ -171,5 +191,6 @@ __all__ = [
     "Token",
     "ToolCall",
     "VoiceStateEvent",
+    "AudioLevelEvent",
     "serialize",
 ]

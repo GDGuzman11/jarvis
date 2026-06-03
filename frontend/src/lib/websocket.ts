@@ -46,6 +46,9 @@ function dispatch(event: JarvisEvent): void {
     case "voice_state":
       s.setVoiceState(event.state);
       break;
+    case "audio_level":
+      s.setAudioLevel(event.level);
+      break;
     case "metrics":
       s.setMetrics({
         cost_usd: event.cost_usd,

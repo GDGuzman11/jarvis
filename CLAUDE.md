@@ -11,10 +11,12 @@
 ## Current Status
 
 - **Active Phase**: 10 — Polish & Packaging (started 2026-06-03).
-- **Last Completed**: **Phase 9 VERIFIED — Testing & Verification (backend)**. Added `backend/test_phase9_verify.py` (19 cases) filling the gaps not covered by per-phase suites: STT accuracy (mocked whisper), TTS non-zero bytes (mocked ElevenLabs), wake-word callback, full mocked voice roundtrip with <3s latency assertion, Claude streaming + tool_use + prompt-cache block, **Ollama fallback (newly wired into `pipeline.py::_iter_reply`)**, plus the 3 security tests (no-secrets grep, 127.0.0.1 bind, sandbox blocks os.system/subprocess). Re-confirmed Phase 4 delegation/persistence + Phase 5 Slack/Gmail mocked read/send via the existing suites. Whole `pytest backend/` = 65 passed, 0 failed. DEFERRED: 4 live-UI items (windows open, WS<2s, orb colour, agent-card updates) + 2 true voice E2E — all need the native Tauri app (Rust/cargo not installed) and/or a microphone + live API keys; component paths are covered by mocked tests, and `frontend/` has no Vitest harness yet (a Phase 10 add). Minor non-blocking finding logged: `code_executor.py` docstring overstates allowed builtins (`sum`/`range`/`sorted` actually raise NameError — sandbox is stricter than documented).
+- **Last Completed (2026-06-03)**: **Phase 10 BACKEND VERIFIED — AudioLevelEvent + crash recovery + graceful degradation + setup wizard API**. Added `backend/test_phase10_backend_verify.py` (14 cases). Coverage: (1) `AudioLevelEvent` (events.py, type="audio_level"/level) + `tts.speak_and_play` broadcasts only AudioLevelEvents with 0.0<=level<=1.0, LAST always level==0.0 (including the finally-block path when `_play_pcm_block_sync` raises mid-playback); `_rms_level` unit (silence→0.0, full-scale int16→~1.0, empty→0.0, clip>1.0→1.0). (2) Pipeline crash recovery: 3 consecutive `_run_turn` crashes → state "error", `_consecutive_crashes`==3, no further retry (asyncio.sleep patched to no-op); crash-twice-then-clean-turn resets counter to 0. (3) Graceful degradation in `pipeline._iter_reply`: Claude raising MissingCredentialError OR ClaudeAPIError *pre-token* falls back to Ollama (logs `claude_fallback_to_ollama`); mid-stream failure (1 token then raise) does NOT restart from Ollama. (4) Setup wizard via isolated minimal-app TestClient + in-memory fake keyring: GET /setup/status all-missing → complete=false + 7-item missing list; POST stores + never echoes value; unknown name → 400; GET /setup/complete flips true once all 7 present; no secret value leaks into any response body. Full `pytest backend/` = **79 passed, 0 failed** (65 prior + 14 new, no regressions). NOTE: frontend consumers (orb lip-sync animation, first-run wizard UI) still pending — those are frontend-agent tasks.
+- **Prior — Phase 9 VERIFIED — Testing & Verification (backend)**. Added `backend/test_phase9_verify.py` (19 cases) filling the gaps not covered by per-phase suites: STT accuracy (mocked whisper), TTS non-zero bytes (mocked ElevenLabs), wake-word callback, full mocked voice roundtrip with <3s latency assertion, Claude streaming + tool_use + prompt-cache block, **Ollama fallback (newly wired into `pipeline.py::_iter_reply`)**, plus the 3 security tests (no-secrets grep, 127.0.0.1 bind, sandbox blocks os.system/subprocess). Re-confirmed Phase 4 delegation/persistence + Phase 5 Slack/Gmail mocked read/send via the existing suites. Whole `pytest backend/` = 65 passed, 0 failed. DEFERRED: 4 live-UI items (windows open, WS<2s, orb colour, agent-card updates) + 2 true voice E2E — all need the native Tauri app (Rust/cargo not installed) and/or a microphone + live API keys; component paths are covered by mocked tests, and `frontend/` has no Vitest harness yet (a Phase 10 add). Minor non-blocking finding logged: `code_executor.py` docstring overstates allowed builtins (`sum`/`range`/`sorted` actually raise NameError — sandbox is stricter than documented).
 - **Prior (Phase 7 build by frontend-agent Ben):** `pnpm build` passes clean (tsc + vite, Three.js code-split to AnimationWindow chunk only). New deps: zustand, three, @react-three/fiber, @react-three/drei, framer-motion, tailwindcss v4 + @tailwindcss/vite. Files: `frontend/src/lib/{types,store,websocket,api}.ts` (Zustand store + WS singleton w/ auto-reconnect backoff, dispatches agent_update/token/tool_call/voice_state exactly per `backend/events.py`; forward-declares metrics/comms/tool_permissions). Components `frontend/src/components/`: `JarvisOrb.tsx` (R3F, lerped colour blue/gold/cyan + audio-reactive scale), `AgentCard.tsx`, `ToolCard.tsx`, `StreamViewer.tsx`, `StatusBadge.tsx`, `WindowFrame.tsx` (Framer Motion staggered fade, 0.2s/window). Windows `frontend/src/windows/`: Animation, Reasoning, Communications, Agents, Tools. `App.tsx` routes by Tauri window label (`__TAURI_INTERNALS__`) → `?window=` query → dev dashboard fallback; windows lazy-loaded. `index.css` = Tailwind v4 @theme HUD tokens + `.glass`/`.hud-bg`. Tauri: `tauri.conf.json` 5 frameless transparent windows (labels animation/reasoning/communications/agents/tools, positioned, withGlobalTauri); `src-tauri/src/lib.rs` system tray (Open Jarvis/Quit) + autostart plugin; `Cargo.toml` adds tauri-plugin-autostart + tray-icon feature; `capabilities/default.json` covers all 5 windows. NOTE: tool-toggle + comms action buttons send WS commands the backend does not yet handle (it only drains inbound frames) — forward-compatible.
-- **Last Completed**: Boot startup sound — `frontend/src/lib/useBootSound.ts` (Web Audio API, two-tone 440Hz→880Hz sine chime, 0.4s, fade out) + `AnimationWindow.tsx` updated; `pnpm build` passes 466 modules.
-- **Next Task**: TEST: Run @debugger-agent — verify boot startup sound (useBootSound hook fires once on AnimationWindow mount, TypeScript compiles, no errors). After pass: Error recovery — auto-restart voice pipeline on crash → @backend-agent.
+- **Last Completed (2026-06-03)**: **Phase 10 FRONTEND VERIFIED — particle orb + lip-sync + draggable + agent rename + setup wizard UI**. `pnpm build` passes clean (tsc + vite, "built in 3.58s", 467 modules, dist/ generated, no TS errors; only the expected AnimationWindow chunk-size warning). Verified: (1) JarvisOrb.tsx is an ethereal sand-particle cloud — `<points>`/`<pointsMaterial>`, PARTICLE_COUNT=2500, golden-spiral placement, no icosahedron/wireframe. (2) Lip-sync — store.ts has `audioLevel: number` + `setAudioLevel`; websocket.ts has `case "audio_level"`. (3) Draggable — `data-tauri-drag-region` in WindowFrame.tsx:38 (header) + AnimationWindow.tsx:37 (grip). (4) Agent rename — api.ts `renameAgent` → POST /api/agents/{id}/rename; store.ts `updateAgentName`. (5) Setup wizard — SetupWizardWindow.tsx exists; tauri.conf.json `"label": "setup"` window; App.tsx routes `setup`→SetupWizardWindow (lazy). Prior: Boot startup sound — `frontend/src/lib/useBootSound.ts` (Web Audio API two-tone chime) + AnimationWindow.tsx.
+- **Last Completed (2026-06-03)**: **Agent rename endpoint + README.md VERIFIED (debugger-agent)**. Added `backend/test_phase10_rename_verify.py` (6 cases) driving POST `/api/agents/{id}/rename` via a non-lifespan TestClient (lifespan skipped so the seeded `app.state.agents` isn't clobbered by the real runtime; `main.rename_agent` DB write + `main.hub.broadcast` patched): 200 returns `{agent_id,name}` with the trimmed name + mutates the live agent, 404 unknown agent, 400 empty-after-strip, 400 too-long (>50), broadcasts exactly one `AgentUpdate` carrying the new name, 50-char boundary accepted. Confirmed `README.md` present and complete (Prerequisites/Hardware Requirements, setup: uv sync + pnpm install + backend start + pnpm dev + wizard URL `http://localhost:1420/?window=setup`, ElevenLabs voice setup section, Known Limitations). Full `pytest backend/` = **85 passed, 0 failed** (79 prior + 6 new, no regressions).
+- **Next Task**: Final security-agent audit pass. Then remaining Phase 10 still blocked on native shell: Windows installer (.exe) via Tauri bundler + native Tauri launch / tray / autostart — Rust/cargo toolchain not installed. Vitest harness still not added for frontend unit tests (frontend verification done via `pnpm build` + grep).
 - **Blockers**: Rust/cargo toolchain NOT installed — so `pnpm tauri dev` / native window launch / tray / autostart CANNOT be run yet; only the Vite web build (`pnpm build`) and dev-dashboard preview (`pnpm dev`, single browser tab) are runnable. Rust lib.rs + Cargo + tauri.conf changes are written but UNCOMPILED. Install Rust via rustup to validate the native shell. Also: `uv` not on PATH (backend via `.venv\Scripts\python.exe`); project root not a git repo (`pre-commit install` deferred).
 - **Build Started**: 2026-06-02
 
@@ -109,7 +111,7 @@ Animation window orb: 2500-particle sand/stardust cloud (Three.js `Points`, `Add
 - [x] FastAPI app with lifespan context manager (`backend/main.py`)
 - [x] WebSocket hub — all 5 windows subscribe to `ws://127.0.0.1:8000/ws`
 - [x] WebSocket event schema: `agent_update`, `token`, `tool_call`, `voice_state`
-- [ ] `AudioLevelEvent` — broadcast RMS amplitude (0–1) every 50ms during TTS playback for lip-sync
+- [x] `AudioLevelEvent` — broadcast RMS amplitude (0–1) every 50ms during TTS playback for lip-sync
 - [x] SQLite CRUD: conversations, agent state, audit log (`backend/memory/database.py`)
 - [x] FAISS vector store with sentence-transformers embeddings
 - [x] Claude API client with streaming + prompt caching (`backend/ai/claude_client.py`)
@@ -234,15 +236,15 @@ Animation window orb: 2500-particle sand/stardust cloud (Three.js `Points`, `Add
 *Handled by: frontend-agent + backend-agent*
 
 - [x] Boot startup sound — subtle electronic tone on window open
-- [ ] Draggable windows — `data-tauri-drag-region` on WindowFrame header + AnimationWindow grip strip
-- [ ] Ethereal sand particle orb — replace icosahedron wireframe with 2500-particle noise-field system
-- [ ] Lip-sync amplitude broadcasting — `AudioLevelEvent` from backend pipeline; orb pulses with spoken audio
-- [ ] Error recovery — auto-restart voice pipeline on crash (max 3 retries)
-- [ ] Graceful degradation — Claude API failure silently switches to Ollama
-- [ ] Agent name customization UI — rename each agent from AgentsWindow
+- [x] Draggable windows — `data-tauri-drag-region` on WindowFrame header + AnimationWindow grip strip *(frontend VERIFIED 2026-06-03: 2 hits — WindowFrame.tsx:38 + AnimationWindow.tsx:37)*
+- [x] Ethereal sand particle orb — replace icosahedron wireframe with 2500-particle noise-field system *(frontend VERIFIED 2026-06-03: JarvisOrb.tsx uses `<points>`/`<pointsMaterial>`, PARTICLE_COUNT=2500, no wireframe mesh)*
+- [x] Lip-sync amplitude broadcasting — `AudioLevelEvent` from backend pipeline; orb pulses with spoken audio *(backend verified; frontend VERIFIED 2026-06-03: store `audioLevel`/`setAudioLevel`, websocket `case "audio_level"`)*
+- [x] Error recovery — auto-restart voice pipeline on crash (max 3 retries)
+- [x] Graceful degradation — Claude API failure silently switches to Ollama
+- [x] Agent name customization UI — rename each agent from AgentsWindow *(frontend VERIFIED 2026-06-03: api.ts `renameAgent` → POST /api/agents/{id}/rename, store `updateAgentName`; backend endpoint VERIFIED 2026-06-03: `backend/test_phase10_rename_verify.py`, 6 cases — 200/404/400×2/broadcast/boundary)*
 - [ ] Windows installer via Tauri bundler (`.exe`)
-- [ ] First-run setup wizard — prompts for API keys → stores in keyring
-- [ ] README.md with setup steps and first-run instructions
+- [x] First-run setup wizard — prompts for API keys → stores in keyring *(backend API verified; frontend UI VERIFIED 2026-06-03: SetupWizardWindow.tsx exists, tauri.conf.json `"label": "setup"` window, App.tsx routes `setup`→SetupWizardWindow)*
+- [x] README.md with setup steps and first-run instructions
 - [ ] Final `/security-agent` audit pass
 - [ ] Final `/debugger-agent` full test suite pass
 - [ ] Verify: clean install on fresh Windows 11 machine works end-to-end
@@ -383,10 +385,35 @@ Result: **0 Critical, 0 High** after fixes. 1 Medium (fixed), plus Low/Info note
 ## Test Results
 *(populated by debugger-agent during Phase 9)*
 
-- **Tests Passed**: 65 backend suite (`pytest backend`) + 7 Phase 7 UI verification checks (frontend) — all green
+- **Tests Passed**: 85 backend suite (`pytest backend`) + 7 Phase 7 UI verification checks (frontend) — all green
 - **Tests Failed**: 0
 - **Deferred**: 6 Phase 9 items (4 UI + 2 true-E2E) — require native Tauri app (Rust/cargo not installed) and/or a microphone + live API keys. Component paths covered by mocked tests.
-- **Last Run**: 2026-06-03 — Phase 9 Testing & Verification: full backend suite **65/65 PASS** (added `backend/test_phase9_verify.py`, 19 cases). Prior: Phase 7 UI 7/7, Phase 6 Tools 14/14.
+- **Last Run**: 2026-06-03 — Agent rename + README verification: full backend suite **85/85 PASS** (added `backend/test_phase10_rename_verify.py`, 6 cases: POST /api/agents/{id}/rename 200/404/400-empty/400-too-long, AgentUpdate broadcast, 50-char boundary; README.md confirmed complete). Prior: Phase 10 backend 79/79 (`test_phase10_backend_verify.py`, 14 cases), Phase 9 backend 65/65, Phase 7 UI 7/7.
+
+### Phase 10 — Backend verification (2026-06-03, 14/14 PASS · suite 79/79)
+*(`backend/test_phase10_backend_verify.py` — all mocked: no audio device, no network, no real keys)*
+- [x] AudioLevelEvent shape — `events.AudioLevelEvent` has `type=="audio_level"` + `level`; defaults to 0.0; `to_dict()` round-trips.
+- [x] `_rms_level` — silence→0.0, full-scale int16→~1.0, empty→0.0, >full-scale clips to 1.0.
+- [x] `tts.speak_and_play` — patched `_convert`/`_play_pcm_block_sync`/`hub`: every broadcast is an AudioLevelEvent with 0.0≤level≤1.0, at least one non-zero, and the LAST event is level==0.0.
+- [x] AudioLevel finally-path — `_play_pcm_block_sync` raising mid-playback still returns the PCM and still broadcasts a final level==0.0 (finally block).
+- [x] Crash recovery — `asyncio.sleep` no-op; 3 consecutive `_run_turn` crashes → `state=="error"`, `_consecutive_crashes==3`, no further retry.
+- [x] Crash-counter reset — crash twice then one clean turn (real `_run_turn` w/ stubbed stages) → `_consecutive_crashes` back to 0, state idle.
+- [x] Graceful degradation — Claude raising `MissingCredentialError` *or* `ClaudeAPIError` pre-token → `_iter_reply` yields the Ollama tokens (fallback used).
+- [x] No mid-stream fallback — Claude yields 1 token then raises → output is just that token; Ollama NOT called (no restart that would duplicate the spoken prefix).
+- [x] Setup wizard — isolated minimal-app TestClient + in-memory fake keyring: GET /setup/status all-missing → complete=false + 7 missing; POST stores + never echoes value; unknown name → 400; /setup/complete flips true once all 7 present; no secret value leaks into any response body.
+
+### Phase 10 — Agent rename + README verification (2026-06-03, 6/6 PASS · suite 85/85)
+*(`backend/test_phase10_rename_verify.py` — non-lifespan TestClient so seeded `app.state.agents` isn't clobbered; `main.rename_agent` DB write + `main.hub.broadcast` patched)*
+- [x] Rename success — POST /api/agents/backend/rename {"name":"Kado Prime"} → 200, returns `{"agent_id":"backend","name":"Kado Prime"}`; live agent `.name` mutated; DB write called once with trimmed name.
+- [x] Broadcast — exactly one `AgentUpdate` emitted with `agent_id`/`agent_name`/`status`/`type=="agent_update"`.
+- [x] Unknown agent — POST /api/agents/nope/rename → 404; no DB write, no broadcast.
+- [x] Empty after strip — name `"   "` → 400; agent name unchanged; no DB write, no broadcast.
+- [x] Too long — name 51 chars → 400; agent name unchanged; no DB write, no broadcast.
+- [x] Boundary — name exactly 50 chars (MAX_AGENT_NAME_LEN) → 200.
+- [x] README.md — present and complete: Prerequisites/Hardware Requirements, setup (uv sync, pnpm install, backend start, pnpm dev, wizard URL), ElevenLabs voice setup section, Known Limitations.
+
+### Failures
+*(none — Phase 10 rename: 6/6 pass; full backend suite 85/85, no regressions)*
 
 ### Phase 9 — Testing & Verification (2026-06-03, backend 65/65 PASS · 6 items DEFERRED) — Phase 9 COMPLETE (backend gate)
 

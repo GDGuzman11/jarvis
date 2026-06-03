@@ -74,6 +74,17 @@
         "decorations": false,
         "transparent": true,
         "resizable": true
+      },
+      {
+        "label": "setup",
+        "title": "Jarvis — Setup",
+        "url": "index.html?window=setup",
+        "width": 520,
+        "height": 640,
+        "center": true,
+        "decorations": false,
+        "transparent": true,
+        "resizable": true
       }
     ],
     "security": {

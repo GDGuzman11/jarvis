@@ -57,6 +57,16 @@ export interface MetricsEvent {
   timestamp: string;
 }
 
+/**
+ * Backend `audio_level` event — emitted every ~50ms while TTS plays. Drives the
+ * orb's amplitude pulse during the speaking state. `level` is normalised 0..1.
+ */
+export interface AudioLevelEvent {
+  type: "audio_level";
+  level: number;
+  timestamp: string;
+}
+
 export interface SlackMessage {
   id: string;
   sender: string;
@@ -94,6 +104,7 @@ export type JarvisEvent =
   | TokenEvent
   | ToolCallEvent
   | VoiceStateEvent
+  | AudioLevelEvent
   | MetricsEvent
   | CommsEvent
   | ToolPermissionsEvent;

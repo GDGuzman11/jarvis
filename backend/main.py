@@ -23,15 +23,17 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.agents.runtime import AgentRuntime
+from backend.events import AgentUpdate
 from backend.integrations.gmail_client import GmailClient
 from backend.integrations.slack_client import SlackClient
 from backend.logging_config import configure_logging, get_logger
-from backend.memory.database import init_db
+from backend.memory.database import init_db, rename_agent
 from backend.memory.vector_store import VectorStore
+from backend.setup_wizard import router as setup_router
 from backend.tools.wiring import build_tool_registry
 from backend.voice.pipeline import VoicePipeline
 from backend.websocket_hub import hub
@@ -190,6 +192,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# First-run setup wizard (Phase 10): GET /setup/status, POST /setup/credential,
+# GET /setup/complete. Reachable on loopback only (Security Rule 2 binding).
+app.include_router(setup_router)
+
 
 @app.get("/health", tags=["system"])
 async def health() -> dict[str, str]:
@@ -199,6 +205,67 @@ async def health() -> dict[str, str]:
     the backend is up and report its version.
     """
     return {"status": "ok", "version": APP_VERSION}
+
+
+# Maximum length of an agent display name. Keeps the Agents-window cards from
+# overflowing and bounds what we persist; mirrored in the frontend's form.
+MAX_AGENT_NAME_LEN: int = 50
+
+
+@app.post("/api/agents/{agent_id}/rename", tags=["agents"])
+async def rename_agent_endpoint(
+    agent_id: str,
+    name: str = Body(..., embed=True),
+) -> dict[str, str]:
+    """Rename a background agent.
+
+    Validates that ``agent_id`` is a live agent and that ``name`` is non-empty
+    and at most :data:`MAX_AGENT_NAME_LEN` characters (after trimming
+    surrounding whitespace). On success the new name is persisted to the
+    ``agents`` table, applied to the live in-memory agent so future status
+    broadcasts carry it, and an :class:`AgentUpdate` is broadcast immediately so
+    every window's card relabels in real time.
+
+    Returns ``{"agent_id", "name"}`` with the stored (trimmed) name. Responds
+    ``404`` for an unknown agent and ``400`` for an empty or over-long name.
+    """
+    agents = getattr(app.state, "agents", {})
+    agent = agents.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"unknown agent {agent_id!r}")
+
+    new_name = name.strip()
+    if not new_name:
+        raise HTTPException(status_code=400, detail="name must not be empty")
+    if len(new_name) > MAX_AGENT_NAME_LEN:
+        raise HTTPException(
+            status_code=400,
+            detail=f"name must be at most {MAX_AGENT_NAME_LEN} characters",
+        )
+
+    # Persist first. A False return means the row vanished between the in-memory
+    # check and the write (e.g. a concurrent teardown) — surface it as a 404.
+    persisted = await rename_agent(agent_id, new_name)
+    if not persisted:
+        raise HTTPException(status_code=404, detail=f"unknown agent {agent_id!r}")
+
+    # Apply to the live agent so its own subsequent status broadcasts and DB
+    # upserts carry the new name rather than reverting to the old one.
+    agent.name = new_name
+
+    # Broadcast now so every window relabels without waiting for the agent's
+    # next status change. Preserve the agent's current status/task in the event.
+    await hub.broadcast(
+        AgentUpdate(
+            agent_id=agent_id,
+            agent_name=new_name,
+            status=agent.status,
+            current_task=getattr(agent, "_current_task_label", None),
+        )
+    )
+
+    log.info("agent_renamed", agent_id=agent_id, name=new_name)
+    return {"agent_id": agent_id, "name": new_name}
 
 
 def _is_allowed_ws_origin(origin: str | None) -> bool:

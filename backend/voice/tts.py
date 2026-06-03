@@ -44,13 +44,24 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from backend.events import AudioLevelEvent
 from backend.logging_config import get_logger
 from backend.security import keystore
+from backend.websocket_hub import hub
 
 if TYPE_CHECKING:
     from elevenlabs.client import ElevenLabs
 
 log = get_logger(__name__)
+
+# How often we sample the playback amplitude and broadcast an AudioLevelEvent.
+# 50 ms gives the Animation window a smooth, responsive pulse without flooding
+# the WebSocket hub.
+AUDIO_LEVEL_INTERVAL_S: float = 0.05
+
+# Full-scale value for signed 16-bit PCM, used to normalise the RMS amplitude
+# into the 0.0-1.0 range the AudioLevelEvent contract specifies.
+_INT16_FULL_SCALE: float = 32768.0
 
 # --- Output format / model configuration -------------------------------------
 
@@ -191,6 +202,35 @@ def _play_pcm_sync(pcm_bytes: bytes, sample_rate: int) -> None:
     sd.wait()
 
 
+def _rms_level(samples: np.ndarray) -> float:
+    """Return the RMS amplitude of an int16 sample block, normalised to 0.0-1.0.
+
+    The root-mean-square is computed in float space (to avoid int16 overflow),
+    divided by full scale, and clipped at ``1.0`` so a hot buffer never reports
+    above the contract's ceiling. An empty block is silence (``0.0``).
+    """
+    if samples.size == 0:
+        return 0.0
+    # Square in float64 so the intermediate sum can't overflow int16.
+    rms = float(np.sqrt(np.mean(np.square(samples.astype(np.float64)))))
+    return min(rms / _INT16_FULL_SCALE, 1.0)
+
+
+def _play_pcm_block_sync(samples: np.ndarray, sample_rate: int) -> None:
+    """Play one already-decoded int16 PCM block and block until it finishes.
+
+    Used by the chunked playback path in :func:`speak_and_play` so amplitude can
+    be sampled and broadcast between blocks on the event loop. ``sounddevice`` is
+    imported lazily so this module stays importable without an audio device.
+    """
+    if samples.size == 0:
+        return
+    import sounddevice as sd
+
+    sd.play(samples, samplerate=sample_rate)
+    sd.wait()
+
+
 async def play_audio(audio_bytes: bytes) -> None:
     """Play already-rendered audio ``bytes`` on the default output device.
 
@@ -233,18 +273,41 @@ async def speak_and_play(text: str) -> bytes:
     This is the low-latency local playback path: it renders raw 16 kHz mono PCM
     (no external decoder needed) and plays it straight through ``sounddevice``.
     Use this from the voice loop for "say this now". Returns the PCM bytes (empty
-    when TTS is unavailable). Playback runs in the thread executor so the event
-    loop is not blocked.
+    when TTS is unavailable).
+
+    While the audio plays, the buffer is sliced into ~50 ms blocks (see
+    :data:`AUDIO_LEVEL_INTERVAL_S`); each block is played in the thread executor
+    and its RMS amplitude is broadcast as an :class:`~backend.events.AudioLevelEvent`
+    on the event loop so the Animation window's orb pulses in time with Jarvis's
+    voice. A final ``level=0.0`` event is always broadcast when playback ends so
+    the orb settles back to rest, even if playback failed midway.
     """
     pcm = await _convert(text, PCM_OUTPUT_FORMAT)
     if not pcm:
         return b""
 
+    samples = _decode_pcm16(pcm)
+    if samples.size == 0:
+        return pcm
+
     loop = asyncio.get_running_loop()
+    block_size = max(1, int(PCM_SAMPLE_RATE * AUDIO_LEVEL_INTERVAL_S))
+
     try:
-        await loop.run_in_executor(None, _play_pcm_sync, pcm, PCM_SAMPLE_RATE)
+        # Play block-by-block so we can sample and broadcast the amplitude of
+        # each ~50 ms slice as it goes out. Each block's playback blocks in the
+        # executor; the broadcast happens on the loop between blocks.
+        for start in range(0, samples.size, block_size):
+            block = samples[start : start + block_size]
+            await hub.broadcast(AudioLevelEvent(level=_rms_level(block)))
+            await loop.run_in_executor(
+                None, _play_pcm_block_sync, block, PCM_SAMPLE_RATE
+            )
     except Exception:  # noqa: BLE001 — playback failure must not kill the loop
         log.warning("tts_play_pcm_failed", exc_info=True)
+    finally:
+        # Always settle the orb back to rest, whether playback finished or threw.
+        await hub.broadcast(AudioLevelEvent(level=0.0))
     return pcm
 
 
@@ -264,6 +327,7 @@ __all__ = [
     "PCM_OUTPUT_FORMAT",
     "PCM_SAMPLE_RATE",
     "MODEL_ID",
+    "AUDIO_LEVEL_INTERVAL_S",
     "speak",
     "play_audio",
     "speak_and_play",

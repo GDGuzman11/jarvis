@@ -78,6 +78,7 @@ export interface JarvisStore {
     status: AgentStatus;
     current_task: string | null;
   }) => void;
+  updateAgentName: (agentId: string, name: string) => void;
 
   // --- Reasoning: tokens, tool calls, model, metrics ---
   model: string;
@@ -147,6 +148,12 @@ export const useStore = create<JarvisStore>((set) => ({
       }
       return { agents };
     }),
+  updateAgentName: (agentId, name) =>
+    set((s) => ({
+      agents: s.agents.map((a) =>
+        a.agent_id === agentId ? { ...a, agent_name: name } : a,
+      ),
+    })),
 
   model: "Claude Opus 4.7",
   streamingText: "",

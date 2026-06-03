@@ -306,6 +306,31 @@ async def upsert_agent(
         await conn.close()
 
 
+async def rename_agent(
+    agent_id: str,
+    name: str,
+    *,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> bool:
+    """Update an agent's display name in place. Returns ``True`` if a row matched.
+
+    Only the ``name`` column (and ``updated_at``) is touched — status, role, and
+    the current task are left untouched. Returns ``False`` when no agent with
+    ``agent_id`` exists, so callers can map a miss to a 404 without a separate
+    lookup.
+    """
+    conn = await connect(db_path)
+    try:
+        cursor = await conn.execute(
+            "UPDATE agents SET name = ?, updated_at = datetime('now') WHERE id = ?",
+            (name, agent_id),
+        )
+        await conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        await conn.close()
+
+
 async def get_all_agents(*, db_path: Path | str = DEFAULT_DB_PATH) -> list[dict]:
     """Return every agent row, ordered by id for stable display."""
     conn = await connect(db_path)

@@ -61,6 +61,7 @@ import numpy as np
 from backend.ai.claude_client import ClaudeAPIError, ClaudeClient
 from backend.ai.ollama_client import OllamaClient
 from backend.ai.persona import build_system_prompt
+from backend.security.keystore import MissingCredentialError
 from backend.events import VoiceState, VoiceStateEvent
 from backend.logging_config import get_logger
 from backend.voice import stt, tts
@@ -84,6 +85,18 @@ INTERRUPT_KEYWORD: str = "stop"
 # check for the keyword. Short so a "stop" is acted on quickly, but long enough
 # to catch the whole word. We re-arm the window repeatedly while Jarvis is busy.
 INTERRUPT_WINDOW_S: float = 1.2
+
+# --- Crash-recovery configuration (Phase 10) ---------------------------------
+
+# How many *consecutive* turn crashes we tolerate before giving up. After this
+# many back-to-back unhandled errors the pipeline parks in the ``error`` state
+# and stops re-arming the wake word, so a hard fault (e.g. a missing audio
+# device) doesn't spin forever. A single clean turn resets the counter.
+MAX_TURN_RETRIES: int = 3
+
+# How long to pause after a crash before re-arming the wake word, so a fast-
+# failing fault (e.g. the audio device is gone) doesn't busy-loop.
+CRASH_RECOVERY_DELAY_S: float = 2.0
 
 # --- Token-buffering (speakable-chunk) configuration -------------------------
 
@@ -202,6 +215,11 @@ class VoicePipeline:
         # mid-turn is ignored rather than starting an overlapping turn.
         self._busy: bool = False
 
+        # Number of *consecutive* turns that have crashed with an unhandled
+        # error. Reset to 0 on any clean turn completion. Once it reaches
+        # MAX_TURN_RETRIES the pipeline parks in ``error`` and stops retrying.
+        self._consecutive_crashes: int = 0
+
         self._detector.on_detected(self._on_wake)
 
     # --- Public lifecycle ---------------------------------------------------
@@ -269,7 +287,15 @@ class VoicePipeline:
 
         Always unwinds to ``idle`` — on completion, on an empty transcript, on
         interrupt cancellation, or on error — so the orb never sticks.
+
+        Crash recovery (Phase 10): an unhandled error inside the turn does not
+        kill the loop. It is logged, the consecutive-crash counter ticks up, and
+        after :data:`CRASH_RECOVERY_DELAY_S` the wake word is re-armed. A clean
+        turn resets the counter. After :data:`MAX_TURN_RETRIES` back-to-back
+        crashes the pipeline parks in the ``error`` state and stops retrying
+        (logging a critical), so a hard fault can't spin forever.
         """
+        crashed = False
         try:
             # 1. LISTEN — capture the user's utterance until they fall silent.
             await self._set_state("listening")
@@ -292,12 +318,65 @@ class VoicePipeline:
             log.info("voice_turn_cancelled")
             raise
         except Exception:  # noqa: BLE001 — a bad turn must not kill the loop
+            crashed = True
             log.error("voice_turn_error", exc_info=True)
         finally:
-            # Best-effort return to rest. (Skipped silently if we were cancelled
-            # by stop(), which sets idle itself.)
+            if crashed:
+                # A crash path handles its own state (error vs idle) via recovery.
+                await self._handle_turn_crash()
+            else:
+                # Clean turn (completed, empty, or interrupted): reset the crash
+                # streak and return to rest. (Skipped if stop() cancelled us —
+                # that path raised CancelledError above and never reaches here.)
+                self._consecutive_crashes = 0
+                if self._running:
+                    await self._set_state("idle")
+
+    async def _handle_turn_crash(self) -> None:
+        """Recover from an unhandled turn error by re-arming, up to a limit.
+
+        Increments the consecutive-crash counter. If we are at or over
+        :data:`MAX_TURN_RETRIES`, parks the pipeline in the ``error`` state and
+        stops retrying (the detector keeps running but the orb shows the fault).
+        Otherwise it waits :data:`CRASH_RECOVERY_DELAY_S`, re-arms the wake-word
+        detector if it has fallen over, and returns the pipeline to ``idle`` so
+        the next wake word starts a fresh turn.
+        """
+        self._consecutive_crashes += 1
+
+        if self._consecutive_crashes >= MAX_TURN_RETRIES:
+            log.critical(
+                "voice_pipeline_giving_up",
+                consecutive_crashes=self._consecutive_crashes,
+                max_retries=MAX_TURN_RETRIES,
+            )
             if self._running:
-                await self._set_state("idle")
+                await self._set_state("error")
+            return
+
+        log.warning(
+            "voice_turn_recovering",
+            consecutive_crashes=self._consecutive_crashes,
+            max_retries=MAX_TURN_RETRIES,
+            delay_s=CRASH_RECOVERY_DELAY_S,
+        )
+        try:
+            await asyncio.sleep(CRASH_RECOVERY_DELAY_S)
+        except asyncio.CancelledError:
+            # stop() cut the recovery wait short — abandon recovery quietly.
+            raise
+
+        if not self._running:
+            return
+
+        # Re-arm the wake word in case the fault tore the detector down. start()
+        # is idempotent, so this is a safe no-op when it's still listening.
+        try:
+            await self._detector.start()
+        except Exception:  # noqa: BLE001 — re-arm failure shouldn't crash recovery
+            log.error("voice_pipeline_rearm_failed", exc_info=True)
+
+        await self._set_state("idle")
 
     # --- Reason + speak, with interrupt -------------------------------------
 
@@ -380,12 +459,19 @@ class VoicePipeline:
         """Yield reply tokens from Claude, falling back to Ollama on API error.
 
         Tokens are also broadcast to the Reasoning window by the AI client
-        itself; here we only need the text to feed TTS. If the Claude API call
-        fails with a :class:`ClaudeAPIError` (network down, rate limited, key
-        missing), the turn degrades gracefully to the local Ollama model rather
-        than ending silently — graceful degradation (CLAUDE.md Phase 10 /
-        Phase 9 fallback test). Ollama itself never raises on a cold start; if
-        it too is unavailable it simply yields nothing.
+        itself; here we only need the text to feed TTS. The turn degrades
+        gracefully to the local Ollama model — silently, with no user-facing
+        error — when Claude is unavailable for either reason:
+
+        * :class:`ClaudeAPIError` — the API call failed (network down, rate
+          limited, server error), or
+        * :class:`MissingCredentialError` — the Anthropic API key is not set in
+          the keyring, so the SDK client can't even be built. Jarvis simply
+          speaks using Ollama instead (graceful degradation — CLAUDE.md Phase 10
+          / Phase 9 fallback test).
+
+        Ollama itself never raises on a cold start; if it too is unavailable it
+        simply yields nothing.
 
         To preserve prefix caching and avoid re-emitting tokens, the fallback is
         only attempted when Claude fails *before yielding any token*. A mid-stream
@@ -398,12 +484,12 @@ class VoicePipeline:
                 produced_any = True
                 yield token
             return
-        except ClaudeAPIError:
+        except (ClaudeAPIError, MissingCredentialError):
             log.error("voice_claude_error", exc_info=True)
             if produced_any:
                 # Some audio already spoke; don't restart from a different model.
                 return
-            log.warning("voice_falling_back_to_ollama")
+            log.warning("claude_fallback_to_ollama")
 
         # Claude failed before producing anything — fall back to the local model.
         try:
@@ -506,6 +592,8 @@ __all__ = [
     "VoicePipeline",
     "INTERRUPT_KEYWORD",
     "INTERRUPT_WINDOW_S",
+    "MAX_TURN_RETRIES",
+    "CRASH_RECOVERY_DELAY_S",
     "MIN_CHUNK_CHARS",
     "MAX_CHUNK_CHARS",
     "_split_speakable_chunks",

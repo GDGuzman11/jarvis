@@ -31,6 +31,15 @@ export function AnimationWindow() {
           {STATE_LABEL[voiceState] ?? voiceState}
         </span>
       </div>
+      {/* This window is frameless (no header), so it gets its own drag handle:
+          a narrow grip strip pinned to the bottom edge. */}
+      <div
+        data-tauri-drag-region
+        title="Drag to move"
+        className="absolute inset-x-0 bottom-0 flex h-4 cursor-grab items-center justify-center active:cursor-grabbing"
+      >
+        <span className="pointer-events-none h-1 w-10 rounded-full bg-jarvis-cyan/40" />
+      </div>
     </div>
   );
 }
