@@ -59,6 +59,7 @@ from collections.abc import AsyncIterator
 import numpy as np
 
 from backend.ai.claude_client import ClaudeAPIError, ClaudeClient
+from backend.ai.ollama_client import OllamaClient
 from backend.ai.persona import build_system_prompt
 from backend.events import VoiceState, VoiceStateEvent
 from backend.logging_config import get_logger
@@ -157,6 +158,10 @@ class VoicePipeline:
     claude:
         The Claude client used to generate replies. Defaults to a fresh
         :class:`ClaudeClient` (lazy — touches no credentials until first use).
+    ollama:
+        The local fallback client used when the Claude API is unavailable
+        (raises :class:`ClaudeAPIError`). Defaults to a fresh
+        :class:`OllamaClient` (lazy — connects nothing until first use).
     detector:
         The wake-word detector. Defaults to a fresh one owning its own capture
         loop. Injecting one lets tests drive detection without a microphone.
@@ -174,10 +179,12 @@ class VoicePipeline:
         *,
         hub: ConnectionHub | None = None,
         claude: ClaudeClient | None = None,
+        ollama: OllamaClient | None = None,
         detector: WakeWordDetector | None = None,
     ) -> None:
         self._hub = hub or default_hub
         self._claude = claude or ClaudeClient()
+        self._ollama = ollama or OllamaClient()
         self._detector = detector or WakeWordDetector()
 
         # The capture loop is shared between the wake-word detector and the
@@ -370,19 +377,40 @@ class VoicePipeline:
     async def _iter_reply(
         self, messages: list[dict[str, object]], system_prompt: str
     ) -> AsyncIterator[str]:
-        """Yield reply tokens from Claude, logging (not raising) an API error.
+        """Yield reply tokens from Claude, falling back to Ollama on API error.
 
-        Tokens are also broadcast to the Reasoning window by the Claude client
-        itself; here we only need the text to feed TTS. A
-        :class:`ClaudeAPIError` is swallowed (logged) so a transient API failure
-        ends the turn quietly rather than crashing the loop — the Ollama fallback
-        wiring is a separate concern handled by callers/agents.
+        Tokens are also broadcast to the Reasoning window by the AI client
+        itself; here we only need the text to feed TTS. If the Claude API call
+        fails with a :class:`ClaudeAPIError` (network down, rate limited, key
+        missing), the turn degrades gracefully to the local Ollama model rather
+        than ending silently — graceful degradation (CLAUDE.md Phase 10 /
+        Phase 9 fallback test). Ollama itself never raises on a cold start; if
+        it too is unavailable it simply yields nothing.
+
+        To preserve prefix caching and avoid re-emitting tokens, the fallback is
+        only attempted when Claude fails *before yielding any token*. A mid-stream
+        failure (some tokens already spoken) is logged and ends the turn, since
+        restarting from Ollama would duplicate the already-spoken prefix.
         """
+        produced_any = False
         try:
             async for token in self._claude.stream_response(messages, system_prompt):
+                produced_any = True
                 yield token
+            return
         except ClaudeAPIError:
             log.error("voice_claude_error", exc_info=True)
+            if produced_any:
+                # Some audio already spoke; don't restart from a different model.
+                return
+            log.warning("voice_falling_back_to_ollama")
+
+        # Claude failed before producing anything — fall back to the local model.
+        try:
+            async for token in self._ollama.stream_response(messages, system_prompt):
+                yield token
+        except Exception:  # noqa: BLE001 — fallback must never crash the loop
+            log.error("voice_ollama_error", exc_info=True)
 
     async def _speak_chunk(self, text: str) -> None:
         """Synthesise and play one chunk, swallowing TTS failures.

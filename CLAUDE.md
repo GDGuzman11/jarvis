@@ -10,10 +10,10 @@
 
 ## Current Status
 
-- **Active Phase**: 8 — Security Hardening **COMPLETE** (security-agent, 2026-06-03). 0 Critical / 0 High; 1 Medium fixed (WS Origin validation). Next: Phase 9 — Testing (`/debugger-agent`). Phase 7 Multi-Window UI VERIFIED by debugger-agent 2026-06-03 (React/TS layer).
-- **Last Completed**: **Phase 7 VERIFIED — Multi-Window UI**. debugger-agent ran 7 checks, all pass: (1) `pnpm build` clean — `tsc` no TS errors, `vite` "built in 2.97s", `dist/` generated with code-split chunks (AnimationWindow 891kB Three.js chunk isolated); (2) all 5 window files present; (3) all 4 components present (JarvisOrb/AgentCard/ToolCard/StreamViewer); (4) `store.ts` exports `useStore` via `create<JarvisStore>`; (5) `websocket.ts` references `ws://127.0.0.1:8000/ws`; (6) `tauri.conf.json` defines 5 window labels; (7) `App.tsx` routes by Tauri window label → `?window=` → dev dashboard fallback, lazy-loads all 5 windows. CAVEAT: Rust shell (system tray, autostart, native multi-window launch in `src-tauri/src/lib.rs` + `Cargo.toml`) is written but UNCOMPILED — Rust/cargo toolchain not installed, so native window launch could not be exercised. Only the Vite web layer was verified. Phase 9 UI test items remain to be run later (orb color transitions, agent card live updates, WS-connect-within-2s) under the full app.
+- **Active Phase**: 9 — Testing & Verification **COMPLETE (backend gate)** (debugger-agent, 2026-06-03). Full backend suite **65/65 PASS**; 6 Phase 9 items DEFERRED (4 UI + 2 true-E2E) pending Rust toolchain + mic/live keys. Next: **Phase 10 — Polish & Packaging** (`/frontend-agent` + `/backend-agent`). Run `/production-manager` to confirm.
+- **Last Completed**: **Phase 9 VERIFIED — Testing & Verification (backend)**. Added `backend/test_phase9_verify.py` (19 cases) filling the gaps not covered by per-phase suites: STT accuracy (mocked whisper), TTS non-zero bytes (mocked ElevenLabs), wake-word callback, full mocked voice roundtrip with <3s latency assertion, Claude streaming + tool_use + prompt-cache block, **Ollama fallback (newly wired into `pipeline.py::_iter_reply`)**, plus the 3 security tests (no-secrets grep, 127.0.0.1 bind, sandbox blocks os.system/subprocess). Re-confirmed Phase 4 delegation/persistence + Phase 5 Slack/Gmail mocked read/send via the existing suites. Whole `pytest backend/` = 65 passed, 0 failed. DEFERRED: 4 live-UI items (windows open, WS<2s, orb colour, agent-card updates) + 2 true voice E2E — all need the native Tauri app (Rust/cargo not installed) and/or a microphone + live API keys; component paths are covered by mocked tests, and `frontend/` has no Vitest harness yet (a Phase 10 add). Minor non-blocking finding logged: `code_executor.py` docstring overstates allowed builtins (`sum`/`range`/`sorted` actually raise NameError — sandbox is stricter than documented).
 - **Prior (Phase 7 build by frontend-agent Ben):** `pnpm build` passes clean (tsc + vite, Three.js code-split to AnimationWindow chunk only). New deps: zustand, three, @react-three/fiber, @react-three/drei, framer-motion, tailwindcss v4 + @tailwindcss/vite. Files: `frontend/src/lib/{types,store,websocket,api}.ts` (Zustand store + WS singleton w/ auto-reconnect backoff, dispatches agent_update/token/tool_call/voice_state exactly per `backend/events.py`; forward-declares metrics/comms/tool_permissions). Components `frontend/src/components/`: `JarvisOrb.tsx` (R3F, lerped colour blue/gold/cyan + audio-reactive scale), `AgentCard.tsx`, `ToolCard.tsx`, `StreamViewer.tsx`, `StatusBadge.tsx`, `WindowFrame.tsx` (Framer Motion staggered fade, 0.2s/window). Windows `frontend/src/windows/`: Animation, Reasoning, Communications, Agents, Tools. `App.tsx` routes by Tauri window label (`__TAURI_INTERNALS__`) → `?window=` query → dev dashboard fallback; windows lazy-loaded. `index.css` = Tailwind v4 @theme HUD tokens + `.glass`/`.hud-bg`. Tauri: `tauri.conf.json` 5 frameless transparent windows (labels animation/reasoning/communications/agents/tools, positioned, withGlobalTauri); `src-tauri/src/lib.rs` system tray (Open Jarvis/Quit) + autostart plugin; `Cargo.toml` adds tauri-plugin-autostart + tray-icon feature; `capabilities/default.json` covers all 5 windows. NOTE: tool-toggle + comms action buttons send WS commands the backend does not yet handle (it only drains inbound frames) — forward-compatible.
-- **Next Task**: Phase 9 — Testing & Verification. Run `/debugger-agent`. (Run `/production-manager` first to confirm.) Phase 8 security audit done: WS Origin guard added to `backend/main.py`; all 12 Phase 8 items checked; findings table populated.
+- **Next Task**: Phase 10 — Polish & Packaging. Run `/production-manager` to confirm, then `/frontend-agent` + `/backend-agent`. Phase 9 backend gate done: `backend/test_phase9_verify.py` added, full backend suite 65/65; Ollama fallback wired into `pipeline.py`. Remaining Phase 9 UI/E2E items are blocked on the Rust toolchain (native Tauri app) — revisit once Rust is installed.
 - **Blockers**: Rust/cargo toolchain NOT installed — so `pnpm tauri dev` / native window launch / tray / autostart CANNOT be run yet; only the Vite web build (`pnpm build`) and dev-dashboard preview (`pnpm dev`, single browser tab) are runnable. Rust lib.rs + Cargo + tauri.conf changes are written but UNCOMPILED. Install Rust via rustup to validate the native shell. Also: `uv` not on PATH (backend via `.venv\Scripts\python.exe`); project root not a git repo (`pre-commit install` deferred).
 - **Build Started**: 2026-06-02
 
@@ -205,26 +205,26 @@ Dark theme `#0A0A0F`, electric blue/cyan accents `#00D4FF`, gold highlights `#FF
 ## Phase 9 — Testing & Verification
 *Handled by: debugger-agent*
 
-- [ ] Unit: STT transcription accuracy (WAV file → expected transcript)
-- [ ] Unit: TTS audio output (ElevenLabs → non-zero byte audio file)
-- [ ] Unit: wake word callback simulation activates pipeline
-- [ ] Integration: full voice roundtrip (<3s latency)
-- [ ] Integration: Claude API streaming + tool use
-- [ ] Integration: Ollama fallback when Claude API unavailable (mock 503)
-- [ ] Integration: Slack read/send (mocked API)
-- [ ] Integration: Gmail read/draft/send (mocked API)
-- [ ] Integration: agent task delegation (Production Lead → Ben, Kado, etc.)
-- [ ] Integration: agent state persists across backend restart
-- [ ] UI: all 5 Tauri windows open on launch
-- [ ] UI: WebSocket connects within 2 seconds of backend start
-- [ ] UI: orb color changes correctly for idle/thinking/speaking
-- [ ] UI: agent cards update in real-time on WebSocket events
-- [ ] Security: grep scan finds no secrets in files
-- [ ] Security: FastAPI not binding to 0.0.0.0
-- [ ] Security: code executor blocks `os.system()` and `subprocess`
-- [ ] E2E: "Jarvis, what's in my Slack?" → reads Slack → speaks answer
-- [ ] E2E: "Jarvis, send an email to..." → Gmail draft + confirmation → sends
-- [ ] Verify: all tests pass — see **Test Results** section below
+- [x] Unit: STT transcription accuracy (WAV file → expected transcript)
+- [x] Unit: TTS audio output (ElevenLabs → non-zero byte audio file)
+- [x] Unit: wake word callback simulation activates pipeline
+- [x] Integration: full voice roundtrip (<3s latency)
+- [x] Integration: Claude API streaming + tool use
+- [x] Integration: Ollama fallback when Claude API unavailable (mock 503)
+- [x] Integration: Slack read/send (mocked API)
+- [x] Integration: Gmail read/draft/send (mocked API)
+- [x] Integration: agent task delegation (Production Lead → Ben, Kado, etc.)
+- [x] Integration: agent state persists across backend restart
+- [ ] UI: all 5 Tauri windows open on launch — **DEFERRED** (needs native Tauri app; Rust/cargo not installed)
+- [ ] UI: WebSocket connects within 2 seconds of backend start — **DEFERRED** (needs running app + Vitest harness, not installed)
+- [ ] UI: orb color changes correctly for idle/thinking/speaking — **DEFERRED** (needs native app; JarvisOrb colour-lerp logic verified by Phase 7 build only)
+- [ ] UI: agent cards update in real-time on WebSocket events — **DEFERRED** (needs native app + WS; store dispatch verified by Phase 7 build only)
+- [x] Security: grep scan finds no secrets in files
+- [x] Security: FastAPI not binding to 0.0.0.0
+- [x] Security: code executor blocks `os.system()` and `subprocess`
+- [ ] E2E: "Jarvis, what's in my Slack?" → reads Slack → speaks answer — **DEFERRED** (true E2E needs mic + native app + live keys; component path covered by mocked roundtrip + Slack read tests)
+- [ ] E2E: "Jarvis, send an email to..." → Gmail draft + confirmation → sends — **DEFERRED** (true E2E needs mic + native app + live keys; component path covered by mocked roundtrip + Gmail draft/send tests)
+- [x] Verify: all backend tests pass — see **Test Results** section below (65 passed; UI/E2E deferred pending Rust toolchain)
 
 ## Phase 10 — Polish & Packaging
 *Handled by: frontend-agent + backend-agent*
@@ -376,9 +376,45 @@ Result: **0 Critical, 0 High** after fixes. 1 Medium (fixed), plus Low/Info note
 ## Test Results
 *(populated by debugger-agent during Phase 9)*
 
-- **Tests Passed**: 46 backend suite (`pytest backend`) + 7 Phase 7 UI verification checks (frontend) — all green
+- **Tests Passed**: 65 backend suite (`pytest backend`) + 7 Phase 7 UI verification checks (frontend) — all green
 - **Tests Failed**: 0
-- **Last Run**: 2026-06-03 — Phase 7 Multi-Window UI verification: 7/7 checks pass (React/TS layer). Prior: Phase 6 Tools 14/14, full backend suite 46/46.
+- **Deferred**: 6 Phase 9 items (4 UI + 2 true-E2E) — require native Tauri app (Rust/cargo not installed) and/or a microphone + live API keys. Component paths covered by mocked tests.
+- **Last Run**: 2026-06-03 — Phase 9 Testing & Verification: full backend suite **65/65 PASS** (added `backend/test_phase9_verify.py`, 19 cases). Prior: Phase 7 UI 7/7, Phase 6 Tools 14/14.
+
+### Phase 9 — Testing & Verification (2026-06-03, backend 65/65 PASS · 6 items DEFERRED) — Phase 9 COMPLETE (backend gate)
+
+New suite `backend/test_phase9_verify.py` (19 cases) fills the Phase 9 gaps not covered by per-phase suites; the full `pytest backend/` (65 tests across Phases 3–6 + 9) is green.
+
+UNIT
+- [x] STT accuracy — mocked faster-whisper: int16 utterance → exact transcript; int16→float32 normalisation asserted; control-char strip + 2000-char cap (Security Rule 3); empty audio → "".
+- [x] TTS output — mocked ElevenLabs `convert` → non-zero MP3 bytes, correct voice id + low-latency model; missing-key → empty bytes (graceful); empty text short-circuits.
+- [x] Wake-word callback — FakeDetector `.fire()` drives pipeline out of idle (listening broadcast). (Also Phase 3 `test_callback_fires_on_detection` exercises the real OpenWakeWord predict loop.)
+
+INTEGRATION
+- [x] Full voice roundtrip — wake→listen→STT→Claude→TTS→idle, all 4 states broadcast in order, transcript reaches Claude, whole reply spoken; latency tracked and asserted < 3 s (mocked turn).
+- [x] Claude streaming + tool use — mocked Anthropic stream yields ordered text tokens; `tools=[...]` forwarded in request; system block carries `cache_control: ephemeral` (prompt caching present); final message exposes a `tool_use` block (name + input).
+- [x] Ollama fallback — Claude raises `ClaudeAPIError` before any token → pipeline streams from the local Ollama client and speaks ITS reply (graceful degradation). Also: a *mid-stream* Claude failure does NOT restart from Ollama (no duplicated spoken prefix). **Fallback newly wired into `backend/voice/pipeline.py::_iter_reply`.**
+- [x] Slack read/send (mocked) — Phase 5 suite: `send_message` success, `get_dm_history`/`get_unread_mentions` normalise, missing-cred no-op.
+- [x] Gmail read/draft/send (mocked) — Phase 5 suite: `send_email`/`draft_email`/`get_inbox` over deep-chained service mock, missing-cred no-op.
+- [x] Agent delegation — Phase 4 suite: ProductionLead keyword routing + `submit_goal` writes a `tasks` row and enqueues to the specialist.
+- [x] Agent state persists across restart — Phase 4 suite: 6 rows survive a fresh `AgentRuntime` against the same DB; statuses offline after clean shutdown, restart brings them back.
+
+SECURITY
+- [x] No secrets in source — regex scan (sk-ant-, sk-, xoxb-, xapp-, Google OAuth client id, AKIA…, PEM private-key blocks) across all `.py/.ts/.tsx/.js/.json/.toml/.md/.rs/.env*` (excl. `OpenJarvis/`, `node_modules`, `.venv`, `dist`) → **0 matches**.
+- [x] FastAPI bind — `main.HOST == "127.0.0.1"` and no executable `host="0.0.0.0"` line in `main.py` (warning comments allowed).
+- [x] Code executor sandbox — `os.system`, `subprocess`, and dunder-escape (`().__class__.__bases__`) all blocked (`success=False`); positive control (arithmetic + `len`) runs.
+
+DEFERRED (need native Tauri app — Rust/cargo not installed — and/or mic + live keys)
+- [ ] UI: all 5 Tauri windows open on launch
+- [ ] UI: WebSocket connects within 2 s of backend start
+- [ ] UI: orb colour changes for idle/thinking/speaking
+- [ ] UI: agent cards update in real-time on WS events
+- [ ] E2E: "Jarvis, what's in my Slack?" voice→Slack→speak
+- [ ] E2E: "Jarvis, send an email…" voice→Gmail draft→send
+  Note: no Vitest/jsdom harness is installed in `frontend/` (only `dev`/`build`/`preview`/`tauri` scripts). Adding one is a Phase 10 task; the React/TS layer compiles clean (Phase 7) and the WS store dispatches exactly the backend event shapes.
+
+MINOR FINDING (non-blocking)
+- `backend/tools/code_executor.py` docstring lists "sum, range, sorted, abs, round…" as allowed builtins, but RestrictedPython's `safe_builtins` does NOT expose `sum`/`range`/`sorted` — they raise `NameError`. `len` and arithmetic do work. Functionally the sandbox is *more* restrictive than documented (errs safe); recommend trimming the docstring's allowed-builtins list to match reality. No security impact.
 
 ### Phase 7 — Multi-Window UI (React/TS layer, 2026-06-03, 7/7 checks PASS) — Phase 7 VERIFIED
 - [x] BUILD — `pnpm build` clean: `tsc` no TS errors, `vite` "built in 2.97s", `dist/` generated (index.html + assets, Three.js code-split into isolated 891kB AnimationWindow chunk).

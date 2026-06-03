@@ -1,8 +1,8 @@
 # =============================================================================
-# Jarvis — .gitignore
+# Jarvis -- .gitignore
 # =============================================================================
 
-# --- Python ---
+# --- Python ------------------------------------------------------------------
 .venv/
 __pycache__/
 **/__pycache__/
@@ -10,7 +10,6 @@ __pycache__/
 *.pyo
 *.pyd
 *.egg-info/
-dist/
 build/
 *.egg
 .eggs/
@@ -21,50 +20,55 @@ htmlcov/
 .coverage
 coverage.xml
 
-# --- uv / pip ---
-# uv.lock IS committed (reproducible installs) — do not add it here
+# uv.lock IS committed (reproducible installs) -- do not add it here
 
-# --- Environment / Secrets ---
-# NEVER commit a populated .env — only .env.example is safe
+# --- Environment / Secrets ---------------------------------------------------
+# NEVER commit a populated .env -- only .env.example is safe
 .env
 .env.local
 .env.*.local
 *.secret
 *.key
 
-# --- Databases & generated data ---
+# --- Databases and generated runtime data ------------------------------------
 *.db
 *.db-shm
 *.db-wal
 *.sqlite
 *.sqlite3
 data/
+workspace/
 
-# --- Vector store / ML model artifacts ---
-*.bin
-*.meta.json
+# --- Vector store / ML model artifacts ---------------------------------------
 *.faiss
 *.index
 *.pkl
 *.npy
 
-# --- Audio / Media (generated at runtime) ---
+# --- Audio / Media (generated at runtime) ------------------------------------
 *.wav
 *.mp3
 *.ogg
 *.flac
 *.m4a
 
-# --- Frontend ---
+# --- Frontend ----------------------------------------------------------------
 frontend/node_modules/
 frontend/dist/
 frontend/build/
-frontend/.svelte-kit/
 node_modules/
+dist/
 
-# --- Tauri ---
+# --- Tauri / Rust ------------------------------------------------------------
 frontend/src-tauri/target/
 frontend/src-tauri/WixTools/
+target/
+*.rlib
+
+# Cargo.lock is committed for binary projects (Tauri app) to ensure
+# reproducible builds. Do not add Cargo.lock here.
+
+# Installer artifacts (produced by tauri build)
 *.exe
 *.msi
 *.deb
@@ -73,12 +77,7 @@ frontend/src-tauri/WixTools/
 *.dmg
 *.app
 
-# --- Rust ---
-target/
-Cargo.lock
-*.rlib
-
-# --- IDE / OS ---
+# --- IDE / OS ----------------------------------------------------------------
 .vscode/settings.json
 .idea/
 *.swp
@@ -88,9 +87,13 @@ Cargo.lock
 Thumbs.db
 desktop.ini
 
-# --- Claude Code local settings (machine-specific, not project config) ---
+# --- Claude Code local settings (machine-specific, not project config) ------
 .claude/settings.local.json
 
-# --- Logs ---
+# --- Logs --------------------------------------------------------------------
 *.log
 logs/
+
+# --- ML / Binary artifacts (runtime-generated) -------------------------------
+*.bin
+*.meta.json
