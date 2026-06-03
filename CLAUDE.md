@@ -55,7 +55,7 @@
 ### 5 Windows (open simultaneously on boot)
 | # | Name | Contents |
 |---|---|---|
-| 1 | Animation | Three.js pulsing orb — blue=idle, gold=thinking, cyan=speaking |
+| 1 | Animation | Three.js sand particle cloud — blue=idle, gold=thinking, cyan=speaking; lip-syncs to audio amplitude |
 | 2 | Reasoning | Model name (Claude Opus 4.7), streaming tokens, tool calls, cost/latency |
 | 3 | Communications | Slack inbox + Gmail inbox — read/reply via voice |
 | 4 | Agents | 6 agent cards with live status, task queue, controls |
@@ -73,6 +73,8 @@
 
 ### Design Aesthetic
 Dark theme `#0A0A0F`, electric blue/cyan accents `#00D4FF`, gold highlights `#FFB800`. Iron Man HUD — clean, glowing, cinematic. Glassmorphism panels (backdrop-blur, semi-transparent borders). No rounded-cornered cards — sharp edges with glowing outlines.
+
+Animation window orb: 2500-particle sand/stardust cloud (Three.js `Points`, `AdditiveBlending`). Particles drift using sinusoidal noise — calm at idle, swirling when thinking, explosive on speaking syllables. Replaces the icosahedron wireframe.
 
 ---
 
@@ -107,6 +109,7 @@ Dark theme `#0A0A0F`, electric blue/cyan accents `#00D4FF`, gold highlights `#FF
 - [x] FastAPI app with lifespan context manager (`backend/main.py`)
 - [x] WebSocket hub — all 5 windows subscribe to `ws://127.0.0.1:8000/ws`
 - [x] WebSocket event schema: `agent_update`, `token`, `tool_call`, `voice_state`
+- [ ] `AudioLevelEvent` — broadcast RMS amplitude (0–1) every 50ms during TTS playback for lip-sync
 - [x] SQLite CRUD: conversations, agent state, audit log (`backend/memory/database.py`)
 - [x] FAISS vector store with sentence-transformers embeddings
 - [x] Claude API client with streaming + prompt caching (`backend/ai/claude_client.py`)
@@ -231,6 +234,9 @@ Dark theme `#0A0A0F`, electric blue/cyan accents `#00D4FF`, gold highlights `#FF
 *Handled by: frontend-agent + backend-agent*
 
 - [x] Boot startup sound — subtle electronic tone on window open
+- [ ] Draggable windows — `data-tauri-drag-region` on WindowFrame header + AnimationWindow grip strip
+- [ ] Ethereal sand particle orb — replace icosahedron wireframe with 2500-particle noise-field system
+- [ ] Lip-sync amplitude broadcasting — `AudioLevelEvent` from backend pipeline; orb pulses with spoken audio
 - [ ] Error recovery — auto-restart voice pipeline on crash (max 3 retries)
 - [ ] Graceful degradation — Claude API failure silently switches to Ollama
 - [ ] Agent name customization UI — rename each agent from AgentsWindow
