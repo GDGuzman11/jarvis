@@ -10,10 +10,10 @@
 
 ## Current Status
 
-- **Active Phase**: 8 — Security Hardening (next). Phase 7 Multi-Window UI VERIFIED by debugger-agent 2026-06-03 (React/TS layer).
+- **Active Phase**: 8 — Security Hardening **COMPLETE** (security-agent, 2026-06-03). 0 Critical / 0 High; 1 Medium fixed (WS Origin validation). Next: Phase 9 — Testing (`/debugger-agent`). Phase 7 Multi-Window UI VERIFIED by debugger-agent 2026-06-03 (React/TS layer).
 - **Last Completed**: **Phase 7 VERIFIED — Multi-Window UI**. debugger-agent ran 7 checks, all pass: (1) `pnpm build` clean — `tsc` no TS errors, `vite` "built in 2.97s", `dist/` generated with code-split chunks (AnimationWindow 891kB Three.js chunk isolated); (2) all 5 window files present; (3) all 4 components present (JarvisOrb/AgentCard/ToolCard/StreamViewer); (4) `store.ts` exports `useStore` via `create<JarvisStore>`; (5) `websocket.ts` references `ws://127.0.0.1:8000/ws`; (6) `tauri.conf.json` defines 5 window labels; (7) `App.tsx` routes by Tauri window label → `?window=` → dev dashboard fallback, lazy-loads all 5 windows. CAVEAT: Rust shell (system tray, autostart, native multi-window launch in `src-tauri/src/lib.rs` + `Cargo.toml`) is written but UNCOMPILED — Rust/cargo toolchain not installed, so native window launch could not be exercised. Only the Vite web layer was verified. Phase 9 UI test items remain to be run later (orb color transitions, agent card live updates, WS-connect-within-2s) under the full app.
 - **Prior (Phase 7 build by frontend-agent Ben):** `pnpm build` passes clean (tsc + vite, Three.js code-split to AnimationWindow chunk only). New deps: zustand, three, @react-three/fiber, @react-three/drei, framer-motion, tailwindcss v4 + @tailwindcss/vite. Files: `frontend/src/lib/{types,store,websocket,api}.ts` (Zustand store + WS singleton w/ auto-reconnect backoff, dispatches agent_update/token/tool_call/voice_state exactly per `backend/events.py`; forward-declares metrics/comms/tool_permissions). Components `frontend/src/components/`: `JarvisOrb.tsx` (R3F, lerped colour blue/gold/cyan + audio-reactive scale), `AgentCard.tsx`, `ToolCard.tsx`, `StreamViewer.tsx`, `StatusBadge.tsx`, `WindowFrame.tsx` (Framer Motion staggered fade, 0.2s/window). Windows `frontend/src/windows/`: Animation, Reasoning, Communications, Agents, Tools. `App.tsx` routes by Tauri window label (`__TAURI_INTERNALS__`) → `?window=` query → dev dashboard fallback; windows lazy-loaded. `index.css` = Tailwind v4 @theme HUD tokens + `.glass`/`.hud-bg`. Tauri: `tauri.conf.json` 5 frameless transparent windows (labels animation/reasoning/communications/agents/tools, positioned, withGlobalTauri); `src-tauri/src/lib.rs` system tray (Open Jarvis/Quit) + autostart plugin; `Cargo.toml` adds tauri-plugin-autostart + tray-icon feature; `capabilities/default.json` covers all 5 windows. NOTE: tool-toggle + comms action buttons send WS commands the backend does not yet handle (it only drains inbound frames) — forward-compatible.
-- **Next Task**: Phase 8 — Security Hardening. Run `/security-agent`. (Run `/production-manager` first to confirm.)
+- **Next Task**: Phase 9 — Testing & Verification. Run `/debugger-agent`. (Run `/production-manager` first to confirm.) Phase 8 security audit done: WS Origin guard added to `backend/main.py`; all 12 Phase 8 items checked; findings table populated.
 - **Blockers**: Rust/cargo toolchain NOT installed — so `pnpm tauri dev` / native window launch / tray / autostart CANNOT be run yet; only the Vite web build (`pnpm build`) and dev-dashboard preview (`pnpm dev`, single browser tab) are runnable. Rust lib.rs + Cargo + tauri.conf changes are written but UNCOMPILED. Install Rust via rustup to validate the native shell. Also: `uv` not on PATH (backend via `.venv\Scripts\python.exe`); project root not a git repo (`pre-commit install` deferred).
 - **Build Started**: 2026-06-02
 
@@ -188,19 +188,19 @@ Dark theme `#0A0A0F`, electric blue/cyan accents `#00D4FF`, gold highlights `#FF
 ## Phase 8 — Security Hardening
 *Handled by: security-agent*
 
-- [ ] All API keys confirmed in Windows Credential Manager (audit `keystore.py`)
-- [ ] Automated grep scan passes — no secret patterns found in any file
-- [ ] FastAPI confirmed binding to `127.0.0.1` only
-- [ ] WebSocket Origin header validation implemented
-- [ ] `sanitize_voice_input()` function in use on all voice input before Claude calls
-- [ ] File tool validates paths against workspace allowlist
-- [ ] Code executor blocks `os`, `sys`, `subprocess`, network calls
-- [ ] Gmail uses minimal scopes: `gmail.readonly` + `gmail.send`
-- [ ] Slack uses minimal scopes: `chat:write`, `im:read`, `channels:read`
-- [ ] OAuth token auto-refresh implemented for both Gmail and Slack
-- [ ] Audit log writing on every agent action (SQLite `audit_log` table)
-- [ ] Security findings documented in **Security Findings** section below
-- [ ] Verify: security-agent audit passes with zero Critical or High findings
+- [x] All API keys confirmed in Windows Credential Manager (audit `keystore.py`)
+- [x] Automated grep scan passes — no secret patterns found in any file
+- [x] FastAPI confirmed binding to `127.0.0.1` only
+- [x] WebSocket Origin header validation implemented
+- [x] `sanitize_voice_input()` function in use on all voice input before Claude calls
+- [x] File tool validates paths against workspace allowlist
+- [x] Code executor blocks `os`, `sys`, `subprocess`, network calls
+- [x] Gmail uses minimal scopes: `gmail.readonly` + `gmail.send`
+- [x] Slack uses minimal scopes: `chat:write`, `im:read`, `channels:read`
+- [x] OAuth token auto-refresh implemented for both Gmail and Slack
+- [x] Audit log writing on every agent action (SQLite `audit_log` table)
+- [x] Security findings documented in **Security Findings** section below
+- [x] Verify: security-agent audit passes with zero Critical or High findings
 
 ## Phase 9 — Testing & Verification
 *Handled by: debugger-agent*
@@ -348,9 +348,28 @@ C:\Users\User\appsbyG\Jarvis\
 ## Security Findings
 *(populated by security-agent during Phase 8 and on-demand audits)*
 
+Audit run: **2026-06-03** (Phase 8 — Security Hardening). All 12 audit items checked.
+Result: **0 Critical, 0 High** after fixes. 1 Medium (fixed), plus Low/Info notes below.
+
 | Severity | Description | File:Line | Status |
 |---|---|---|---|
-| — | No findings yet | — | — |
+| Medium | WebSocket `/ws` endpoint had no Origin-header validation. CORS middleware only covers HTTP, not the WS handshake — any local/remote browser page could open `ws://127.0.0.1:8000/ws` and read Jarvis's live event stream (cross-site WebSocket hijacking). | `backend/main.py:194` (pre-fix) | **Fixed** — added `_is_allowed_ws_origin()` + `ALLOWED_WS_ORIGINS`; `/ws` now rejects untrusted Origins with close code 1008 before accept. Verified: `http://evil.com` rejected, `tauri://localhost` accepted, native (no-Origin) clients allowed. |
+| Low | No `auth.py` in `backend/security/` (referenced in the project file-structure tree). OAuth token refresh is instead handled inline by google-auth in `gmail_client.py`. | `backend/security/` | **Accepted** — google-auth auto-refreshes via the stored refresh token (`GMAIL_REFRESH_TOKEN` in keyring); a separate `auth.py` is not required for correctness. Documented here rather than adding a redundant module. |
+| Low | Project root is not yet a git repo and has no `.gitignore`, so once `git init` runs there is no guard against accidentally committing a real `.env`/`data/jarvis.db`. | repo root | **Open (deferred to Phase 10/packaging)** — only `.env.example` exists today (no real `.env`), so no secret is currently at risk. Add a `.gitignore` excluding `.env`, `data/`, `workspace/`, `.venv/` when the repo is initialised. |
+| Info | `browse_url` tool blocks `file://`/`data://`/`javascript:` schemes but does not block requests to private/loopback IP ranges (SSRF to internal services). | `backend/tools/browser.py:44` | **Accepted for now** — agent-initiated, local-only deployment; scheme allowlist removes the local-file/inline-payload vector. Consider an IP-range denylist if the browser tool is ever exposed beyond trusted agents. |
+| Info | All external API calls (Anthropic, ElevenLabs, Gmail, Slack) go through official SDKs with default SSL verification; Ollama is loopback HTTP. No `verify=False` / `CERT_NONE` / unverified-context anywhere in the codebase. | backend-wide | **Pass** — HTTPS + SSL verification confirmed; no insecure transport found. |
+
+### Verification performed (2026-06-03)
+- **Secrets:** grep for `sk-ant-`, `xoxb-`, `xapp-`, `AIza…`, `GOCSPX-`, PEM private keys across all `.py/.ts/.tsx/.json` (excl. `OpenJarvis/`) → **0 matches**. Only `.env.example` (placeholders) exists; no real `.env`.
+- **Keystore:** `keystore.py` is keyring-only, no hardcoded values; typed get/set for all 10 credentials.
+- **Bind:** `HOST == "127.0.0.1"` (asserted at import); no real `0.0.0.0` binding (only warning comments).
+- **WS Origin:** new guard verified via import test (evil rejected / tauri accepted / native allowed).
+- **Voice sanitisation:** `stt.transcribe()` calls `sanitize_transcript()` (strip Unicode-C control chars, cap 2000) and the pipeline reaches Claude *only* via `stt.transcribe()` — no unsanitised path.
+- **File sandbox:** `../../etc/passwd`, abs `C:/Windows/...`, `..\..\secret.txt` all raise `PathTraversalError`; workspace-relative read/write works.
+- **Code sandbox:** `os.system`, `import sys`, `import subprocess`, `open(...)`, `().__class__.__bases__` all blocked (ImportError/NameError/SyntaxError, `success=False`).
+- **Scopes:** Gmail = `gmail.readonly` + `gmail.send` only; Slack = `chat:write`, `im:read`, `channels:read` only.
+- **OAuth refresh:** google-auth `Credentials(refresh_token=…)` auto-refreshes Gmail; Slack bot tokens are long-lived (no refresh needed) — documented.
+- **Audit log:** `BaseAgent._process_one` logs `task.start/done/failed`; `ToolRegistry.call_tool` logs every call (`denied/not_found/error/ok`); integrations log metadata. `audit_log` columns = `id, agent_id, action, target, detail, created_at` — **no message-content column** (verified via `PRAGMA table_info`).
 
 ---
 

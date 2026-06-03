@@ -57,6 +57,16 @@ ALLOWED_ORIGINS: list[str] = [
     "http://127.0.0.1:5173",
 ]
 
+# WebSocket Origin allowlist (Security Rule 2 / Phase 8). The CORS middleware
+# above only governs HTTP requests — it does NOT protect the WebSocket
+# handshake, which browsers exempt from the same-origin policy. Without an
+# explicit check, any local page (or a malicious site loaded in the user's
+# browser) could open ``ws://127.0.0.1:8000/ws`` and read Jarvis's live event
+# stream. We therefore validate the ``Origin`` header on every WS connection and
+# accept only the local Tauri frontend's origins. This mirrors ALLOWED_ORIGINS
+# but is enforced independently inside the /ws handler.
+ALLOWED_WS_ORIGINS: frozenset[str] = frozenset(ALLOWED_ORIGINS)
+
 log = get_logger(__name__)
 
 
@@ -191,6 +201,21 @@ async def health() -> dict[str, str]:
     return {"status": "ok", "version": APP_VERSION}
 
 
+def _is_allowed_ws_origin(origin: str | None) -> bool:
+    """Return ``True`` only for a WebSocket Origin we trust (Security Rule 2).
+
+    A native (non-browser) client such as a test harness or a CLI may send no
+    ``Origin`` header at all; we allow that case because the same-origin attack
+    the check defends against only applies to browser contexts, which always
+    send an Origin. Any *present* Origin must be in the local allowlist — an
+    Origin from a remote web page is rejected, closing the cross-site WebSocket
+    hijacking vector.
+    """
+    if origin is None:
+        return True
+    return origin in ALLOWED_WS_ORIGINS
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
     """Single WebSocket hub endpoint.
@@ -201,7 +226,19 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     are drained but not yet acted upon (a future phase may accept client
     commands here). The loop exits on disconnect, after which the connection is
     deregistered from the hub.
+
+    Before accepting the handshake we validate the ``Origin`` header against
+    :data:`ALLOWED_WS_ORIGINS` (Security Rule 2 / Phase 8). A connection from an
+    untrusted origin is closed with policy-violation code ``1008`` and never
+    registered with the hub, so it receives no events.
     """
+    origin = websocket.headers.get("origin")
+    if not _is_allowed_ws_origin(origin):
+        log.warning("websocket_origin_rejected", origin=origin)
+        # 1008 = policy violation. Close before accept so no events ever flow.
+        await websocket.close(code=1008)
+        return
+
     await hub.connect(websocket)
     try:
         while True:
