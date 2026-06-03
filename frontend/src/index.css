@@ -1,0 +1,104 @@
+@import "tailwindcss";
+
+/* ------------------------------------------------------------------ */
+/* Jarvis HUD design tokens — Iron Man inspired dark glassmorphism.    */
+/* Exposed as CSS variables and Tailwind v4 @theme colours so utility  */
+/* classes like `text-jarvis-cyan` / `bg-jarvis-bg` are available.     */
+/* ------------------------------------------------------------------ */
+@theme {
+  --color-jarvis-bg: #0a0a0f;
+  --color-jarvis-panel: rgba(16, 20, 32, 0.55);
+  --color-jarvis-cyan: #00d4ff;
+  --color-jarvis-cyan-bright: #00ffff;
+  --color-jarvis-gold: #ffb800;
+  --color-jarvis-red: #ff3b5c;
+  --color-jarvis-gray: #5a6072;
+  --color-jarvis-text: #cfe9ff;
+  --color-jarvis-muted: #6b7689;
+  --font-hud: "Rajdhani", "Segoe UI", system-ui, sans-serif;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: transparent;
+}
+
+body {
+  font-family: var(--font-hud);
+  color: var(--color-jarvis-text);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* Glassmorphism panel — sharp edges, glowing semi-transparent border. */
+.glass {
+  background: var(--color-jarvis-panel);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(0, 212, 255, 0.18);
+  box-shadow:
+    0 0 0 1px rgba(0, 212, 255, 0.05),
+    0 8px 40px rgba(0, 0, 0, 0.55),
+    inset 0 0 24px rgba(0, 212, 255, 0.04);
+}
+
+.glass-hover {
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+.glass-hover:hover {
+  border-color: rgba(0, 212, 255, 0.6);
+  box-shadow:
+    0 0 18px rgba(0, 212, 255, 0.35),
+    0 8px 40px rgba(0, 0, 0, 0.55);
+}
+
+/* HUD scanline grid backdrop for window roots. */
+.hud-bg {
+  background-color: var(--color-jarvis-bg);
+  background-image:
+    linear-gradient(rgba(0, 212, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 212, 255, 0.04) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+.text-glow-cyan {
+  text-shadow: 0 0 8px rgba(0, 212, 255, 0.7);
+}
+.text-glow-gold {
+  text-shadow: 0 0 8px rgba(255, 184, 0, 0.7);
+}
+
+/* Thin glowing scrollbar for stream panels. */
+.hud-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.hud-scroll::-webkit-scrollbar-thumb {
+  background: rgba(0, 212, 255, 0.4);
+  border-radius: 0;
+}
+.hud-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@keyframes pulse-glow {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.animate-pulse-glow {
+  animation: pulse-glow 1.6s ease-in-out infinite;
+}

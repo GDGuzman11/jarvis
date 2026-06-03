@@ -1,50 +1,96 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
+/**
+ * App — routes the running Tauri window to its component by window label.
+ *
+ * Each of the 5 windows is launched by Tauri with a fixed label
+ * (animation, reasoning, communications, agents, tools). We read the current
+ * window's label and render the matching component. When running in a plain
+ * browser (e.g. `pnpm dev` without Tauri, or vitest), there is no Tauri window
+ * label, so we fall back to the `?window=` query param, then to a dev dashboard
+ * that shows every window at once.
+ */
+
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useMemo,
+  useState,
+  type ComponentType,
+} from "react";
+import { connectWebSocket } from "./lib/websocket";
+
+// Lazy-load each window so the heavy Three.js bundle only ships to the
+// Animation window's renderer, not every window.
+const AnimationWindow = lazy(() => import("./windows/AnimationWindow"));
+const ReasoningWindow = lazy(() => import("./windows/ReasoningWindow"));
+const CommunicationsWindow = lazy(() => import("./windows/CommunicationsWindow"));
+const AgentsWindow = lazy(() => import("./windows/AgentsWindow"));
+const ToolsWindow = lazy(() => import("./windows/ToolsWindow"));
+
+export type WindowLabel = "animation" | "reasoning" | "communications" | "agents" | "tools";
+
+const WINDOWS: Record<WindowLabel, ComponentType> = {
+  animation: AnimationWindow,
+  reasoning: ReasoningWindow,
+  communications: CommunicationsWindow,
+  agents: AgentsWindow,
+  tools: ToolsWindow,
+};
+
+/** Resolve the active window label from Tauri, then URL query, else null. */
+function resolveLabel(): WindowLabel | null {
+  // Tauri injects __TAURI_INTERNALS__ with the current window metadata.
+  const internals = (globalThis as unknown as {
+    __TAURI_INTERNALS__?: { metadata?: { currentWindow?: { label?: string } } };
+  }).__TAURI_INTERNALS__;
+  const tauriLabel = internals?.metadata?.currentWindow?.label;
+  const queryLabel = new URLSearchParams(window.location.search).get("window");
+  const label = (tauriLabel || queryLabel || "").toLowerCase();
+  return label in WINDOWS ? (label as WindowLabel) : null;
+}
 
 function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+  const label = useMemo(resolveLabel, []);
+  const [active, setActive] = useState<WindowLabel | null>(label);
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
+  useEffect(() => {
+    // One WebSocket connection per renderer process / window.
+    connectWebSocket();
+  }, []);
+
+  if (active) {
+    const Window = WINDOWS[active];
+    return (
+      <Suspense fallback={<div className="hud-bg h-screen w-screen" />}>
+        <Window />
+      </Suspense>
+    );
   }
 
+  // Dev dashboard — no Tauri label and no ?window= param. Lets a single browser
+  // tab preview each window for development without the native multi-window shell.
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
+    <div className="hud-bg min-h-screen p-6">
+      <h1 className="mb-4 text-lg font-bold uppercase tracking-[0.4em] text-glow-cyan">
+        Jarvis HUD — Dev Preview
+      </h1>
+      <div className="flex flex-wrap gap-2">
+        {(Object.keys(WINDOWS) as WindowLabel[]).map((w) => (
+          <button
+            key={w}
+            type="button"
+            onClick={() => setActive(w)}
+            className="glass glass-hover px-4 py-2 text-sm uppercase tracking-widest text-jarvis-cyan"
+          >
+            {w}
+          </button>
+        ))}
       </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+      <p className="mt-4 text-xs text-jarvis-muted">
+        Select a window to preview. In the packaged app each opens in its own
+        Tauri window automatically.
+      </p>
+    </div>
   );
 }
 
