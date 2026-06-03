@@ -6,6 +6,7 @@
 
 import { Canvas } from "@react-three/fiber";
 import { useStore } from "../lib/store";
+import { useBootSound } from "../lib/useBootSound";
 import JarvisOrb from "../components/JarvisOrb";
 
 const STATE_LABEL: Record<string, string> = {
@@ -16,6 +17,7 @@ const STATE_LABEL: Record<string, string> = {
 };
 
 export function AnimationWindow() {
+  useBootSound();
   const voiceState = useStore((s) => s.voiceState);
   const audioLevel = useStore((s) => s.audioLevel);
 
