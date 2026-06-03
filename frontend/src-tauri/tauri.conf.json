@@ -81,9 +81,7 @@
     }
   },
   "plugins": {
-    "autostart": {
-      "args": []
-    }
+    "autostart": null
   },
   "bundle": {
     "active": true,
