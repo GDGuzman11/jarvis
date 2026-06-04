@@ -51,7 +51,7 @@ VoiceState = Literal["idle", "listening", "thinking", "speaking", "error"]
 
 # The set of valid event ``type`` discriminators.
 EventType = Literal[
-    "agent_update", "token", "tool_call", "voice_state", "audio_level"
+    "agent_update", "token", "tool_call", "voice_state", "audio_level", "metrics"
 ]
 
 
@@ -163,6 +163,28 @@ class AudioLevelEvent(Event):
     timestamp: str = field(default_factory=_utc_now_iso)
 
 
+@dataclass(slots=True)
+class MetricsEvent(Event):
+    """Cost + latency for a completed Claude turn (Phase 11C).
+
+    Broadcast once per Claude response, immediately *after* the final
+    ``is_final=True`` token, so the Reasoning window can display the running
+    cost and latency of the live model. ``cost_usd`` is computed from the
+    Anthropic ``usage`` token counts against the Claude Opus 4.7 price card;
+    ``latency_ms`` is wall-clock from stream open to the final token.
+    """
+
+    cost_usd: float
+    latency_ms: int
+    model: str
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    type: Literal["metrics"] = "metrics"
+    timestamp: str = field(default_factory=_utc_now_iso)
+
+
 # --- Serialisation helpers ---------------------------------------------------
 
 
@@ -192,5 +214,6 @@ __all__ = [
     "ToolCall",
     "VoiceStateEvent",
     "AudioLevelEvent",
+    "MetricsEvent",
     "serialize",
 ]

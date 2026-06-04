@@ -35,12 +35,13 @@ back to Ollama (see :mod:`backend.ai.ollama_client`).
 
 from __future__ import annotations
 
+import time
 from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
 import anthropic
 
-from backend.events import Token
+from backend.events import MetricsEvent, Token
 from backend.logging_config import get_logger
 from backend.security import keystore
 from backend.websocket_hub import hub
@@ -55,6 +56,38 @@ DEFAULT_MODEL: str = "claude-opus-4-7"
 # Default output ceiling. Streaming makes large values safe (no HTTP timeout),
 # so we give the model room without risking truncation mid-thought.
 DEFAULT_MAX_TOKENS: int = 4096
+
+# Claude Opus 4.7 price card, in USD per *million* tokens. Used by
+# :func:`_compute_cost` to turn the Anthropic ``usage`` counts into a dollar
+# figure for the live cost display (Phase 11C).
+PRICE_INPUT_PER_MTOK: float = 15.00
+PRICE_OUTPUT_PER_MTOK: float = 75.00
+PRICE_CACHE_WRITE_PER_MTOK: float = 3.75
+PRICE_CACHE_READ_PER_MTOK: float = 1.50
+
+_TOKENS_PER_MILLION: float = 1_000_000.0
+
+
+def _compute_cost(
+    input_tokens: int,
+    output_tokens: int,
+    cache_write_tokens: int,
+    cache_read_tokens: int,
+) -> float:
+    """Return the USD cost of a turn from its token counts.
+
+    Pure function (no I/O, no SDK) so it can be unit-tested without a live API
+    key. Applies the Claude Opus 4.7 price card: input/output at full rate,
+    cache writes at 0.25x input, cache reads at 0.1x input. The Anthropic
+    ``input_tokens`` count already *excludes* cached tokens, so the four buckets
+    sum without double-counting.
+    """
+    return (
+        input_tokens * PRICE_INPUT_PER_MTOK
+        + output_tokens * PRICE_OUTPUT_PER_MTOK
+        + cache_write_tokens * PRICE_CACHE_WRITE_PER_MTOK
+        + cache_read_tokens * PRICE_CACHE_READ_PER_MTOK
+    ) / _TOKENS_PER_MILLION
 
 
 class ClaudeAPIError(RuntimeError):
@@ -185,6 +218,12 @@ class ClaudeClient:
         if tools:
             request["tools"] = tools
 
+        # Metrics assembled on a clean stream, broadcast after the final token.
+        # ``None`` means the turn errored before usage was available, so no
+        # MetricsEvent is sent (an error has no meaningful cost/latency).
+        metrics: MetricsEvent | None = None
+        started = time.perf_counter()
+
         try:
             async with client.messages.stream(**request) as stream:
                 async for text in stream.text_stream:
@@ -193,18 +232,40 @@ class ClaudeClient:
                     await hub.broadcast(Token(content=text, model=self.model))
                     yield text
 
-            # Log cache effectiveness so a silent invalidator (zero cache reads)
-            # is visible in the logs rather than only on the bill.
+            # Read usage once the stream is complete. Cache buckets may be absent
+            # on older API responses, so default them to 0.
             final = await stream.get_final_message()
             usage = final.usage
+            input_tokens = usage.input_tokens
+            output_tokens = usage.output_tokens
+            cache_read = getattr(usage, "cache_read_input_tokens", None) or 0
+            cache_write = (
+                getattr(usage, "cache_creation_input_tokens", None) or 0
+            )
+            latency_ms = int((time.perf_counter() - started) * 1000)
+
+            # Log cache effectiveness so a silent invalidator (zero cache reads)
+            # is visible in the logs rather than only on the bill.
             log.info(
                 "claude_stream_complete",
                 model=self.model,
-                input_tokens=usage.input_tokens,
-                output_tokens=usage.output_tokens,
-                cache_read=getattr(usage, "cache_read_input_tokens", None),
-                cache_write=getattr(usage, "cache_creation_input_tokens", None),
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cache_read=cache_read,
+                cache_write=cache_write,
                 stop_reason=final.stop_reason,
+            )
+
+            metrics = MetricsEvent(
+                cost_usd=_compute_cost(
+                    input_tokens, output_tokens, cache_write, cache_read
+                ),
+                latency_ms=latency_ms,
+                model=self.model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cache_read_tokens=cache_read,
+                cache_write_tokens=cache_write,
             )
         except anthropic.APIError as exc:
             # Log with the SDK request id (when present) for traceability, then
@@ -222,6 +283,10 @@ class ClaudeClient:
             await hub.broadcast(
                 Token(content="", model=self.model, is_final=True)
             )
+            # Then, on a clean turn only, broadcast metrics LAST so the frontend
+            # receives cost/latency after the final token.
+            if metrics is not None:
+                await hub.broadcast(metrics)
 
 
 __all__ = [
@@ -229,4 +294,5 @@ __all__ = [
     "ClaudeAPIError",
     "DEFAULT_MODEL",
     "DEFAULT_MAX_TOKENS",
+    "_compute_cost",
 ]
