@@ -70,6 +70,15 @@ function App() {
     const Window = WINDOWS[active];
     return (
       <Suspense fallback={<div className="hud-bg h-screen w-screen" />}>
+        {!label && (
+          <button
+            type="button"
+            onClick={() => setActive(null)}
+            className="glass glass-hover fixed top-3 left-3 z-50 px-3 py-1 text-xs uppercase tracking-widest text-jarvis-cyan"
+          >
+            ← Back
+          </button>
+        )}
         <Window />
       </Suspense>
     );
