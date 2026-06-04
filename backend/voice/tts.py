@@ -294,15 +294,16 @@ async def speak_and_play(text: str) -> bytes:
     block_size = max(1, int(PCM_SAMPLE_RATE * AUDIO_LEVEL_INTERVAL_S))
 
     try:
-        # Play block-by-block so we can sample and broadcast the amplitude of
-        # each ~50 ms slice as it goes out. Each block's playback blocks in the
-        # executor; the broadcast happens on the loop between blocks.
+        # Play the full audio as one stream in the executor so Windows doesn't
+        # gap between micro-blocks. Amplitude events are broadcast in parallel
+        # on the event loop, sleeping AUDIO_LEVEL_INTERVAL_S between each so
+        # the orb pulses in sync without interrupting playback.
+        play_future = loop.run_in_executor(None, _play_pcm_block_sync, samples, PCM_SAMPLE_RATE)
         for start in range(0, samples.size, block_size):
             block = samples[start : start + block_size]
             await hub.broadcast(AudioLevelEvent(level=_rms_level(block)))
-            await loop.run_in_executor(
-                None, _play_pcm_block_sync, block, PCM_SAMPLE_RATE
-            )
+            await asyncio.sleep(AUDIO_LEVEL_INTERVAL_S)
+        await play_future
     except Exception:  # noqa: BLE001 — playback failure must not kill the loop
         log.warning("tts_play_pcm_failed", exc_info=True)
     finally:
