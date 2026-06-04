@@ -28,10 +28,16 @@ const STATE_LABEL: Record<string, string> = {
 };
 
 async function requestShutdown() {
+  // Tell the backend to broadcast shutdown to all other windows — fire and forget.
+  fetch("http://127.0.0.1:8000/api/shutdown", { method: "POST" }).catch(() => {});
+
+  // Directly close this window without waiting for the WebSocket round-trip.
+  await new Promise((r) => setTimeout(r, 150));
   try {
-    await fetch("http://127.0.0.1:8000/api/shutdown", { method: "POST" });
+    const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+    await getCurrentWebviewWindow().close();
   } catch {
-    // Backend already down — the WS disconnect will close the windows.
+    window.close();
   }
 }
 
