@@ -2,235 +2,229 @@
 
 > *"A subtle intelligence, sir. Always at your service."*
 
-A local-first personal AI assistant for Windows 11. Wakes on voice command, understands natural speech, responds in a measured British tone, and runs a team of six background AI agents around the clock.
-
-All credentials are stored in the Windows Credential Manager. No secrets ever touch the filesystem.
+A local-first personal AI assistant for Windows 11. Say **"Hey Jarvis"** — it wakes, listens, thinks, and speaks back in a calm British voice. Five HUD windows float on your desktop like an Iron Man interface. Six background agents run 24/7 handling code, content, security, and communications.
 
 ---
 
 ## What It Does
 
-- **Voice-activated** -- say "hey Jarvis" and it wakes, listens, thinks, and speaks back
-- **Claude Opus 4.7** as the primary brain, with Ollama (`phi3.5`) as a fully offline fallback
-- **Five simultaneous windows** on boot: animated orb, live reasoning stream, communications panel, agent dashboard, and tools store
-- **Six named background agents** running 24/7: Production Lead (Atlas), Ben (Frontend), Kado (Backend), Sentinel (Security), Vega (Marketing), and Quill (Content)
-- **Slack and Gmail integration** -- read, draft, and send via voice
-- **Persistent memory** -- conversations in SQLite, semantic recall via FAISS vector search
-- **Sandboxed tool execution** -- web search, browser automation, file ops, and a RestrictedPython code runner
+| Feature | Description |
+|---|---|
+| **Voice activation** | Say "Hey Jarvis" — OpenWakeWord detects it locally, no API key needed |
+| **Natural conversation** | Claude Opus 4.7 streams the reply; Ollama (`phi3.5`) runs offline if Claude is unavailable |
+| **Custom voice** | ElevenLabs — calm, precise British delivery with a faint digital resonance |
+| **Five HUD windows** | Particle orb · Live reasoning stream · Communications panel · Agent dashboard · Tools grid |
+| **Six background agents** | Atlas (Lead) · Ben (Frontend) · Kado (Backend) · Sentinel (Security) · Vega (Marketing) · Quill (Content) |
+| **Slack + Gmail** | Read, draft, and reply by voice |
+| **Persistent memory** | SQLite for conversation history; FAISS + sentence-transformers for semantic recall |
+| **Sandboxed tools** | Web search, browser automation, file ops, RestrictedPython code runner |
+| **Startup greeting** | Jarvis greets you by name and reads the system status when windows open |
+| **One-click shutdown** | ⏻ button on the orb window exits all five windows cleanly |
 
 ---
 
 ## Hardware Requirements
 
-| Component | Minimum      | This Build                        |
-|-----------|--------------|-----------------------------------|
-| GPU       | 4 GB VRAM    | NVIDIA RTX 3050 Ti Laptop (4 GB)  |
-| RAM       | 16 GB        | 16 GB                             |
-| OS        | Windows 11   | Windows 11                        |
-| Python    | 3.12         | 3.12.x (managed via uv)           |
-| Node.js   | 20+          | 20+ (pnpm)                        |
-| Rust      | stable       | rustup stable (for Tauri builds)  |
+| Component | Minimum | This Build |
+|---|---|---|
+| GPU | 4 GB VRAM | NVIDIA RTX 3050 Ti Laptop (4 GB) |
+| RAM | 16 GB | 16 GB |
+| OS | Windows 11 | Windows 11 |
+| Python | 3.12 | 3.12.x via `uv` |
+| Node.js | 20+ | 20+ via `pnpm` |
+| Rust | stable | rustup stable (Tauri native build) |
+| Microphone | Any | Dedicated mic recommended for wake word reliability |
 
-Local LLMs are sized for 4 GB VRAM: `phi3.5` (3.8B, ~2.4 GB) for general tasks and `qwen2.5-coder:3b` (~2 GB) for code. The Claude API handles everything that needs more capability.
+Local LLMs are sized for 4 GB VRAM: `phi3.5` (3.8B, ~2.4 GB) for general tasks and `qwen2.5-coder:3b` (~2 GB) for code.
 
 ---
 
 ## Tech Stack
 
-| Layer             | Technology                                                   |
-|-------------------|--------------------------------------------------------------|
-| Backend           | Python 3.12, FastAPI, WebSockets, Uvicorn                    |
-| Primary AI        | Anthropic Claude API (`claude-opus-4-7`, streaming + caching)|
-| Local AI fallback | Ollama (`phi3.5`, `qwen2.5-coder:3b`)                        |
-| Wake Word         | OpenWakeWord (`hey_jarvis` model, fully local, no API key)   |
-| Speech-to-Text    | faster-whisper (Whisper base.en, local)                      |
-| Text-to-Speech    | ElevenLabs (custom voice -- Tom Hardy x Avengers Jarvis)     |
-| Frontend          | Tauri 2, React 19, TypeScript 5, Vite 6                      |
-| Styling           | Tailwind CSS 4, glassmorphism dark theme                     |
-| 3D Animation      | Three.js / React Three Fiber                                 |
-| State             | Zustand 5, WebSocket sync                                    |
-| Database          | SQLite (aiosqlite)                                           |
-| Vector Memory     | FAISS + sentence-transformers                                |
-| Credentials       | Windows Credential Manager (keyring)                         |
-| Integrations      | Slack Bolt, Gmail API (OAuth2)                               |
-| Logging           | structlog                                                    |
-| Testing           | pytest + pytest-asyncio, Vitest                              |
+| Layer | Technology |
+|---|---|
+| Backend | Python 3.12, FastAPI, WebSockets, Uvicorn |
+| Primary AI | Anthropic Claude API (`claude-opus-4-7`, streaming + prompt caching) |
+| Local AI fallback | Ollama (`phi3.5`, `qwen2.5-coder:3b`) |
+| Wake word | OpenWakeWord (`hey_jarvis`, fully local, Apache 2.0) |
+| Speech-to-text | faster-whisper (Whisper `base.en`, local) |
+| Text-to-speech | ElevenLabs (custom voice) |
+| Frontend | Tauri 2 · React 19 · TypeScript 5 · Vite 6 |
+| Styling | Tailwind CSS 4 · Angular HUD dark theme |
+| 3D animation | Three.js · React Three Fiber (particle orb + solar flares) |
+| State | Zustand 5 · WebSocket sync |
+| Database | SQLite (aiosqlite) |
+| Vector memory | FAISS + sentence-transformers |
+| Credentials | Windows Credential Manager (keyring) |
+| Integrations | Slack Bolt · Gmail API (OAuth 2.0) |
+| Testing | pytest + pytest-asyncio (85 backend tests) |
 
 ---
 
 ## Installation
 
-### 1. Clone the repository
+### 1. Prerequisites
+
+- [uv](https://github.com/astral-sh/uv) — Python package manager
+- [pnpm](https://pnpm.io) — Node package manager
+- [Rust toolchain](https://rustup.rs) — required for Tauri native windows
+- [Ollama](https://ollama.com) — local AI fallback
 
 ```powershell
-git clone https://github.com/gabedeguzman/jarvis.git
-cd jarvis
-```
-
-### 2. Install Python dependencies
-
-Install [uv](https://github.com/astral-sh/uv) if you do not have it:
-
-```powershell
+# Install uv
 winget install astral-sh.uv
-```
 
-Then sync the project:
-
-```powershell
-uv sync --extra dev
-```
-
-Verify the install:
-
-```powershell
-.venv\Scripts\python.exe -c "import fastapi, anthropic, keyring, aiosqlite; print('OK')"
-```
-
-> **Note:** OpenWakeWord has a known Python 3.12 / uv resolver conflict on Windows due to its
-> `tflite-runtime` dependency. After `uv sync`, install it separately:
->
-> ```powershell
-> uv pip install openwakeword
-> ```
-
-### 3. Install frontend dependencies
-
-```powershell
-cd frontend
-pnpm install
-```
-
-Tauri native builds also require the [Rust toolchain](https://rustup.rs/):
-
-```powershell
+# Install Rust
 winget install Rustlang.Rustup --accept-source-agreements
-```
 
-### 4. Install Ollama (local AI fallback)
-
-Download from [ollama.com](https://ollama.com) and pull the models:
-
-```powershell
+# Install Ollama, then pull models
 ollama pull phi3.5
 ollama pull qwen2.5-coder:3b
 ```
 
----
+### 2. Clone and install
 
-## Storing API Keys
+```powershell
+git clone https://github.com/gabedeguzman99/jarvis.git
+cd jarvis
 
-Jarvis uses the **Windows Credential Manager** for all secrets. Nothing is stored in files.
-Run the following once per machine:
+# Python backend
+uv sync
 
-```python
-from backend.security import keystore
+# OpenWakeWord (separate step due to Windows resolver quirk)
+uv pip install openwakeword
 
-keystore.set_anthropic_api_key("sk-ant-...")
-keystore.set_elevenlabs_api_key("your-elevenlabs-key")
-keystore.set_elevenlabs_voice_id("your-voice-id")
-
-# Slack
-keystore.set_slack_bot_token("xoxb-...")
-keystore.set_slack_app_token("xapp-...")
-keystore.set_slack_signing_secret("your-signing-secret")
-
-# Gmail (OAuth2)
-keystore.set_gmail_client_id("your-client-id")
-keystore.set_gmail_client_secret("your-client-secret")
-keystore.set_gmail_redirect_uri("http://127.0.0.1:8000/oauth/gmail/callback")
+# Frontend
+cd frontend
+pnpm install
+cd ..
 ```
 
-Or use PowerShell directly:
+Verify Python:
+```powershell
+.venv\Scripts\python.exe -c "import fastapi, anthropic, keyring, aiosqlite; print('OK')"
+```
+
+### 3. Store API keys
+
+Jarvis stores **all secrets in the Windows Credential Manager** — nothing in files.
 
 ```powershell
 .venv\Scripts\python.exe -c "
 from backend.security import keystore
+
+# Anthropic (get from console.anthropic.com)
 keystore.set_anthropic_api_key('sk-ant-...')
+
+# ElevenLabs (get from elevenlabs.io)
+keystore.set_elevenlabs_api_key('your-key')
+keystore.set_elevenlabs_voice_id('your-voice-id')
+
+# Slack (get from api.slack.com/apps)
+keystore.set_slack_bot_token('xoxb-...')
+keystore.set_slack_app_token('xapp-...')
+keystore.set_slack_signing_secret('your-secret')
+
+# Gmail OAuth (get from console.cloud.google.com)
+keystore.set_gmail_client_id('your-client-id')
+keystore.set_gmail_client_secret('your-client-secret')
+keystore.set_gmail_redirect_uri('urn:ietf:wg:oauth:2.0:oob')
+keystore.set_gmail_refresh_token('your-refresh-token')
 "
 ```
 
-See `.env.example` for the full list of credential names and where to obtain each one.
+Check what's still missing:
+```powershell
+.venv\Scripts\python.exe -c "from backend.security import keystore; print(keystore.missing_credentials())"
+```
 
-> OpenWakeWord runs entirely locally and requires **no API key**.
+See `.env.example` for where to obtain each credential.
 
----
+### 4. Create your Jarvis voice (ElevenLabs)
 
-## First-Run ElevenLabs Voice Setup (manual)
+1. Go to [elevenlabs.io](https://elevenlabs.io) → **Voice Lab** → **Voice Design**
+2. Use this description:
 
-The Jarvis voice is a custom ElevenLabs profile and must be created once by hand:
+   > *Calm, refined British male AI. A butler with the quiet menace of an assassin. Paul Bettany meets Anthony Hopkins — unhurried, precise, never raising his voice. Faint digital resonance beneath the warmth, like intelligence itself is speaking.*
 
-1. Sign in at the [ElevenLabs dashboard](https://elevenlabs.io/).
-2. Create (or clone) a voice tuned to the Jarvis character -- a measured, dry,
-   subtly British delivery (Tom Hardy's cadence x Jarvis from the Avengers).
-3. Copy the **Voice ID** from that voice's settings.
-4. Store both the voice id and your API key so the text-to-speech stage can
-   authenticate:
+3. Save the voice → copy the **Voice ID** → store it with `set_elevenlabs_voice_id()`
 
-   ```powershell
-   .venv\Scripts\python.exe -c "
-   from backend.security import keystore
-   keystore.set_elevenlabs_api_key('your-elevenlabs-key')
-   keystore.set_elevenlabs_voice_id('your-voice-id')
-   "
-   ```
-
-Without both values Jarvis runs text-only and skips spoken output.
+Test line: *"Good evening, sir. All systems are nominal. Shall I proceed?"*
 
 ---
 
 ## Running
 
-### Backend
+### Backend (Terminal 1 — keep this running)
 
 ```powershell
-.venv\Scripts\python.exe backend/main.py
+.venv\Scripts\python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
 ```
 
-This runs the FastAPI app under Uvicorn, bound to local loopback only. It serves
-HTTP on `http://127.0.0.1:8000` and the WebSocket hub on `ws://127.0.0.1:8000/ws`.
-Confirm it is up with `GET http://127.0.0.1:8000/health`.
+Confirms with: `Uvicorn running on http://127.0.0.1:8000`
 
-(Equivalent: `.venv\Scripts\python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 8000`.)
-
-### Frontend (dev mode)
-
-Browser dev UI (no Rust required):
-
-```powershell
-cd frontend
-pnpm dev
-```
-
-Vite serves the React app on `http://localhost:1420`.
-
-For the full native multi-window experience (requires the Rust toolchain):
+### Native desktop app (Terminal 2)
 
 ```powershell
 cd frontend
 pnpm tauri dev
 ```
 
-This opens all five windows. Vite serves the React app on `localhost:1420`; Tauri wraps it in native windows.
+Five windows open on your desktop. First launch compiles Rust (~3–5 min). Subsequent launches are instant.
 
-### First-run setup wizard
+**To shut down:** click the **⏻ button** on the orb window (top-right corner). All five windows close immediately.
 
-If you have not already stored your API keys, open the wizard in your browser:
+### Browser preview (no Rust required)
 
+```powershell
+cd frontend
+pnpm dev
 ```
-http://localhost:1420/?window=setup
-```
 
-It prompts for each credential and writes it to the Windows Credential Manager --
-the same store the CLI snippets above use, so the two approaches are interchangeable.
+Open `http://localhost:1420` — single-tab preview of all windows. Good for frontend development.
 
 ### Tests
 
 ```powershell
-.venv\Scripts\pytest.exe backend/ -v
+.venv\Scripts\python.exe -m pytest backend/ -v
 ```
 
-All 46 backend tests should pass across Phases 3-6.
+85 backend tests, all passing.
+
+---
+
+## Window Layout
+
+When launched, the five windows arrange around the central orb:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  REASONING          │           │  COMMUNICATIONS           │
+│  (live token stream)│   [ORB]   │  (Slack + Gmail)          │
+│                     │           │                           │
+├─────────────────────┤           └───────────────────────────┤
+│                     │                                       │
+│  AGENTS             │           TOOLS                       │
+│  (6 agent cards)    │           (permission matrix)         │
+└─────────────────────────────────────────────────────────────┘
+```
+
+All windows are draggable by their header. The orb window has a drag grip at the bottom edge.
+
+---
+
+## Talking to Jarvis
+
+1. Say **"Hey Jarvis, [your question]"** — say it as one sentence without pausing
+2. The orb turns **cyan** while listening, **gold** while thinking, **cyan** while speaking
+3. Jarvis responds through your speakers
+
+**Example commands:**
+- *"Hey Jarvis, what's in my Slack?"*
+- *"Hey Jarvis, summarise my unread emails"*
+- *"Hey Jarvis, search for the latest news on X"*
+- *"Hey Jarvis, what's the status of all agents?"*
+- Say **"stop"** mid-response to interrupt
 
 ---
 
@@ -238,132 +232,116 @@ All 46 backend tests should pass across Phases 3-6.
 
 ```
 Jarvis/
-├── CLAUDE.md                    # Master build checklist (agents read this on every run)
-├── .env.example                 # Credential name reference -- no real values
-├── pyproject.toml               # Python project config (uv)
-├── uv.lock                      # Locked dependencies (committed for reproducibility)
+├── CLAUDE.md                     # Master build checklist (agents read this)
+├── .env.example                  # Credential reference — no real values
+├── pyproject.toml                # Python project (uv)
 ├── backend/
-│   ├── main.py                  # FastAPI app + lifespan (DB, agents, voice, tools)
-│   ├── events.py                # WebSocket event schema
-│   ├── websocket_hub.py         # Fan-out hub for all 5 windows
-│   ├── logging_config.py
+│   ├── main.py                   # FastAPI app + startup greeting + shutdown endpoint
+│   ├── events.py                 # WebSocket event schema
+│   ├── websocket_hub.py          # Fan-out hub for all 5 windows
 │   ├── ai/
-│   │   ├── claude_client.py     # Anthropic SDK, streaming, prompt caching
-│   │   ├── ollama_client.py     # Local fallback
-│   │   └── persona.py           # Jarvis system prompt
+│   │   ├── claude_client.py      # Anthropic SDK, streaming, prompt caching
+│   │   ├── ollama_client.py      # Local fallback
+│   │   └── persona.py            # Jarvis system prompt
 │   ├── voice/
-│   │   ├── wake_word.py         # OpenWakeWord detection
-│   │   ├── stt.py               # faster-whisper transcription
-│   │   ├── tts.py               # ElevenLabs synthesis
-│   │   └── pipeline.py          # Full wake->listen->think->speak loop
+│   │   ├── wake_word.py          # OpenWakeWord + VAD + audio capture
+│   │   ├── stt.py                # faster-whisper transcription
+│   │   ├── tts.py                # ElevenLabs synthesis + playback
+│   │   └── pipeline.py           # wake → listen → think → speak loop
 │   ├── agents/
-│   │   ├── base_agent.py        # Task queue, status broadcasting, DB persistence
-│   │   ├── runtime.py           # Starts and supervises all 6 agents
-│   │   ├── production_lead.py   # Atlas -- orchestrator, goal routing
-│   │   ├── frontend_agent.py    # Ben
-│   │   ├── backend_agent.py     # Kado
-│   │   ├── security_agent.py    # Sentinel
-│   │   ├── marketing_agent.py   # Vega
-│   │   └── content_creator.py   # Quill
+│   │   ├── base_agent.py         # Task queue, status broadcasting, DB persistence
+│   │   ├── runtime.py            # Supervises all 6 agents
+│   │   ├── production_lead.py    # Atlas — orchestrator
+│   │   ├── frontend_agent.py     # Ben
+│   │   ├── backend_agent.py      # Kado
+│   │   ├── security_agent.py     # Sentinel
+│   │   ├── marketing_agent.py    # Vega
+│   │   └── content_creator.py    # Quill
 │   ├── integrations/
-│   │   ├── slack_client.py      # Slack Bolt, DM listener, send/read
-│   │   └── gmail_client.py      # Gmail OAuth2, inbox, draft, send
+│   │   ├── slack_client.py       # Slack Bolt, DM listener, send/read
+│   │   └── gmail_client.py       # Gmail OAuth2, inbox, draft, send
 │   ├── memory/
-│   │   ├── database.py          # SQLite CRUD -- conversations, agents, tasks, audit log
-│   │   └── vector_store.py      # FAISS + sentence-transformers
+│   │   ├── database.py           # SQLite — conversations, agents, tasks, audit log
+│   │   └── vector_store.py       # FAISS + sentence-transformers
 │   ├── tools/
-│   │   ├── registry.py          # ToolRegistry + per-agent permission matrix
-│   │   ├── web_search.py        # DuckDuckGo (async)
-│   │   ├── browser.py           # Playwright automation (http/https only)
-│   │   ├── file_ops.py          # Read/write/list (sandboxed to workspace/)
-│   │   ├── code_executor.py     # RestrictedPython sandbox
-│   │   ├── slack_tool.py
-│   │   ├── gmail_tool.py
-│   │   └── wiring.py            # build_tool_registry() -- wires everything together
+│   │   ├── registry.py           # ToolRegistry + per-agent permission matrix
+│   │   ├── web_search.py         # DuckDuckGo
+│   │   ├── browser.py            # Playwright (sandboxed)
+│   │   ├── file_ops.py           # Read/write/list (workspace/ only)
+│   │   ├── code_executor.py      # RestrictedPython sandbox
+│   │   └── wiring.py             # Wires all tools into the registry
 │   └── security/
-│       └── keystore.py          # Typed getters/setters for Windows Credential Manager
+│       └── keystore.py           # Typed getters/setters for Windows Credential Manager
 ├── frontend/
 │   ├── src/
-│   │   ├── windows/             # 5 Tauri windows
-│   │   │   ├── AnimationWindow.tsx   # Three.js orb (blue/gold/cyan by state)
-│   │   │   ├── ReasoningWindow.tsx   # Live token stream, tool calls, cost
+│   │   ├── windows/
+│   │   │   ├── AnimationWindow.tsx    # Particle orb + solar flares + connection beams
+│   │   │   ├── ReasoningWindow.tsx    # Live token stream, tool calls, cost
 │   │   │   ├── CommunicationsWindow.tsx  # Slack + Gmail panels
-│   │   │   ├── AgentsWindow.tsx      # 6 agent cards, live status
-│   │   │   └── ToolsWindow.tsx       # Tool/agent permission matrix
+│   │   │   ├── AgentsWindow.tsx       # 6 agent cards, live status
+│   │   │   ├── ToolsWindow.tsx        # Tool/agent permission matrix
+│   │   │   └── SetupWizardWindow.tsx  # First-run credential setup
 │   │   ├── components/
-│   │   │   ├── JarvisOrb.tsx    # React Three Fiber orb animation
-│   │   │   ├── AgentCard.tsx
-│   │   │   ├── ToolCard.tsx
-│   │   │   ├── StreamViewer.tsx
-│   │   │   ├── StatusBadge.tsx
-│   │   │   └── WindowFrame.tsx
+│   │   │   ├── JarvisOrb.tsx     # R3F orb — 2500 particles + 60-particle solar flares
+│   │   │   ├── WindowFrame.tsx   # Shared HUD chrome (angular, data-stream border)
+│   │   │   └── ...
 │   │   └── lib/
-│   │       ├── store.ts         # Zustand -- single source of truth
-│   │       ├── websocket.ts     # WS client with auto-reconnect
-│   │       ├── api.ts
-│   │       └── types.ts
+│   │       ├── store.ts          # Zustand — single source of truth
+│   │       ├── websocket.ts      # WS client with auto-reconnect + shutdown handler
+│   │       └── types.ts          # Shared TypeScript types (mirrors backend events)
 │   └── src-tauri/
-│       ├── tauri.conf.json      # 5 window definitions, positions, decorations
-│       ├── Cargo.toml           # Tauri 2 Rust dependencies
-│       └── Cargo.lock           # Locked Rust dependencies (committed for binary)
+│       ├── tauri.conf.json       # 5 window definitions, positions, capabilities
+│       ├── src/lib.rs            # Tray icon, autostart, exit_app command
+│       └── Cargo.toml
 └── .claude/
-    └── agents/                  # Claude Code sub-agent definitions
-        ├── production-manager.md
-        ├── backend-agent.md
-        ├── frontend-agent.md
-        ├── security-agent.md
-        └── debugger-agent.md
+    └── agents/                   # Claude Code sub-agent definitions
 ```
-
----
-
-## Build Progress
-
-| Phase                    | Status   |
-|--------------------------|----------|
-| 1 - Foundation           | Complete |
-| 2 - Backend Core         | Complete |
-| 3 - Voice Pipeline       | Complete |
-| 4 - Agent System         | Complete |
-| 5 - Integrations         | Complete |
-| 6 - Tools System         | Complete |
-| 7 - Multi-Window UI      | Complete |
-| 8 - Security Hardening   | Pending  |
-| 9 - Testing              | Pending  |
-| 10 - Polish and Packaging| Pending  |
-
-See [CLAUDE.md](CLAUDE.md) for the detailed per-task checklist. Each phase is built by a dedicated Claude Code sub-agent and verified by a test suite before being marked complete.
 
 ---
 
 ## Security Model
 
-| Rule | Implementation |
-|------|----------------|
-| No secrets in files | All credentials stored in Windows Credential Manager via `keyring` |
-| Local network only | FastAPI binds to `127.0.0.1:8000` -- never `0.0.0.0` |
-| Input sanitization | Voice input stripped of control chars, capped at 2,000 chars before reaching Claude |
-| Sandboxed code execution | RestrictedPython blocks `os`, `sys`, `subprocess`; filesystem scoped to `workspace/` |
-| Minimal OAuth scopes | Gmail: `readonly` + `send`; Slack: `chat:write`, `im:read`, `channels:read` |
-| Audit logging | Every agent action written to SQLite `audit_log` (metadata only, no message content) |
+| Rule | How it's enforced |
+|---|---|
+| No secrets in files | Windows Credential Manager only — no `.env`, no hardcoded values |
+| Local network only | FastAPI binds to `127.0.0.1:8000` — never `0.0.0.0` |
+| WebSocket origin guard | Untrusted origins rejected with code 1008 before handshake |
+| Input sanitisation | Voice input stripped of control chars, capped at 2,000 chars |
+| Sandboxed execution | RestrictedPython blocks `os`, `sys`, `subprocess`; filesystem scoped to `workspace/` |
+| Minimal OAuth scopes | Gmail: `readonly` + `send` · Slack: `chat:write`, `im:read`, `channels:read` |
+| Audit log | Every agent action in SQLite `audit_log` — metadata only, no message content |
+
+Security audit: **0 Critical, 0 High findings**.
+
+---
+
+## Build Status
+
+| Phase | Status |
+|---|---|
+| 1 — Foundation | Complete |
+| 2 — Backend Core | Complete |
+| 3 — Voice Pipeline | Complete |
+| 4 — Agent System | Complete |
+| 5 — Integrations | Complete |
+| 6 — Tools System | Complete |
+| 7 — Multi-Window UI | Complete |
+| 8 — Security Hardening | Complete |
+| 9 — Testing (85/85) | Complete |
+| 10 — Polish & Packaging | Complete |
+| 11 — Live Usage | In progress |
 
 ---
 
 ## Known Limitations
 
-- **Rust is required for the native windows.** The five-window native Tauri
-  desktop app needs a working Rust toolchain (`rustup`) to build and run via
-  `pnpm tauri dev`. The browser dev UI (`pnpm dev` at `http://localhost:1420`)
-  runs without Rust, but the packaged `.exe` and native multi-window experience
-  do not.
-- **Vitest is not yet wired.** Frontend unit tests are planned but the Vitest
-  harness is not set up yet, so there is no `pnpm test` for the frontend. Backend
-  tests run via pytest (see **Tests** above).
-- The local Ollama fallback and faster-whisper run best with an NVIDIA GPU; on
-  CPU-only machines, voice latency will exceed the <3s roundtrip target.
+- **Dedicated microphone recommended.** The laptop mic captures wake words but speech recognition quality improves significantly with an external mic.
+- **Gmail requires OAuth setup.** Gmail OAuth credentials need to be generated once via the Google Cloud Console (see above). Slack and other features work without it.
+- **Windows only.** Tauri 2 supports cross-platform but this build targets Windows 11 and uses the Windows Credential Manager for secrets.
+- **No Vitest harness.** Frontend is verified via `pnpm build` (TypeScript + Vite). A Vitest setup is planned.
 
 ---
 
 ## License
 
-Private -- all rights reserved.
+Private — all rights reserved.
