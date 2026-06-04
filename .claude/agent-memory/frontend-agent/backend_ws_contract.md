@@ -28,8 +28,16 @@ gmail_draft_email). Per-agent matrix = `DEFAULT_PERMISSIONS` in
 **Why:** windows render nothing real without matching these; mismatched field
 names silently drop data.
 
-**How to apply:** Backend has NOT yet defined events for metrics, comms inbox
-payloads, or tool_permissions — the frontend forward-declares these
-(`metrics`, `comms`, `tool_permissions`) and the WS endpoint currently only
-DRAINS inbound frames (no command handling). When backend adds those, confirm
-field names match `frontend/src/lib/types.ts` before assuming the UI is wired.
+**How to apply:** Backend has NOT yet defined events for comms inbox payloads
+or tool_permissions — the frontend forward-declares these (`comms`,
+`tool_permissions`) and the WS endpoint currently only DRAINS inbound frames
+(no command handling). When backend adds those, confirm field names match
+`frontend/src/lib/types.ts` before assuming the UI is wired.
+
+CONFIRMED (Phase 11C, 2026-06-04): `metrics` is now live from the backend.
+Shape: { type:"metrics", cost_usd, latency_ms, model, input_tokens,
+output_tokens, cache_read_tokens, cache_write_tokens } (+ timestamp). The
+frontend store accumulates a `sessionCostUsd` running total from per-turn
+`cost_usd`. ReasoningWindow is now a chat UI (`chatHistory` + `addUserMessage`
++ `appendJarvisToken`); the old `streamingText`/`appendToken` path is kept for
+back-compat but `StreamViewer.tsx` is no longer rendered.
