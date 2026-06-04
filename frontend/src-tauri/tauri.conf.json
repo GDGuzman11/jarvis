@@ -74,7 +74,7 @@
         "decorations": false,
         "transparent": true,
         "resizable": true
-      },
+      }
     ],
     "security": {
       "csp": null
