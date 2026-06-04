@@ -4,10 +4,21 @@
  * frameless/transparent in Tauri, so the orb floats on the desktop.
  */
 
+import type { MouseEvent } from "react";
 import { Canvas } from "@react-three/fiber";
 import { useStore } from "../lib/store";
 import { useBootSound } from "../lib/useBootSound";
 import JarvisOrb from "../components/JarvisOrb";
+
+async function startDrag(e: MouseEvent) {
+  if (e.button !== 0) return;
+  try {
+    const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+    await getCurrentWebviewWindow().startDragging();
+  } catch {
+    // Browser mode — dragging not available.
+  }
+}
 
 const STATE_LABEL: Record<string, string> = {
   idle: "STANDBY",
@@ -48,12 +59,11 @@ export function AnimationWindow() {
           {STATE_LABEL[voiceState] ?? voiceState}
         </span>
       </div>
-      {/* This window is frameless (no header), so it gets its own drag handle:
-          a narrow grip strip pinned to the bottom edge. */}
+      {/* Drag grip strip — pinned to the bottom edge, above the Three.js canvas. */}
       <div
-        data-tauri-drag-region
+        onMouseDown={startDrag}
         title="Drag to move"
-        className="absolute inset-x-0 bottom-0 flex h-4 cursor-grab items-center justify-center active:cursor-grabbing"
+        className="absolute inset-x-0 bottom-0 z-10 flex h-6 cursor-grab items-center justify-center active:cursor-grabbing"
       >
         <span className="pointer-events-none h-1 w-10 rounded-full bg-jarvis-cyan/40" />
       </div>

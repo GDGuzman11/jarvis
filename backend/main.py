@@ -84,8 +84,8 @@ async def _startup_greeting() -> None:
     from backend.security.keystore import missing_credentials
     from backend.voice import tts
 
-    # Wait up to 15 s for at least one window to open a WebSocket connection.
-    for _ in range(30):
+    # Wait up to 60 s for at least one window to open a WebSocket connection.
+    for _ in range(120):
         await asyncio.sleep(0.5)
         if hub.connection_count > 0:
             break

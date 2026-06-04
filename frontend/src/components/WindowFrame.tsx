@@ -5,10 +5,20 @@
  * they cascade ~200ms apart when all 5 open at once.
  */
 
-import type { ReactNode } from "react";
+import type { ReactNode, MouseEvent } from "react";
 import { motion } from "framer-motion";
 import { useStore } from "../lib/store";
 import type { ConnectionStatus } from "../lib/types";
+
+async function startDrag(e: MouseEvent) {
+  if (e.button !== 0) return;
+  try {
+    const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+    await getCurrentWebviewWindow().startDragging();
+  } catch {
+    // Browser mode — dragging not available.
+  }
+}
 
 const CONN_LABEL: Record<ConnectionStatus, { text: string; color: string }> = {
   connecting: { text: "LINKING", color: "text-jarvis-gold" },
@@ -35,7 +45,7 @@ export function WindowFrame({ title, index = 0, children }: WindowFrameProps) {
       transition={{ duration: 0.5, delay: index * 0.2, ease: "easeOut" }}
     >
       <header
-        data-tauri-drag-region
+        onMouseDown={startDrag}
         className="flex cursor-grab items-center justify-between border-b border-jarvis-cyan/15 px-5 py-3 active:cursor-grabbing"
       >
         <div className="flex items-center gap-3">
