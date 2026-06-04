@@ -10,8 +10,10 @@
 
 ## Current Status
 
-- **Active Phase**: 10 — Polish & Packaging (started 2026-06-03). **FEATURE-COMPLETE pending Rust toolchain install.**
-- **Last Completed (2026-06-04)**: **Phase 10 FRONTEND HUD POLISH PASS (frontend-agent Ben) — `pnpm build` clean (tsc 0 errors, "built in 3.67s", 475 modules).** Six-part visual overhaul: (1) Power/shutdown button in `AnimationWindow.tsx` moved AFTER `<Canvas>` (R3F was capturing its pointer events) + `z-20` so it's clickable; restyled angular red with hover glow. (2) Idle state label `STANDBY`→`JARVIS` in `STATE_LABEL`. (3) `JarvisOrb.tsx` solar-flare system: second `<points>` `flareRef` (FLARE_COUNT=60, size 0.05, `#ffe066`, AdditiveBlending), `flareData` ref (lives/velocities Float32Arrays + nextFlare timer), bursts of 15 particles erupt from a random surface point in a 0.35 cone every 3–9s, arc outward + fade, opacity scales with live count; parked at (1000,1000,1000) when dead. (4) `AnimationWindow.tsx` SVG connection-beam overlay (viewBox 0 0 360 360, z-10, pointer-events-none): 4 static beams + `<animateMotion>` travelling dots from orb centre (180,180) to Reasoning/Comms/Agents/Tools edges, plus centre node circle. (5) `tauri.conf.json` window positions repositioned so the orb is screen-centred (animation 780,300; reasoning 200,100; comms 1180,80; agents 200,760 870×280; tools 1180,540 700×460). (6) `index.css` full rewrite (darker `#080810` bg, `.hud-btn`, `.data-stream-top` flowing top border, `.hud-corners` accent marks, finer grid) + `WindowFrame.tsx` redesign (angular header, `|`-style accent ticks, rectangular pulsing status badge, bottom corner accents). NOTE: still no Vitest harness — verified via `pnpm build` + grep only; native multi-window launch unvalidated (Rust toolchain not installed).
+- **Active Phase**: 11 — Live Usage & Ongoing Improvements (started 2026-06-04).
+- **Last Completed (2026-06-04)**: **Phase 11 SESSION 1 — Live launch + full HUD polish + audio fix + drag fix.** Confirmed Rust/cargo 1.96.0 IS installed (prior blocker resolved). Launched Jarvis natively via `pnpm tauri dev` + backend uvicorn. Fixed `aiohttp` missing dep (Slack Bolt). Fixed TTS audio playback (was playing 50ms micro-blocks with gaps → now plays full audio as one stream via `_play_pcm_block_sync`, amplitude events broadcast in parallel). Fixed window dragging (added `core:window:allow-start-dragging` to `capabilities/default.json`, replaced `data-tauri-drag-region` attribute with explicit `getCurrentWebviewWindow().startDragging()` on mousedown). Added startup greeting (`_startup_greeting` background task in `main.py` lifespan — waits 60s for first WS connection, calls Claude with system context, speaks via TTS, sets voice state speaking→idle). Added `POST /api/shutdown` endpoint + `ShutdownEvent` WS broadcast + frontend handler closes all Tauri windows. Full HUD visual overhaul: solar flare system in `JarvisOrb.tsx` (60-particle burst every 3–9s, gold `#ffe066`), SVG connection beams in `AnimationWindow.tsx` (4 animated dots travelling to other windows), `STANDBY`→`JARVIS` label, `index.css` rewrite (darker `#080810`, `.hud-btn`, `.data-stream-top`, `.hud-corners`), `WindowFrame.tsx` angular redesign (accent ticks, pulsing status badge, corner marks), window positions centred on orb (animation 780,300). Stored credentials: ANTHROPIC_API_KEY ✓, ELEVENLABS_API_KEY ✓, ELEVENLABS_VOICE_ID ✓ (Paul Bettany × Anthony Hopkins × JARVIS voice), SLACK_BOT_TOKEN ✓, SLACK_APP_TOKEN ✓, SLACK_SIGNING_SECRET ✓. Gmail OAuth still NOT configured (4 credentials missing). `pnpm build` clean: tsc 0 errors, 475 modules, 3.67s.
+- **Next Task**: Phase 11 — Gmail OAuth setup (user: gabedeguzman99@gmail.com), then verify startup greeting fires, then E2E voice test with new microphone. See Phase 11 checklist below.
+- **Blockers**: Gmail OAuth not configured (GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REDIRECT_URI, GMAIL_REFRESH_TOKEN missing from keyring). Voice E2E tests need a dedicated microphone (laptop mic too low quality). No other blockers — Rust installed, backend runs, Tauri launches natively.
 - **Prior (2026-06-03)**: **FINAL /debugger-agent FULL TEST SUITE PASS — backend 85/85 + frontend build clean.** Ran `.venv\Scripts\python.exe -m pytest backend/ -v` → **85 passed, 0 failed** (33s; only benign warnings). Ran `cd frontend && pnpm build` → clean tsc + vite, **"built in 3.11s"**, 467 modules, dist/ generated, **0 TS errors** (only expected AnimationWindow chunk-size warning). Confirmed all Phase 10 verification artifacts: `backend/test_phase10_backend_verify.py`, `backend/test_phase10_rename_verify.py`, `frontend/src/windows/SetupWizardWindow.tsx`, `frontend/src/components/JarvisOrb.tsx` (particle `<points>`/`<pointsMaterial>`, not icosahedron), `README.md`. Checked off "Final /debugger-agent full test suite pass" in Phase 10; Test Results updated. **The project is now feature-complete pending the Rust toolchain installation.** Still blocked on Rust/cargo (NOT installed): Windows installer (.exe) via Tauri bundler, native multi-window launch, system tray, autostart, and the 6 deferred live-UI/voice-E2E tests (need native shell + mic + live keys). Backend/frontend source for all of these is written and compiles — only the native build/runtime is unvalidated.
 - **Prior (2026-06-03)**: **Phase 10 BACKEND VERIFIED — AudioLevelEvent + crash recovery + graceful degradation + setup wizard API**. Added `backend/test_phase10_backend_verify.py` (14 cases). Coverage: (1) `AudioLevelEvent` (events.py, type="audio_level"/level) + `tts.speak_and_play` broadcasts only AudioLevelEvents with 0.0<=level<=1.0, LAST always level==0.0 (including the finally-block path when `_play_pcm_block_sync` raises mid-playback); `_rms_level` unit (silence→0.0, full-scale int16→~1.0, empty→0.0, clip>1.0→1.0). (2) Pipeline crash recovery: 3 consecutive `_run_turn` crashes → state "error", `_consecutive_crashes`==3, no further retry (asyncio.sleep patched to no-op); crash-twice-then-clean-turn resets counter to 0. (3) Graceful degradation in `pipeline._iter_reply`: Claude raising MissingCredentialError OR ClaudeAPIError *pre-token* falls back to Ollama (logs `claude_fallback_to_ollama`); mid-stream failure (1 token then raise) does NOT restart from Ollama. (4) Setup wizard via isolated minimal-app TestClient + in-memory fake keyring: GET /setup/status all-missing → complete=false + 7-item missing list; POST stores + never echoes value; unknown name → 400; GET /setup/complete flips true once all 7 present; no secret value leaks into any response body. Full `pytest backend/` = **79 passed, 0 failed** (65 prior + 14 new, no regressions). NOTE: frontend consumers (orb lip-sync animation, first-run wizard UI) still pending — those are frontend-agent tasks.
 - **Prior — Phase 9 VERIFIED — Testing & Verification (backend)**. Added `backend/test_phase9_verify.py` (19 cases) filling the gaps not covered by per-phase suites: STT accuracy (mocked whisper), TTS non-zero bytes (mocked ElevenLabs), wake-word callback, full mocked voice roundtrip with <3s latency assertion, Claude streaming + tool_use + prompt-cache block, **Ollama fallback (newly wired into `pipeline.py::_iter_reply`)**, plus the 3 security tests (no-secrets grep, 127.0.0.1 bind, sandbox blocks os.system/subprocess). Re-confirmed Phase 4 delegation/persistence + Phase 5 Slack/Gmail mocked read/send via the existing suites. Whole `pytest backend/` = 65 passed, 0 failed. DEFERRED: 4 live-UI items (windows open, WS<2s, orb colour, agent-card updates) + 2 true voice E2E — all need the native Tauri app (Rust/cargo not installed) and/or a microphone + live API keys; component paths are covered by mocked tests, and `frontend/` has no Vitest harness yet (a Phase 10 add). Minor non-blocking finding logged: `code_executor.py` docstring overstates allowed builtins (`sum`/`range`/`sorted` actually raise NameError — sandbox is stricter than documented).
@@ -19,8 +21,7 @@
 - **Last Completed (2026-06-03)**: **Phase 10 FRONTEND VERIFIED — particle orb + lip-sync + draggable + agent rename + setup wizard UI**. `pnpm build` passes clean (tsc + vite, "built in 3.58s", 467 modules, dist/ generated, no TS errors; only the expected AnimationWindow chunk-size warning). Verified: (1) JarvisOrb.tsx is an ethereal sand-particle cloud — `<points>`/`<pointsMaterial>`, PARTICLE_COUNT=2500, golden-spiral placement, no icosahedron/wireframe. (2) Lip-sync — store.ts has `audioLevel: number` + `setAudioLevel`; websocket.ts has `case "audio_level"`. (3) Draggable — `data-tauri-drag-region` in WindowFrame.tsx:38 (header) + AnimationWindow.tsx:37 (grip). (4) Agent rename — api.ts `renameAgent` → POST /api/agents/{id}/rename; store.ts `updateAgentName`. (5) Setup wizard — SetupWizardWindow.tsx exists; tauri.conf.json `"label": "setup"` window; App.tsx routes `setup`→SetupWizardWindow (lazy). Prior: Boot startup sound — `frontend/src/lib/useBootSound.ts` (Web Audio API two-tone chime) + AnimationWindow.tsx.
 - **Last Completed (2026-06-03)**: **Agent rename endpoint + README.md VERIFIED (debugger-agent)**. Added `backend/test_phase10_rename_verify.py` (6 cases) driving POST `/api/agents/{id}/rename` via a non-lifespan TestClient (lifespan skipped so the seeded `app.state.agents` isn't clobbered by the real runtime; `main.rename_agent` DB write + `main.hub.broadcast` patched): 200 returns `{agent_id,name}` with the trimmed name + mutates the live agent, 404 unknown agent, 400 empty-after-strip, 400 too-long (>50), broadcasts exactly one `AgentUpdate` carrying the new name, 50-char boundary accepted. Confirmed `README.md` present and complete (Prerequisites/Hardware Requirements, setup: uv sync + pnpm install + backend start + pnpm dev + wizard URL `http://localhost:1420/?window=setup`, ElevenLabs voice setup section, Known Limitations). Full `pytest backend/` = **85 passed, 0 failed** (79 prior + 6 new, no regressions).
 - **Last Completed (2026-06-03)**: **Phase 10 FINAL SECURITY AUDIT — PASSED (0 Critical / 0 High, no new findings)**. Re-ran all Phase 8 checks + 7 Phase 10 additions: (1) secret grep across codebase = 0 real matches (only doc/test lines naming the patterns); (2) FastAPI `HOST=="127.0.0.1"`, no `0.0.0.0` bind; (3) WS Origin guard (`_is_allowed_ws_origin`/`ALLOWED_WS_ORIGINS`) intact, untrusted→close 1008; (4) `setup_wizard.py` POST /setup/credential allowlists name (unknown→400), never echoes value (returns `{stored,complete,missing}` only); (5) rename endpoint strips/length-checks (empty→400, >50→400, unknown→404), broadcast leaks no internal state; (6) `AudioLevelEvent` = `level:float`+type+timestamp only; (7) no real `.env` created in Phase 10 (only `.env.example`). keystore keyring-only, no `verify=False`/`CERT_NONE` anywhere, scopes minimal, audit_log metadata-only — all re-confirmed. Accepted-risk carryovers unchanged. "Final /security-agent audit pass" checked off in Phase 10.
-- **Next Task**: **DONE — final test suite passed.** All software-buildable Phase 10 work is complete and verified. The only remaining Phase 10 items are blocked on the native shell: install the **Rust/cargo toolchain via rustup**, then build the Windows installer (.exe) via Tauri bundler, validate native multi-window launch + system tray + autostart, and run the 6 deferred live-UI/voice-E2E tests. Optional: add a Vitest harness for frontend unit tests (currently verified via `pnpm build` + grep).
-- **Blockers**: Rust/cargo toolchain NOT installed — so `pnpm tauri dev` / native window launch / tray / autostart CANNOT be run yet; only the Vite web build (`pnpm build`) and dev-dashboard preview (`pnpm dev`, single browser tab) are runnable. Rust lib.rs + Cargo + tauri.conf changes are written but UNCOMPILED. Install Rust via rustup to validate the native shell. Also: `uv` not on PATH (backend via `.venv\Scripts\python.exe`); project root not a git repo (`pre-commit install` deferred).
+- *(these lines moved to top of Current Status — see above)*
 - **Build Started**: 2026-06-02
 
 ---
@@ -77,9 +78,15 @@
 | Content Creator | *(TBD)* | Drafts posts, emails, copy, documentation |
 
 ### Design Aesthetic
-Dark theme `#0A0A0F`, electric blue/cyan accents `#00D4FF`, gold highlights `#FFB800`. Iron Man HUD — clean, glowing, cinematic. Glassmorphism panels (backdrop-blur, semi-transparent borders). No rounded-cornered cards — sharp edges with glowing outlines.
+Dark theme `#080810` (updated 2026-06-04), electric blue/cyan accents `#00D4FF`, gold highlights `#FFB800`. Iron Man HUD — angular, futuristic, high-contrast. Sharp edges with glowing outlines. No rounded corners.
 
-Animation window orb: 2500-particle sand/stardust cloud (Three.js `Points`, `AdditiveBlending`). Particles drift using sinusoidal noise — calm at idle, swirling when thinking, explosive on speaking syllables. Replaces the icosahedron wireframe.
+- **Grid**: fine dual-scale grid (80px major / 20px minor) at low opacity
+- **Panels**: `rgba(8,14,28,0.82)` background, `backdrop-filter: blur(24px)`, `1px solid rgba(0,212,255,0.25)` border
+- **WindowFrame**: angular header with `|`-style accent ticks, flowing `data-stream-top` animated border, pulsing rectangular status badge, corner accent marks
+- **Buttons** (`.hud-btn`): `rgba(0,212,255,0.06)` bg, `0.5` opacity cyan border, full cyan border + shadow glow on hover — high contrast
+- **Window layout**: orb (AnimationWindow) centred at `x:780, y:300`; Reasoning left `x:200`; Communications upper-right `x:1180`; Agents bottom `x:200, y:760`; Tools lower-right `x:1180, y:540`
+- **Orb**: 2500-particle sand/stardust cloud + 60-particle solar flare system (gold `#ffe066`, bursts every 3–9s). SVG connection beams radiate from orb centre to other window edges with animated travelling dots.
+- **Voice Jarvis**: Paul Bettany × Anthony Hopkins character — calm British butler with faint digital resonance. "The kind of voice that could read you a bedtime story or a threat."
 
 ---
 
@@ -131,7 +138,7 @@ Animation window orb: 2500-particle sand/stardust cloud (Three.js `Points`, `Add
 - [x] Voice activity detection — detect end of speech after 0.8s silence
 - [x] faster-whisper STT integration (`backend/voice/stt.py`, base.en model)
 - [x] ElevenLabs TTS integration (`backend/voice/tts.py`)
-- [ ] *(Manual step)* Create ElevenLabs voice profile in dashboard — Tom Hardy × Jarvis character. Save voice ID to keyring.
+- [x] *(Manual step)* Create ElevenLabs voice profile in dashboard — Paul Bettany × Anthony Hopkins × JARVIS character (calm British butler with faint digital resonance). Voice ID saved to keyring (2026-06-04).
 - [x] Full pipeline: wake → listen → STT → Claude API → TTS → play audio
 - [x] Interrupt: saying "stop" cancels mid-response
 - [x] WebSocket events: emit `voice_state` (listening / thinking / speaking / idle)
@@ -330,6 +337,62 @@ C:\Users\User\appsbyG\Jarvis\
 
 ---
 
+## Phase 11 — Live Usage & Ongoing Improvements
+*Active phase. Each task must be tested by debugger-agent before checkbox is ticked.*
+
+### 11A — Credentials & Integrations
+*Handled by: user (manual OAuth) + backend-agent (keyring storage)*
+
+- [ ] Gmail OAuth setup — user gabedeguzman99@gmail.com
+  - [ ] Create Google Cloud project "Jarvis" at console.cloud.google.com
+  - [ ] Enable Gmail API
+  - [ ] Configure OAuth consent screen (External, app name: Jarvis)
+  - [ ] Create OAuth Client ID (Desktop app type) → save Client ID + Secret to keyring
+  - [ ] Set redirect URI `urn:ietf:wg:oauth:2.0:oob` to keyring
+  - [ ] Run OAuth flow to generate refresh token → save to keyring
+  - [ ] Verify: `keystore.missing_credentials()` returns `[]` (all 10 set)
+- [ ] Verify startup greeting fires on launch (say nothing — Jarvis should speak within ~5s of windows connecting)
+- [ ] E2E voice test with dedicated microphone — "Hey Jarvis, what's in my Slack?" → reads Slack → speaks answer
+- [ ] E2E voice test — "Hey Jarvis, what's in my Gmail?" → reads inbox → speaks answer
+
+### 11B — Voice & Audio
+*Handled by: backend-agent*
+
+- [ ] Tune wake-word sensitivity after microphone upgrade (currently threshold=0.5, may need adjustment)
+- [ ] Tune silence detection threshold (`SILENCE_RMS_THRESHOLD=500`) for new microphone — if too sensitive or not sensitive enough adjust in `wake_word.py`
+- [ ] Verify audio plays through correct output device consistently (currently confirmed: Realtek laptop speakers + VG27AQ3A monitor)
+- [ ] Test interrupt ("stop") cancels mid-response reliably with new microphone
+
+### 11C — UI Polish
+*Handled by: frontend-agent (Ben)*
+
+- [ ] Verify window drag works in native Tauri app (fixed via `core:window:allow-start-dragging` permission + `startDragging()` API — needs live confirmation)
+- [ ] Verify shutdown button (⏻) closes all 5 windows cleanly
+- [ ] Verify connection beams animate correctly in native Tauri app
+- [ ] Verify solar flares appear in native Tauri app
+- [ ] Verify startup greeting sets orb to speaking state (cyan) then back to idle (blue)
+- [ ] Test window positions on user's specific dual-monitor setup (laptop + VG27AQ3A) — adjust `tauri.conf.json` x/y if windows land on wrong screen
+- [ ] Add a microphone sensitivity indicator to the AnimationWindow (small bar showing input level when listening)
+
+### 11D — Packaging
+*Handled by: backend-agent + production-manager*
+
+- [ ] Windows installer via Tauri bundler (`pnpm tauri build`) — generates `.exe` installer
+- [ ] Add `.gitignore` (exclude `.env`, `data/`, `workspace/`, `.venv/`, `target/`) and `git init` at project root
+- [ ] Verify clean install on fresh Windows 11 machine (end-to-end)
+
+### 11E — Future Enhancements (backlog — not yet scheduled)
+*Handled by: appropriate agent when scheduled*
+
+- [ ] Jarvis remembers context across sessions (FAISS semantic memory populated by conversations)
+- [ ] Proactive notifications — Jarvis speaks when important Slack/Gmail arrives
+- [ ] Agent task visibility — show what each agent is working on in real-time in AgentsWindow
+- [ ] Voice commands to control agent tasks ("Jarvis, tell Ben to update the UI")
+- [ ] Custom wake word training (replace "hey_jarvis" OpenWakeWord model with user-trained model)
+- [ ] Multiple voice profiles (switch between voices via voice command)
+
+---
+
 ## Agent Routing Guide
 
 | Phase | Agent to Invoke |
@@ -344,6 +407,11 @@ C:\Users\User\appsbyG\Jarvis\
 | Phase 8 — Security | `/security-agent` |
 | Phase 9 — Testing | `/debugger-agent` |
 | Phase 10 — Polish | `/frontend-agent` + `/backend-agent` |
+| Phase 11A — Credentials | User (manual) + `/backend-agent` |
+| Phase 11B — Voice/Audio | `/backend-agent` |
+| Phase 11C — UI Polish | `/frontend-agent` |
+| Phase 11D — Packaging | `/backend-agent` + Production Manager |
+| Phase 11E — Enhancements | Route per task (see checklist) |
 
 ---
 
