@@ -63,6 +63,20 @@ function dispatch(event: JarvisEvent): void {
     case "tool_permissions":
       s.setPermissions(event.permissions, event.tools);
       break;
+    case "shutdown":
+      disconnectWebSocket();
+      // Close the Tauri window; fall back to window.close() in browser mode.
+      setTimeout(async () => {
+        try {
+          const { getCurrentWebviewWindow } = await import(
+            "@tauri-apps/api/webviewWindow"
+          );
+          await getCurrentWebviewWindow().close();
+        } catch {
+          window.close();
+        }
+      }, 300);
+      break;
     default:
       // Unknown event type — ignore rather than crash a window.
       break;

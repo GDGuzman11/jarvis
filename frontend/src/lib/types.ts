@@ -99,6 +99,11 @@ export interface ToolPermissionsEvent {
   tools?: string[];
 }
 
+export interface ShutdownEvent {
+  type: "shutdown";
+  timestamp: string;
+}
+
 export type JarvisEvent =
   | AgentUpdateEvent
   | TokenEvent
@@ -107,7 +112,8 @@ export type JarvisEvent =
   | AudioLevelEvent
   | MetricsEvent
   | CommsEvent
-  | ToolPermissionsEvent;
+  | ToolPermissionsEvent
+  | ShutdownEvent;
 
 /** A tool-call record as held in the store (args + eventual result). */
 export interface ToolCallRecord {

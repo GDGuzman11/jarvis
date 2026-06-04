@@ -19,8 +19,12 @@ Run directly for local development::
 
 from __future__ import annotations
 
+import asyncio
+import os
+import signal
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -70,6 +74,68 @@ ALLOWED_ORIGINS: list[str] = [
 ALLOWED_WS_ORIGINS: frozenset[str] = frozenset(ALLOWED_ORIGINS)
 
 log = get_logger(__name__)
+
+
+async def _startup_greeting() -> None:
+    """Speak a personalised greeting once the first Tauri window connects."""
+    from backend.ai.claude_client import ClaudeClient, ClaudeAPIError
+    from backend.ai.persona import build_system_prompt
+    from backend.events import VoiceStateEvent
+    from backend.security.keystore import missing_credentials
+    from backend.voice import tts
+
+    # Wait up to 15 s for at least one window to open a WebSocket connection.
+    for _ in range(30):
+        await asyncio.sleep(0.5)
+        if hub.connection_count > 0:
+            break
+    else:
+        return  # No window connected — skip greeting.
+
+    # Short pause so the orb animation has a moment to render before audio starts.
+    await asyncio.sleep(0.5)
+
+    missing = missing_credentials()
+    cred_status = (
+        "all credentials configured"
+        if not missing
+        else f"{len(missing)} credential(s) still needed"
+    )
+    context = (
+        f"User name: Gabe\n"
+        f"6 agents online: Atlas (Lead), Ben (Frontend), Kado (Backend), "
+        f"Sentinel (Security), Vega (Marketing), Quill (Content)\n"
+        f"Voice pipeline: active and listening\n"
+        f"Credentials: {cred_status}"
+    )
+    fallback = (
+        f"Hello Gabe. All six agents are online and the voice pipeline is active. "
+        f"{cred_status.capitalize()}, sir."
+    )
+
+    reply = ""
+    try:
+        client = ClaudeClient()
+        messages = [
+            {
+                "role": "user",
+                "content": "Greet your user and give a brief one-sentence system status. Keep it under 40 words.",
+            }
+        ]
+        async for token in client.stream_response(
+            messages, system_prompt=build_system_prompt(context=context)
+        ):
+            reply += token
+    except (ClaudeAPIError, Exception):
+        log.warning("startup_greeting_failed", exc_info=True)
+
+    await hub.broadcast(VoiceStateEvent(state="speaking"))
+    try:
+        await tts.speak_and_play(reply.strip() if reply.strip() else fallback)
+    except Exception:
+        log.warning("startup_greeting_tts_failed", exc_info=True)
+    finally:
+        await hub.broadcast(VoiceStateEvent(state="idle"))
 
 
 @asynccontextmanager
@@ -157,6 +223,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.tool_registry = tool_registry
     log.info("Tool registry ready", tools=len(tool_registry.list_tools()))
 
+    # Fire the startup greeting in the background — it waits for the first
+    # window to connect, then has Jarvis speak a personalised hello + status.
+    asyncio.create_task(_startup_greeting(), name="startup-greeting")
+
     try:
         yield
     finally:
@@ -205,6 +275,27 @@ async def health() -> dict[str, str]:
     the backend is up and report its version.
     """
     return {"status": "ok", "version": APP_VERSION}
+
+
+@app.post("/api/shutdown", tags=["system"])
+async def shutdown_endpoint() -> dict[str, str]:
+    """Broadcast a shutdown event to all windows then exit the backend process.
+
+    The frontend listens for the ``shutdown`` event on the WebSocket and closes
+    every Tauri window. The backend itself exits via SIGINT after a short delay so
+    the HTTP response is sent before the process terminates.
+    """
+    await hub.broadcast(
+        {"type": "shutdown", "timestamp": datetime.now(timezone.utc).isoformat()}
+    )
+
+    async def _exit() -> None:
+        await asyncio.sleep(0.8)
+        os.kill(os.getpid(), signal.SIGINT)
+
+    asyncio.create_task(_exit())
+    log.info("shutdown_requested")
+    return {"status": "shutting_down"}
 
 
 # Maximum length of an agent display name. Keeps the Agents-window cards from

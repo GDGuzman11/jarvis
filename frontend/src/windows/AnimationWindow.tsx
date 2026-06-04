@@ -16,6 +16,14 @@ const STATE_LABEL: Record<string, string> = {
   speaking: "SPEAKING",
 };
 
+async function requestShutdown() {
+  try {
+    await fetch("http://127.0.0.1:8000/api/shutdown", { method: "POST" });
+  } catch {
+    // Backend already down — the WS disconnect will close the windows.
+  }
+}
+
 export function AnimationWindow() {
   useBootSound();
   const voiceState = useStore((s) => s.voiceState);
@@ -23,6 +31,15 @@ export function AnimationWindow() {
 
   return (
     <div className="relative h-screen w-screen bg-jarvis-bg">
+      {/* Shutdown button — top-right corner */}
+      <button
+        type="button"
+        title="Shutdown Jarvis"
+        onClick={requestShutdown}
+        className="absolute right-3 top-3 z-10 flex h-7 w-7 items-center justify-center border border-red-500/30 text-sm text-red-500/50 transition-colors hover:border-red-500 hover:text-red-500"
+      >
+        ⏻
+      </button>
       <Canvas camera={{ position: [0, 0, 4], fov: 50 }} dpr={[1, 2]}>
         <JarvisOrb voiceState={voiceState} audioLevel={audioLevel} />
       </Canvas>
