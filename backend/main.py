@@ -277,6 +277,33 @@ async def health() -> dict[str, str]:
     return {"status": "ok", "version": APP_VERSION}
 
 
+@app.post("/api/chat", tags=["voice"])
+async def chat_endpoint(message: str = Body(..., embed=True)) -> dict[str, str]:
+    """Accept a typed message and process it through the full Jarvis pipeline.
+
+    Identical to a voice turn — Claude streams a reply, tokens are broadcast to
+    the Reasoning window, and TTS speaks the response. The turn runs in the
+    background so this endpoint returns immediately. Returns ``409`` when a turn
+    (voice or typed) is already in progress.
+    """
+    text = message.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="message must not be empty")
+
+    pipeline: VoicePipeline = getattr(app.state, "voice_pipeline", None)
+    if pipeline is None:
+        raise HTTPException(status_code=503, detail="voice pipeline not ready")
+
+    if pipeline.state != "idle":
+        raise HTTPException(
+            status_code=409, detail="Jarvis is busy — try again in a moment."
+        )
+
+    asyncio.create_task(pipeline.process_text(text))
+    log.info("chat_text_input", chars=len(text))
+    return {"status": "processing"}
+
+
 @app.post("/api/shutdown", tags=["system"])
 async def shutdown_endpoint() -> dict[str, str]:
     """Broadcast a shutdown event to all windows then exit the backend process.

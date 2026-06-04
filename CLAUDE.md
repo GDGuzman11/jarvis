@@ -366,6 +366,7 @@ C:\Users\User\appsbyG\Jarvis\
 ### 11C — UI Polish
 *Handled by: frontend-agent (Ben)*
 
+- [x] Text input fallback in ReasoningWindow — type a message when mic isn't available. `POST /api/chat` endpoint in `main.py` → `pipeline.process_text(text)` runs the full Claude → token broadcast → TTS pipeline as a background task. Input disabled while Jarvis is busy (voiceState ≠ idle), shows current state label, Enter key submits, error shown inline. Backend returns 409 if busy, 400 if empty. Frontend: `frontend/src/windows/ReasoningWindow.tsx` — text input + SEND button at bottom, `.hud-btn` style, `border-jarvis-cyan/30` focus ring. `backend/voice/pipeline.py` — new `process_text(text)` public method.
 - [ ] Verify window drag works in native Tauri app (fixed via `core:window:allow-start-dragging` permission + `startDragging()` API — needs live confirmation)
 - [ ] Verify shutdown button (⏻) closes all 5 windows cleanly
 - [ ] Verify connection beams animate correctly in native Tauri app

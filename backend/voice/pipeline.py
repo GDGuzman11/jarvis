@@ -378,6 +378,30 @@ class VoicePipeline:
 
         await self._set_state("idle")
 
+    # --- Text input (type-to-Jarvis) ----------------------------------------
+
+    async def process_text(self, text: str) -> bool:
+        """Process a typed message exactly like a voice turn, without wake-word.
+
+        Returns ``False`` immediately when a turn is already in progress so the
+        caller can surface a "busy" response without blocking. On success the
+        full think → speak cycle runs in the background and the pipeline returns
+        to ``idle`` when done.
+        """
+        if self._busy:
+            return False
+        self._busy = True
+        try:
+            await self._set_state("thinking")
+            await self._stream_and_speak(text)
+        except Exception:  # noqa: BLE001
+            log.error("text_turn_error", exc_info=True)
+        finally:
+            self._busy = False
+            if self._running:
+                await self._set_state("idle")
+        return True
+
     # --- Reason + speak, with interrupt -------------------------------------
 
     async def _respond_with_interrupt(self, transcript: str) -> None:
