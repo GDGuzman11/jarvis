@@ -23,6 +23,8 @@ import type { VoiceState } from "../lib/types";
 
 const PARTICLE_COUNT = 2500;
 const BASE_RADIUS = 1.2;
+const FLARE_COUNT = 60;
+const PARK = 1000; // off-screen parking coordinate for inactive flare particles
 
 const STATE_COLOR: Record<VoiceState, string> = {
   idle: "#00d4ff", // soft electric blue
@@ -62,6 +64,21 @@ interface ParticleSeed {
 
 export function JarvisOrb({ voiceState, audioLevel }: OrbProps) {
   const pointsRef = useRef<ThreePoints>(null);
+  const flareRef = useRef<ThreePoints>(null);
+
+  // Solar-flare particle buffer: 60 points that erupt from the surface in
+  // bursts, arc outward along a velocity, fade over their lifetime, then park
+  // off-screen until recycled.
+  const flarePositions = useMemo(() => {
+    const arr = new Float32Array(FLARE_COUNT * 3);
+    for (let i = 0; i < FLARE_COUNT * 3; i++) arr[i] = PARK;
+    return arr;
+  }, []);
+  const flareData = useRef({
+    lives: new Float32Array(FLARE_COUNT),
+    velocities: new Float32Array(FLARE_COUNT * 3),
+    nextFlare: 4.0,
+  });
 
   // Seed the cloud once: evenly distribute directions on the unit sphere via the
   // golden-spiral method, then give each particle a random phase/speed so the
@@ -149,6 +166,78 @@ export function JarvisOrb({ voiceState, audioLevel }: OrbProps) {
       pos[i3 + 2] = dx * sa + dz * ca;
     }
     arr.needsUpdate = true;
+
+    // --- Solar flares -------------------------------------------------------
+    const flare = flareRef.current;
+    if (flare) {
+      const fd = flareData.current;
+      const fArr = flare.geometry.attributes.position as {
+        array: Float32Array;
+        needsUpdate: boolean;
+      };
+      const fpos = fArr.array;
+      const { lives, velocities } = fd;
+
+      // Advance every active flare particle.
+      for (let i = 0; i < FLARE_COUNT; i++) {
+        if (lives[i] > 0) {
+          lives[i] -= delta * 1.0;
+          const i3 = i * 3;
+          if (lives[i] <= 0) {
+            fpos[i3] = PARK;
+            fpos[i3 + 1] = PARK;
+            fpos[i3 + 2] = PARK;
+          } else {
+            fpos[i3] += velocities[i3] * delta;
+            fpos[i3 + 1] += velocities[i3 + 1] * delta;
+            fpos[i3 + 2] += velocities[i3 + 2] * delta;
+          }
+        }
+      }
+
+      // Spawn a new burst when the timer elapses.
+      if (t >= fd.nextFlare) {
+        // Random point on the unit sphere.
+        const u = Math.random() * 2 - 1;
+        const phi = Math.random() * Math.PI * 2;
+        const sr = Math.sqrt(Math.max(0, 1 - u * u));
+        const cx = sr * Math.cos(phi);
+        const cy = u;
+        const cz = sr * Math.sin(phi);
+        const spread = 0.35;
+        let spawned = 0;
+        for (let i = 0; i < FLARE_COUNT && spawned < 15; i++) {
+          if (lives[i] > 0) continue;
+          // Perturb the base direction inside a cone to get a fanned burst.
+          let dx = cx + (Math.random() - 0.5) * spread * 2;
+          let dy = cy + (Math.random() - 0.5) * spread * 2;
+          let dz = cz + (Math.random() - 0.5) * spread * 2;
+          const len = Math.hypot(dx, dy, dz) || 1;
+          dx /= len;
+          dy /= len;
+          dz /= len;
+          const speed = 1.2 + Math.random() * 2.0;
+          const i3 = i * 3;
+          fpos[i3] = cx * BASE_RADIUS;
+          fpos[i3 + 1] = cy * BASE_RADIUS;
+          fpos[i3 + 2] = cz * BASE_RADIUS;
+          velocities[i3] = dx * speed;
+          velocities[i3 + 1] = dy * speed;
+          velocities[i3 + 2] = dz * speed;
+          lives[i] = 1.0 + Math.random() * 0.8;
+          spawned++;
+        }
+        fd.nextFlare = t + 3 + Math.random() * 6;
+      }
+
+      // Overall flare opacity scales with how many particles are alive.
+      let lifeSum = 0;
+      for (let i = 0; i < FLARE_COUNT; i++) lifeSum += Math.max(0, lives[i]);
+      const fmat = flare.material as PointsMaterial;
+      fmat.opacity = Math.min(1, lifeSum / 8);
+
+      fArr.needsUpdate = true;
+    }
   });
 
   return (
@@ -167,6 +256,25 @@ export function JarvisOrb({ voiceState, audioLevel }: OrbProps) {
           color={STATE_COLOR[voiceState]}
           transparent
           opacity={0.6}
+          depthWrite={false}
+          blending={AdditiveBlending}
+        />
+      </points>
+      {/* Solar flares — gold-white sparks that erupt from the surface. */}
+      <points ref={flareRef}>
+        <bufferGeometry>
+          <bufferAttribute
+            attach="attributes-position"
+            args={[flarePositions, 3]}
+            count={FLARE_COUNT}
+          />
+        </bufferGeometry>
+        <pointsMaterial
+          size={0.05}
+          sizeAttenuation
+          color="#ffe066"
+          transparent
+          opacity={0}
           depthWrite={false}
           blending={AdditiveBlending}
         />

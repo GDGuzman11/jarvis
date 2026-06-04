@@ -1,63 +1,83 @@
-/**
- * WindowFrame — shared chrome for every HUD window. Provides the dark grid
- * backdrop, a titled header with a live connection indicator, and the staggered
- * boot fade-in (Framer Motion). The `index` prop offsets each window's fade so
- * they cascade ~200ms apart when all 5 open at once.
- */
-
 import type { ReactNode, MouseEvent } from "react";
 import { motion } from "framer-motion";
 import { useStore } from "../lib/store";
 import type { ConnectionStatus } from "../lib/types";
+
+const CONN_CONFIG: Record<ConnectionStatus, { label: string; color: string; glow: string }> = {
+  connecting: { label: "LINKING", color: "text-jarvis-gold", glow: "rgba(255,184,0,0.5)" },
+  open:       { label: "ONLINE",  color: "text-jarvis-cyan", glow: "rgba(0,212,255,0.5)" },
+  closed:     { label: "OFFLINE", color: "text-jarvis-red",  glow: "rgba(255,59,92,0.5)" },
+};
 
 async function startDrag(e: MouseEvent) {
   if (e.button !== 0) return;
   try {
     const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
     await getCurrentWebviewWindow().startDragging();
-  } catch {
-    // Browser mode — dragging not available.
-  }
+  } catch { /* browser mode */ }
 }
-
-const CONN_LABEL: Record<ConnectionStatus, { text: string; color: string }> = {
-  connecting: { text: "LINKING", color: "text-jarvis-gold" },
-  open: { text: "ONLINE", color: "text-jarvis-cyan" },
-  closed: { text: "OFFLINE", color: "text-jarvis-red" },
-};
 
 interface WindowFrameProps {
   title: string;
-  /** 0-based window index used to stagger the boot fade-in. */
   index?: number;
   children: ReactNode;
 }
 
 export function WindowFrame({ title, index = 0, children }: WindowFrameProps) {
   const connection = useStore((s) => s.connection);
-  const conn = CONN_LABEL[connection];
+  const conn = CONN_CONFIG[connection];
 
   return (
     <motion.div
-      className="hud-bg flex h-screen w-screen flex-col overflow-hidden"
-      initial={{ opacity: 0, scale: 0.98 }}
-      animate={{ opacity: 1, scale: 1 }}
-      transition={{ duration: 0.5, delay: index * 0.2, ease: "easeOut" }}
+      className="hud-bg hud-corners relative flex h-screen w-screen flex-col overflow-hidden"
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, delay: index * 0.15, ease: "easeOut" }}
     >
+      {/* Flowing data-stream top border */}
+      <div className="data-stream-top absolute inset-x-0 top-0 h-0 w-full" />
+
+      {/* Header */}
       <header
         onMouseDown={startDrag}
-        className="flex cursor-grab items-center justify-between border-b border-jarvis-cyan/15 px-5 py-3 active:cursor-grabbing"
+        className="relative z-10 flex cursor-grab select-none items-center justify-between border-b border-jarvis-cyan/20 bg-jarvis-bg/60 px-4 py-2.5 active:cursor-grabbing"
       >
-        <div className="flex items-center gap-3">
-          <span className="h-3 w-3 rotate-45 border border-jarvis-cyan" style={{ boxShadow: "0 0 10px rgba(0,212,255,0.6)" }} />
-          <h1 className="text-sm font-bold uppercase tracking-[0.3em] text-glow-cyan">{title}</h1>
+        {/* Left: accent + title */}
+        <div className="flex items-center gap-2.5">
+          <div className="flex gap-1">
+            <span className="h-3 w-px bg-jarvis-cyan opacity-80" />
+            <span className="h-3 w-px bg-jarvis-cyan/40" />
+          </div>
+          <span className="text-[11px] font-bold uppercase tracking-[0.35em] text-glow-cyan">
+            {title}
+          </span>
         </div>
-        <div className="flex items-center gap-2">
-          <span className={`h-1.5 w-1.5 rounded-full ${conn.color}`} style={{ background: "currentColor", boxShadow: "0 0 8px currentColor" }} />
-          <span className={`text-[10px] font-semibold tracking-widest ${conn.color}`}>{conn.text}</span>
+
+        {/* Right: status badge */}
+        <div
+          className={`flex items-center gap-1.5 border px-2 py-0.5 text-[9px] font-bold tracking-widest ${conn.color}`}
+          style={{
+            borderColor: conn.glow,
+            background: `${conn.glow.replace('0.5', '0.08')}`,
+            boxShadow: `0 0 8px ${conn.glow}`,
+          }}
+        >
+          <span
+            className="h-1.5 w-1.5 animate-pulse-glow"
+            style={{ background: 'currentColor', display: 'block' }}
+          />
+          {conn.label}
         </div>
       </header>
-      <div className="min-h-0 flex-1">{children}</div>
+
+      {/* Content */}
+      <div className="min-h-0 flex-1 overflow-hidden">
+        {children}
+      </div>
+
+      {/* Bottom corner accents */}
+      <div className="pointer-events-none absolute bottom-0 left-0 h-2 w-2 border-b border-l border-jarvis-cyan/40" />
+      <div className="pointer-events-none absolute bottom-0 right-0 h-2 w-2 border-b border-r border-jarvis-cyan/40" />
     </motion.div>
   );
 }
