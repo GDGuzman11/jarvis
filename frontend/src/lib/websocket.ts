@@ -33,6 +33,7 @@ function dispatch(event: JarvisEvent): void {
       break;
     case "token":
       s.appendToken(event.content, event.model, event.is_final);
+      s.appendJarvisToken(event.content, event.is_final);
       break;
     case "tool_call":
       s.applyToolCall({
@@ -54,6 +55,10 @@ function dispatch(event: JarvisEvent): void {
         cost_usd: event.cost_usd,
         latency_ms: event.latency_ms,
         model: event.model,
+        input_tokens: event.input_tokens,
+        output_tokens: event.output_tokens,
+        cache_read_tokens: event.cache_read_tokens,
+        cache_write_tokens: event.cache_write_tokens,
       });
       break;
     case "comms":

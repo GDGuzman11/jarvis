@@ -26,14 +26,16 @@ body {
   color: var(--color-jarvis-text);
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
+  /* Keep text readable against any desktop background showing through. */
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
 }
 
-/* Sharp HUD panel */
+/* Sharp HUD panel — frosted glass floating on the desktop */
 .glass {
-  background: var(--color-jarvis-panel);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  border: 1px solid rgba(0, 212, 255, 0.25);
+  background: rgba(5, 10, 25, 0.35);
+  backdrop-filter: blur(40px);
+  -webkit-backdrop-filter: blur(40px);
+  border: 1px solid rgba(0, 212, 255, 0.45);
   box-shadow:
     0 0 0 1px rgba(0, 212, 255, 0.06),
     0 8px 48px rgba(0, 0, 0, 0.7),
@@ -52,22 +54,28 @@ body {
     0 8px 48px rgba(0, 0, 0, 0.7);
 }
 
-/* Fine-grain grid backdrop */
+/* Fine-grain grid backdrop — translucent so the desktop shows through */
 .hud-bg {
-  background-color: var(--color-jarvis-bg);
+  background-color: rgba(8, 8, 16, 0.18);
   background-image:
-    linear-gradient(rgba(0, 212, 255, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0, 212, 255, 0.03) 1px, transparent 1px),
-    linear-gradient(rgba(0, 212, 255, 0.015) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0, 212, 255, 0.015) 1px, transparent 1px);
+    linear-gradient(rgba(0, 212, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 212, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(rgba(0, 212, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 212, 255, 0.02) 1px, transparent 1px);
   background-size: 80px 80px, 80px 80px, 20px 20px, 20px 20px;
 }
 
 .text-glow-cyan {
-  text-shadow: 0 0 10px rgba(0, 212, 255, 0.8), 0 0 20px rgba(0, 212, 255, 0.3);
+  text-shadow:
+    0 0 10px rgba(0, 212, 255, 0.8),
+    0 0 20px rgba(0, 212, 255, 0.3),
+    0 1px 4px rgba(0, 0, 0, 0.9);
 }
 .text-glow-gold {
-  text-shadow: 0 0 10px rgba(255, 184, 0, 0.8), 0 0 20px rgba(255, 184, 0, 0.3);
+  text-shadow:
+    0 0 10px rgba(255, 184, 0, 0.8),
+    0 0 20px rgba(255, 184, 0, 0.3),
+    0 1px 4px rgba(0, 0, 0, 0.9);
 }
 
 /* HUD Button — high contrast angular */

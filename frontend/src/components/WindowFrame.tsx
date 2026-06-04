@@ -40,7 +40,7 @@ export function WindowFrame({ title, index = 0, children }: WindowFrameProps) {
       {/* Header */}
       <header
         onMouseDown={startDrag}
-        className="relative z-10 flex cursor-grab select-none items-center justify-between border-b border-jarvis-cyan/20 bg-jarvis-bg/60 px-4 py-2.5 active:cursor-grabbing"
+        className="relative z-10 flex cursor-grab select-none items-center justify-between border-b border-jarvis-cyan/20 bg-black/20 px-4 py-2.5 active:cursor-grabbing"
       >
         {/* Left: accent + title */}
         <div className="flex items-center gap-2.5">

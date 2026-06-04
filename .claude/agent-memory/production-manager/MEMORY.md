@@ -1,0 +1,2 @@
+- [Build & run commands](build-run-commands.md) — exact backend/frontend/git commands for this project (uv not on PATH)
+- [Phase 11C metrics event contract](metrics-event-contract.md) — the MetricsEvent shape the backend must emit and frontend consumes

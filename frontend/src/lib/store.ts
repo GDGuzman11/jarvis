@@ -57,6 +57,20 @@ const INITIAL_PERMISSIONS: Record<string, string[]> = {
 interface Metrics {
   cost_usd: number;
   latency_ms: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+}
+
+/** A single turn in the Reasoning-window chat history. */
+export interface ChatMessage {
+  id: string;
+  role: "user" | "jarvis";
+  content: string;
+  timestamp: string;
+  /** Jarvis turns only: false while tokens are still streaming in. */
+  complete?: boolean;
 }
 
 export interface JarvisStore {
@@ -85,6 +99,7 @@ export interface JarvisStore {
   streamingText: string;
   toolCalls: ToolCallRecord[];
   metrics: Metrics;
+  sessionCostUsd: number;
   appendToken: (content: string, model: string, isFinal: boolean) => void;
   clearStream: () => void;
   applyToolCall: (c: {
@@ -95,6 +110,11 @@ export interface JarvisStore {
     timestamp: string;
   }) => void;
   setMetrics: (m: Partial<Metrics> & { model?: string }) => void;
+
+  // --- Reasoning: chat history (user turns + completed Jarvis replies) ---
+  chatHistory: ChatMessage[];
+  addUserMessage: (text: string) => void;
+  appendJarvisToken: (content: string, isFinal: boolean) => void;
 
   // --- Communications ---
   slackMessages: SlackMessage[];
@@ -158,13 +178,61 @@ export const useStore = create<JarvisStore>((set) => ({
   model: "Claude Opus 4.7",
   streamingText: "",
   toolCalls: [],
-  metrics: { cost_usd: 0, latency_ms: 0 },
+  metrics: {
+    cost_usd: 0,
+    latency_ms: 0,
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_read_tokens: 0,
+    cache_write_tokens: 0,
+  },
+  sessionCostUsd: 0,
   appendToken: (content, model, isFinal) =>
     set((s) => ({
       model: model || s.model,
       streamingText: isFinal ? s.streamingText : s.streamingText + content,
     })),
   clearStream: () => set({ streamingText: "" }),
+
+  chatHistory: [],
+  addUserMessage: (text) =>
+    set((s) => ({
+      chatHistory: [
+        ...s.chatHistory,
+        {
+          id: `user-${Date.now()}-${s.chatHistory.length}`,
+          role: "user",
+          content: text,
+          timestamp: new Date().toISOString(),
+          complete: true,
+        },
+      ],
+    })),
+  appendJarvisToken: (content, isFinal) =>
+    set((s) => {
+      const last = s.chatHistory[s.chatHistory.length - 1];
+      // Continue the in-flight Jarvis turn, or open a new one.
+      if (last && last.role === "jarvis" && !last.complete) {
+        const updated: ChatMessage = {
+          ...last,
+          content: last.content + content,
+          complete: isFinal ? true : last.complete,
+        };
+        return { chatHistory: [...s.chatHistory.slice(0, -1), updated] };
+      }
+      return {
+        chatHistory: [
+          ...s.chatHistory,
+          {
+            id: `jarvis-${Date.now()}-${s.chatHistory.length}`,
+            role: "jarvis",
+            content,
+            timestamp: new Date().toISOString(),
+            complete: isFinal,
+          },
+        ],
+      };
+    }),
   applyToolCall: (c) =>
     set((s) => {
       const id = `${c.tool_name}-${c.agent_id}-${c.timestamp}`;
@@ -181,9 +249,18 @@ export const useStore = create<JarvisStore>((set) => ({
   setMetrics: (m) =>
     set((s) => ({
       model: m.model || s.model,
+      // Accumulate the running session total only when a fresh per-turn cost lands.
+      sessionCostUsd:
+        m.cost_usd !== undefined
+          ? s.sessionCostUsd + m.cost_usd
+          : s.sessionCostUsd,
       metrics: {
         cost_usd: m.cost_usd ?? s.metrics.cost_usd,
         latency_ms: m.latency_ms ?? s.metrics.latency_ms,
+        input_tokens: m.input_tokens ?? s.metrics.input_tokens,
+        output_tokens: m.output_tokens ?? s.metrics.output_tokens,
+        cache_read_tokens: m.cache_read_tokens ?? s.metrics.cache_read_tokens,
+        cache_write_tokens: m.cache_write_tokens ?? s.metrics.cache_write_tokens,
       },
     })),
 

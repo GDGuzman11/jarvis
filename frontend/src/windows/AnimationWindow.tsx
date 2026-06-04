@@ -46,7 +46,7 @@ export function AnimationWindow() {
   const audioLevel = useStore((s) => s.audioLevel);
 
   return (
-    <div className="relative h-screen w-screen bg-jarvis-bg">
+    <div className="relative h-screen w-screen bg-transparent">
       <Canvas camera={{ position: [0, 0, 4], fov: 50 }} dpr={[1, 2]}>
         <JarvisOrb voiceState={voiceState} audioLevel={audioLevel} />
       </Canvas>
