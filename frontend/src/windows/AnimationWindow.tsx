@@ -28,23 +28,13 @@ const STATE_LABEL: Record<string, string> = {
 };
 
 async function requestShutdown() {
-  // Wait for the backend to receive the shutdown and broadcast to all other
-  // windows before closing this one — closing early cancels the fetch.
-  try {
-    await Promise.race([
-      fetch("http://127.0.0.1:8000/api/shutdown", { method: "POST" }),
-      new Promise((_, reject) => setTimeout(() => reject(), 2000)),
-    ]);
-  } catch {
-    // Backend already down or timed out — proceed to close anyway.
-  }
+  // Tell the backend to shut down gracefully (fire and forget).
+  fetch("http://127.0.0.1:8000/api/shutdown", { method: "POST" }).catch(() => {});
 
-  // Give the WebSocket shutdown event time to reach the other 4 windows.
-  await new Promise((r) => setTimeout(r, 400));
-
+  // Exit the entire Tauri process — kills all 5 windows instantly.
   try {
-    const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
-    await getCurrentWebviewWindow().close();
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("exit_app");
   } catch {
     window.close();
   }
