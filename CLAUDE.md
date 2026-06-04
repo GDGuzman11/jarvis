@@ -41,14 +41,14 @@
 - **Local Fallback**: Ollama — `phi3.5` (3.8B, ~2.4GB VRAM) and `qwen2.5-coder:3b`
 - **Wake Word**: OpenWakeWord (model: "hey_jarvis", Apache 2.0, fully local, no API key)
 - **Speech-to-Text**: faster-whisper (base.en model)
-- **Text-to-Speech**: ElevenLabs API (custom Tom Hardy × Jarvis voice — create in ElevenLabs dashboard)
+- **Text-to-Speech**: ElevenLabs API (custom Paul Bettany × Anthony Hopkins × JARVIS voice — calm British butler with faint digital resonance)
 
 ### Tech Stack
 | Layer | Technology |
 |---|---|
 | Backend | Python 3.12, FastAPI, WebSockets, Uvicorn |
 | Frontend | Tauri 2 + React 19 + TypeScript 5 + Vite 6 |
-| Styling | Tailwind CSS 4, glassmorphism dark theme |
+| Styling | Tailwind CSS 4, Angular HUD dark theme (`#080810`, `.hud-btn`, `.data-stream-top`, `.hud-corners`) |
 | 3D Animation | Three.js / React Three Fiber |
 | State | Zustand 5, WebSocket sync |
 | Database | SQLite (aiosqlite) |
@@ -61,21 +61,21 @@
 ### 5 Windows (open simultaneously on boot)
 | # | Name | Contents |
 |---|---|---|
-| 1 | Animation | Three.js sand particle cloud — blue=idle, gold=thinking, cyan=speaking; lip-syncs to audio amplitude |
-| 2 | Reasoning | Model name (Claude Opus 4.7), streaming tokens, tool calls, cost/latency |
+| 1 | Animation | 2500-particle orb + 60-particle solar flares; blue=idle, gold=thinking, cyan=speaking; lip-syncs to audio; SVG connection beams to other windows; ⏻ shutdown button |
+| 2 | Reasoning | Model name, streaming tokens, tool call cards, cost/latency; **text input** for typing questions when mic unavailable |
 | 3 | Communications | Slack inbox + Gmail inbox — read/reply via voice |
-| 4 | Agents | 6 agent cards with live status, task queue, controls |
+| 4 | Agents | 6 agent cards (Atlas/Ben/Kado/Sentinel/Vega/Quill) with live status, current task, rename controls |
 | 5 | Tools | Tool store grid — per-agent access toggles |
 
 ### 6 Background Agents (run 24/7)
 | Agent | Name | Role |
 |---|---|---|
-| Production Lead | *(TBD)* | Orchestrator — breaks goals into tasks, delegates, monitors |
+| Production Lead | Atlas | Orchestrator — breaks goals into tasks, delegates, monitors |
 | Frontend | Ben | UI/UX, React components, visual design |
 | Backend | Kado | APIs, database, voice pipeline, performance |
-| Security | *(TBD)* | Vulnerability scans, key rotation, audits |
-| Marketing | *(TBD)* | Campaign planning, social content strategy |
-| Content Creator | *(TBD)* | Drafts posts, emails, copy, documentation |
+| Security | Sentinel | Vulnerability scans, key rotation, audits |
+| Marketing | Vega | Campaign planning, social content strategy |
+| Content Creator | Quill | Drafts posts, emails, copy, documentation |
 
 ### Design Aesthetic
 Dark theme `#080810` (updated 2026-06-04), electric blue/cyan accents `#00D4FF`, gold highlights `#FFB800`. Iron Man HUD — angular, futuristic, high-contrast. Sharp edges with glowing outlines. No rounded corners.
@@ -120,7 +120,7 @@ Dark theme `#080810` (updated 2026-06-04), electric blue/cyan accents `#00D4FF`,
 
 - [x] FastAPI app with lifespan context manager (`backend/main.py`)
 - [x] WebSocket hub — all 5 windows subscribe to `ws://127.0.0.1:8000/ws`
-- [x] WebSocket event schema: `agent_update`, `token`, `tool_call`, `voice_state`
+- [x] WebSocket event schema: `agent_update`, `token`, `tool_call`, `voice_state`, `audio_level`, `shutdown` (plain dict)
 - [x] `AudioLevelEvent` — broadcast RMS amplitude (0–1) every 50ms during TTS playback for lip-sync
 - [x] SQLite CRUD: conversations, agent state, audit log (`backend/memory/database.py`)
 - [x] FAISS vector store with sentence-transformers embeddings
@@ -141,7 +141,7 @@ Dark theme `#080810` (updated 2026-06-04), electric blue/cyan accents `#00D4FF`,
 - [x] *(Manual step)* Create ElevenLabs voice profile in dashboard — Paul Bettany × Anthony Hopkins × JARVIS character (calm British butler with faint digital resonance). Voice ID saved to keyring (2026-06-04).
 - [x] Full pipeline: wake → listen → STT → Claude API → TTS → play audio
 - [x] Interrupt: saying "stop" cancels mid-response
-- [x] WebSocket events: emit `voice_state` (listening / thinking / speaking / idle)
+- [x] WebSocket events: emit `voice_state` (listening / thinking / speaking / idle / error) + `audio_level` (RMS 0–1 every ~50ms during TTS)
 - [x] Verify: complete voice roundtrip works end-to-end, latency target <3s
 
 ## Phase 4 — Agent System
@@ -197,9 +197,12 @@ Dark theme `#080810` (updated 2026-06-04), electric blue/cyan accents `#00D4FF`,
 - [x] Zustand store wired to single WebSocket (`ws://127.0.0.1:8000/ws`)
 - [x] All windows receive real-time state via WebSocket events
 - [x] Boot sequence — staggered window fade-in animation (Framer Motion)
-- [x] System tray icon — "Open Jarvis" / "Quit" menu (Rust `src-tauri/src/lib.rs` written; UNCOMPILED — Rust toolchain not installed)
-- [x] Windows startup toggle (Tauri autostart plugin) (Rust plugin wired in `Cargo.toml`/`lib.rs`; UNCOMPILED — Rust toolchain not installed)
-- [x] Verify: all 5 windows open on launch, live updates visible in all windows (React/TS layer verified via `pnpm build` clean + routing/config checks; native multi-window launch deferred until Rust installed)
+- [x] System tray icon — "Open Jarvis" / "Quit" menu (`src-tauri/src/lib.rs`; Rust 1.96.0 installed, `pnpm tauri dev` launches natively)
+- [x] Windows startup toggle (Tauri autostart plugin, `Cargo.toml`/`lib.rs`)
+- [x] `exit_app` Tauri command in `lib.rs` — invoked from shutdown button to close all 5 windows instantly via `app.exit(0)`
+- [x] Window dragging — `core:window:allow-start-dragging` permission in `capabilities/default.json`; `getCurrentWebviewWindow().startDragging()` on mousedown in `WindowFrame.tsx` header and `AnimationWindow.tsx` grip
+- [x] `core:window:allow-close` permission added — required for `getCurrentWebviewWindow().close()` in shutdown WS handler
+- [x] Verify: all 5 windows open on launch via `pnpm tauri dev` (Rust 1.96.0 confirmed installed 2026-06-04)
 
 ## Phase 8 — Security Hardening
 *Handled by: security-agent*
@@ -231,10 +234,10 @@ Dark theme `#080810` (updated 2026-06-04), electric blue/cyan accents `#00D4FF`,
 - [x] Integration: Gmail read/draft/send (mocked API)
 - [x] Integration: agent task delegation (Production Lead → Ben, Kado, etc.)
 - [x] Integration: agent state persists across backend restart
-- [ ] UI: all 5 Tauri windows open on launch — **DEFERRED** (needs native Tauri app; Rust/cargo not installed)
-- [ ] UI: WebSocket connects within 2 seconds of backend start — **DEFERRED** (needs running app + Vitest harness, not installed)
-- [ ] UI: orb color changes correctly for idle/thinking/speaking — **DEFERRED** (needs native app; JarvisOrb colour-lerp logic verified by Phase 7 build only)
-- [ ] UI: agent cards update in real-time on WebSocket events — **DEFERRED** (needs native app + WS; store dispatch verified by Phase 7 build only)
+- [x] UI: all 5 Tauri windows open on launch — **CONFIRMED 2026-06-04** via `pnpm tauri dev` (Rust 1.96.0 installed)
+- [ ] UI: WebSocket connects within 2 seconds of backend start — needs Vitest harness; confirmed working manually
+- [ ] UI: orb color changes correctly for idle/thinking/speaking — confirmed manually; no automated test yet
+- [ ] UI: agent cards update in real-time on WebSocket events — confirmed manually; no automated test yet
 - [x] Security: grep scan finds no secrets in files
 - [x] Security: FastAPI not binding to 0.0.0.0
 - [x] Security: code executor blocks `os.system()` and `subprocess`
@@ -246,7 +249,7 @@ Dark theme `#080810` (updated 2026-06-04), electric blue/cyan accents `#00D4FF`,
 *Handled by: frontend-agent + backend-agent*
 
 - [x] Boot startup sound — subtle electronic tone on window open
-- [x] Draggable windows — `data-tauri-drag-region` on WindowFrame header + AnimationWindow grip strip *(frontend VERIFIED 2026-06-03: 2 hits — WindowFrame.tsx:38 + AnimationWindow.tsx:37)*
+- [x] Draggable windows — `getCurrentWebviewWindow().startDragging()` on mousedown in WindowFrame header + AnimationWindow grip strip; `core:window:allow-start-dragging` in capabilities *(updated 2026-06-04 from `data-tauri-drag-region` attribute which didn't work in Tauri 2 + React)*
 - [x] Ethereal sand particle orb — replace icosahedron wireframe with 2500-particle noise-field system *(frontend VERIFIED 2026-06-03: JarvisOrb.tsx uses `<points>`/`<pointsMaterial>`, PARTICLE_COUNT=2500, no wireframe mesh)*
 - [x] Lip-sync amplitude broadcasting — `AudioLevelEvent` from backend pipeline; orb pulses with spoken audio *(backend verified; frontend VERIFIED 2026-06-03: store `audioLevel`/`setAudioLevel`, websocket `case "audio_level"`)*
 - [x] Error recovery — auto-restart voice pipeline on crash (max 3 retries)
@@ -254,6 +257,9 @@ Dark theme `#080810` (updated 2026-06-04), electric blue/cyan accents `#00D4FF`,
 - [x] Agent name customization UI — rename each agent from AgentsWindow *(frontend VERIFIED 2026-06-03: api.ts `renameAgent` → POST /api/agents/{id}/rename, store `updateAgentName`; backend endpoint VERIFIED 2026-06-03: `backend/test_phase10_rename_verify.py`, 6 cases — 200/404/400×2/broadcast/boundary)*
 - [ ] Windows installer via Tauri bundler (`.exe`)
 - [x] First-run setup wizard — prompts for API keys → stores in keyring *(backend API verified; frontend UI VERIFIED 2026-06-03: SetupWizardWindow.tsx exists, tauri.conf.json `"label": "setup"` window, App.tsx routes `setup`→SetupWizardWindow)*
+- [x] Startup greeting — `_startup_greeting()` background task in `main.py` lifespan; waits up to 60s for first WS connection; calls Claude with system context (user name, agent count, credential status); speaks via TTS; sets voice state speaking→idle
+- [x] Shutdown button + endpoint — `POST /api/shutdown` broadcasts `{"type":"shutdown"}` WS event; `exit_app()` Tauri command in `lib.rs` closes all 5 windows via `app.exit(0)`; AnimationWindow ⏻ button (top-right, z-20, red glow)
+- [x] Text input fallback — `POST /api/chat` → `pipeline.process_text(text)` runs full Claude→TTS pipeline as background task; ReasoningWindow text field + SEND button (disabled while voice active)
 - [x] README.md with setup steps and first-run instructions
 - [x] Final `/security-agent` audit pass *(2026-06-03 — re-ran all Phase 8 checks + 7 Phase 10 additions; **0 Critical / 0 High**, no new findings. See Security Findings.)*
 - [x] Final `/debugger-agent` full test suite pass *(2026-06-03 — backend `pytest backend/` **85/85 PASS, 0 fail**; frontend `pnpm build` clean ("built in 3.11s", 467 modules, dist/ generated, 0 TS errors, only expected AnimationWindow chunk-size warning). Phase 10 files confirmed: test_phase10_backend_verify.py, test_phase10_rename_verify.py, SetupWizardWindow.tsx, JarvisOrb.tsx uses `<points>`/`<pointsMaterial>` particle system, README.md. See Test Results.)*
@@ -266,72 +272,94 @@ Dark theme `#080810` (updated 2026-06-04), electric blue/cyan accents `#00D4FF`,
 ```
 C:\Users\User\appsbyG\Jarvis\
 ├── CLAUDE.md                        ← This file
+├── README.md                        ← Setup + usage guide
+├── .gitignore
+├── pyproject.toml
+├── .env.example                     ← Credential name reference — no real values
 ├── .claude/
 │   ├── agents/                      ← Sub-agent definitions
 │   │   ├── production-manager.md
-│   │   ├── frontend-agent.md
-│   │   ├── backend-agent.md
-│   │   ├── security-agent.md
+│   │   ├── frontend-agent.md        ← Ben
+│   │   ├── backend-agent.md         ← Kado
+│   │   ├── security-agent.md        ← Sentinel
 │   │   └── debugger-agent.md
 │   └── agent-memory/                ← Persistent memory per agent
 ├── backend/
-│   ├── main.py                      ← FastAPI entry + WebSocket hub
+│   ├── main.py                      ← FastAPI entry; lifespan; endpoints: /health /api/chat /api/shutdown /api/agents/{id}/rename /ws; startup greeting task
+│   ├── events.py                    ← WebSocket event schema (AgentUpdate, Token, ToolCall, VoiceStateEvent, AudioLevelEvent)
+│   ├── websocket_hub.py             ← ConnectionHub — fan-out broadcast to all 5 windows
+│   ├── setup_wizard.py              ← First-run wizard router: GET /setup/status, POST /setup/credential, GET /setup/complete
 │   ├── logging_config.py
 │   ├── voice/
-│   │   ├── wake_word.py             ← OpenWakeWord
-│   │   ├── stt.py                   ← faster-whisper
-│   │   └── tts.py                   ← ElevenLabs
+│   │   ├── pipeline.py              ← Full wake→listen→STT→Claude→TTS loop; crash recovery; process_text() for typed input
+│   │   ├── wake_word.py             ← OpenWakeWord + AudioCaptureLoop + SilenceDetector + VAD
+│   │   ├── stt.py                   ← faster-whisper (base.en); sanitize_transcript()
+│   │   └── tts.py                   ← ElevenLabs synthesis; speak_and_play() with AudioLevelEvent broadcast
 │   ├── ai/
-│   │   ├── claude_client.py         ← Anthropic SDK + streaming + caching
-│   │   ├── ollama_client.py         ← Local fallback
-│   │   └── persona.py               ← Jarvis system prompt
+│   │   ├── claude_client.py         ← Anthropic SDK; streaming; prompt caching (ephemeral cache_control)
+│   │   ├── ollama_client.py         ← Local fallback (phi3.5 / qwen2.5-coder:3b)
+│   │   └── persona.py               ← Jarvis system prompt; build_system_prompt(context=...)
 │   ├── agents/
-│   │   ├── base_agent.py
-│   │   ├── production_lead.py
+│   │   ├── base_agent.py            ← Task queue; tool access; status broadcasting; DB persistence
+│   │   ├── runtime.py               ← AgentRuntime — starts + supervises all 6 agents
+│   │   ├── production_lead.py       ← Atlas — orchestrator; goal routing
 │   │   ├── frontend_agent.py        ← Ben
 │   │   ├── backend_agent.py         ← Kado
-│   │   ├── security_agent.py
-│   │   ├── marketing_agent.py
-│   │   └── content_creator.py
+│   │   ├── security_agent.py        ← Sentinel
+│   │   ├── marketing_agent.py       ← Vega
+│   │   └── content_creator.py       ← Quill
 │   ├── integrations/
-│   │   ├── slack_client.py
-│   │   └── gmail_client.py
+│   │   ├── slack_client.py          ← Slack Bolt; DM listener; send/read
+│   │   └── gmail_client.py          ← Gmail OAuth2; inbox; draft; send
 │   ├── memory/
-│   │   ├── database.py              ← SQLite (aiosqlite)
-│   │   └── vector_store.py          ← FAISS
+│   │   ├── database.py              ← SQLite CRUD — conversations, agents, tasks, tools, audit_log
+│   │   └── vector_store.py          ← FAISS + sentence-transformers
 │   ├── tools/
-│   │   ├── registry.py
-│   │   ├── web_search.py
-│   │   ├── browser.py
-│   │   ├── file_ops.py
-│   │   └── code_executor.py
+│   │   ├── registry.py              ← ToolRegistry + per-agent permission matrix
+│   │   ├── wiring.py                ← build_tool_registry() — wires all tools + integrations
+│   │   ├── web_search.py            ← DuckDuckGo async search
+│   │   ├── browser.py               ← Playwright browser automation (sandboxed schemes)
+│   │   ├── file_ops.py              ← Read/write/list sandboxed to workspace/ only
+│   │   ├── code_executor.py         ← RestrictedPython sandbox
+│   │   ├── slack_tool.py            ← Slack tool wrapper (Claude tool_use schema)
+│   │   └── gmail_tool.py            ← Gmail tool wrapper (Claude tool_use schema)
 │   └── security/
-│       ├── keystore.py              ← keyring wrappers
-│       └── auth.py                  ← OAuth token management
+│       └── keystore.py              ← Typed getters/setters for Windows Credential Manager
+│                                       (Note: no auth.py — Gmail OAuth handled inline by google-auth)
 ├── frontend/
 │   ├── src/
 │   │   ├── main.tsx
-│   │   ├── App.tsx
+│   │   ├── App.tsx                  ← Routes by Tauri window label → component; dev dashboard fallback with ← Back button
+│   │   ├── index.css                ← Tailwind v4 @theme; .glass .hud-bg .hud-btn .data-stream-top .hud-corners
 │   │   ├── windows/
-│   │   │   ├── AnimationWindow.tsx
-│   │   │   ├── ReasoningWindow.tsx
-│   │   │   ├── CommunicationsWindow.tsx
-│   │   │   ├── AgentsWindow.tsx
-│   │   │   └── ToolsWindow.tsx
+│   │   │   ├── AnimationWindow.tsx  ← Particle orb + solar flares + SVG connection beams + shutdown button + drag grip
+│   │   │   ├── ReasoningWindow.tsx  ← Token stream + tool calls + cost + text input (POST /api/chat)
+│   │   │   ├── CommunicationsWindow.tsx  ← Slack panel + Gmail panel
+│   │   │   ├── AgentsWindow.tsx     ← 6 agent cards (live status + rename)
+│   │   │   ├── ToolsWindow.tsx      ← Tool/agent permission matrix
+│   │   │   └── SetupWizardWindow.tsx ← First-run credential form
 │   │   ├── components/
-│   │   │   ├── JarvisOrb.tsx        ← React Three Fiber
-│   │   │   ├── AgentCard.tsx
-│   │   │   ├── ToolCard.tsx
-│   │   │   └── StreamViewer.tsx
+│   │   │   ├── JarvisOrb.tsx        ← R3F 2500-particle orb + 60-particle solar flare system
+│   │   │   ├── WindowFrame.tsx      ← HUD chrome; startDragging() on header mousedown; data-stream-top border
+│   │   │   ├── AgentCard.tsx        ← Single agent card (status badge + rename)
+│   │   │   ├── StatusBadge.tsx      ← Colour-coded status indicator
+│   │   │   ├── StreamViewer.tsx     ← Scrollable live token stream
+│   │   │   └── ToolCard.tsx         ← Tool display card
 │   │   └── lib/
-│   │       ├── api.ts
-│   │       ├── store.ts             ← Zustand
-│   │       └── websocket.ts
+│   │       ├── store.ts             ← Zustand store (voiceState, audioLevel, agents, tokens, toolCalls, connection)
+│   │       ├── types.ts             ← TypeScript interfaces mirroring backend events
+│   │       ├── websocket.ts         ← WS singleton; auto-reconnect; dispatches events; handles shutdown close
+│   │       ├── api.ts               ← fetch helpers: /api/chat, /api/shutdown, /api/agents/{id}/rename, /setup/*
+│   │       └── useBootSound.ts      ← Boot chime on window open (Web Audio API)
 │   └── src-tauri/
-│       ├── tauri.conf.json          ← Multi-window config
-│       └── src/main.rs
-├── pyproject.toml
-├── .env.example                     ← Template only, no real values
+│       ├── tauri.conf.json          ← 5 windows: animation(780,300) reasoning(200,100) comms(1180,80) agents(200,760) tools(1180,540)
+│       ├── capabilities/
+│       │   └── default.json         ← Permissions: core:default, allow-show/hide/set-focus/start-dragging/close, opener, autostart
+│       ├── Cargo.toml               ← tauri 2 + tray-icon feature + tauri-plugin-autostart + tauri-plugin-opener
+│       └── src/
+│           ├── lib.rs               ← show_all_windows(); exit_app() command; system tray (Open Jarvis/Quit); autostart plugin
+│           └── main.rs              ← Calls lib::run()
+├── data/                            ← Runtime only (gitignored): jarvis.db, faiss_index.bin
 └── OpenJarvis/                      ← Reference project (read-only)
 ```
 
@@ -379,7 +407,7 @@ C:\Users\User\appsbyG\Jarvis\
 *Handled by: backend-agent + production-manager*
 
 - [ ] Windows installer via Tauri bundler (`pnpm tauri build`) — generates `.exe` installer
-- [ ] Add `.gitignore` (exclude `.env`, `data/`, `workspace/`, `.venv/`, `target/`) and `git init` at project root
+- [x] Git repo initialised with `.gitignore` (excludes `.env`, `data/`, `workspace/`, `.venv/`, `target/`); pushed to **https://github.com/GDGuzman11/jarvis** (2026-06-04)
 - [ ] Verify clean install on fresh Windows 11 machine (end-to-end)
 
 ### 11E — Future Enhancements (backlog — not yet scheduled)
@@ -436,7 +464,7 @@ Result: **0 Critical, 0 High** after fixes. 1 Medium (fixed), plus Low/Info note
 |---|---|---|---|
 | Medium | WebSocket `/ws` endpoint had no Origin-header validation. CORS middleware only covers HTTP, not the WS handshake — any local/remote browser page could open `ws://127.0.0.1:8000/ws` and read Jarvis's live event stream (cross-site WebSocket hijacking). | `backend/main.py:194` (pre-fix) | **Fixed** — added `_is_allowed_ws_origin()` + `ALLOWED_WS_ORIGINS`; `/ws` now rejects untrusted Origins with close code 1008 before accept. Verified: `http://evil.com` rejected, `tauri://localhost` accepted, native (no-Origin) clients allowed. |
 | Low | No `auth.py` in `backend/security/` (referenced in the project file-structure tree). OAuth token refresh is instead handled inline by google-auth in `gmail_client.py`. | `backend/security/` | **Accepted** — google-auth auto-refreshes via the stored refresh token (`GMAIL_REFRESH_TOKEN` in keyring); a separate `auth.py` is not required for correctness. Documented here rather than adding a redundant module. |
-| Low | Project root is not yet a git repo and has no `.gitignore`, so once `git init` runs there is no guard against accidentally committing a real `.env`/`data/jarvis.db`. | repo root | **Open (deferred to Phase 10/packaging)** — only `.env.example` exists today (no real `.env`), so no secret is currently at risk. Add a `.gitignore` excluding `.env`, `data/`, `workspace/`, `.venv/` when the repo is initialised. |
+| Low | Project root is not yet a git repo and has no `.gitignore`, so once `git init` runs there is no guard against accidentally committing a real `.env`/`data/jarvis.db`. | repo root | **Resolved (2026-06-04)** — `.gitignore` added (excludes `.env`, `data/`, `workspace/`, `.venv/`, `target/`, `*.db`, `*.faiss`, audio files, installer artifacts). Repo initialised and pushed to https://github.com/GDGuzman11/jarvis. |
 | Info | `browse_url` tool blocks `file://`/`data://`/`javascript:` schemes but does not block requests to private/loopback IP ranges (SSRF to internal services). | `backend/tools/browser.py:44` | **Accepted for now** — agent-initiated, local-only deployment; scheme allowlist removes the local-file/inline-payload vector. Consider an IP-range denylist if the browser tool is ever exposed beyond trusted agents. |
 | Info | All external API calls (Anthropic, ElevenLabs, Gmail, Slack) go through official SDKs with default SSL verification; Ollama is loopback HTTP. No `verify=False` / `CERT_NONE` / unverified-context anywhere in the codebase. | backend-wide | **Pass** — HTTPS + SSL verification confirmed; no insecure transport found. |
 
@@ -526,14 +554,16 @@ SECURITY
 - [x] FastAPI bind — `main.HOST == "127.0.0.1"` and no executable `host="0.0.0.0"` line in `main.py` (warning comments allowed).
 - [x] Code executor sandbox — `os.system`, `subprocess`, and dunder-escape (`().__class__.__bases__`) all blocked (`success=False`); positive control (arithmetic + `len`) runs.
 
-DEFERRED (need native Tauri app — Rust/cargo not installed — and/or mic + live keys)
-- [ ] UI: all 5 Tauri windows open on launch
-- [ ] UI: WebSocket connects within 2 s of backend start
-- [ ] UI: orb colour changes for idle/thinking/speaking
-- [ ] UI: agent cards update in real-time on WS events
+CONFIRMED LIVE (2026-06-04 — Rust 1.96.0 installed, `pnpm tauri dev` running)
+- [x] UI: all 5 Tauri windows open on launch — confirmed
+- [ ] UI: WebSocket connects within 2 s — confirmed manually, no automated test
+- [ ] UI: orb colour changes for idle/thinking/speaking — confirmed manually, no automated test
+- [ ] UI: agent cards update in real-time on WS events — confirmed manually, no automated test
+
+STILL DEFERRED (need dedicated mic + live Gmail credentials)
 - [ ] E2E: "Jarvis, what's in my Slack?" voice→Slack→speak
 - [ ] E2E: "Jarvis, send an email…" voice→Gmail draft→send
-  Note: no Vitest/jsdom harness is installed in `frontend/` (only `dev`/`build`/`preview`/`tauri` scripts). Adding one is a Phase 10 task; the React/TS layer compiles clean (Phase 7) and the WS store dispatches exactly the backend event shapes.
+  Note: no Vitest/jsdom harness in `frontend/`; frontend verified via `pnpm build` + manual testing.
 
 MINOR FINDING (non-blocking)
 - `backend/tools/code_executor.py` docstring lists "sum, range, sorted, abs, round…" as allowed builtins, but RestrictedPython's `safe_builtins` does NOT expose `sum`/`range`/`sorted` — they raise `NameError`. `len` and arithmetic do work. Functionally the sandbox is *more* restrictive than documented (errs safe); recommend trimming the docstring's allowed-builtins list to match reality. No security impact.
