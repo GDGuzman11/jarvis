@@ -22,9 +22,11 @@ from __future__ import annotations
 import asyncio
 import os
 import signal
+import zipfile
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -37,7 +39,7 @@ from backend.integrations.slack_client import SlackClient
 from backend.logging_config import configure_logging, get_logger
 from backend.memory.database import init_db, rename_agent
 from backend.memory.manager import MemoryManager
-from backend.memory.vector_store import VectorStore
+from backend.memory.vector_store import DEFAULT_INDEX_PATH, VectorStore
 from backend.memory.database import DEFAULT_DB_PATH
 from backend.setup_wizard import router as setup_router
 from backend.tools.wiring import build_tool_registry
@@ -195,6 +197,89 @@ async def _consolidation_loop(memory_manager: MemoryManager) -> None:
             log.warning("consolidation_loop_pass_failed", exc_info=True)
 
 
+# Daily backup cadence + retention window (Phase 12E).
+BACKUP_INTERVAL_S: int = 86_400  # 24 hours
+BACKUP_RETENTION_DAYS: int = 30
+
+
+def _write_backup_zip(db_path: Path, vector_store_path: Path) -> Path | None:
+    """Zip the DB + FAISS index/sidecar into ``data/backups/jarvis_<date>.zip``.
+
+    Synchronous (called via :func:`asyncio.to_thread`). Any source file that is
+    missing is simply skipped — a fresh install with no FAISS index yet still
+    produces a valid backup of whatever exists. Returns the zip path written, or
+    ``None`` when there was nothing to back up.
+    """
+    backups_dir = db_path.parent / "backups"
+    backups_dir.mkdir(parents=True, exist_ok=True)
+
+    sources = [
+        db_path,
+        vector_store_path,
+        vector_store_path.with_suffix(vector_store_path.suffix + ".meta.json"),
+    ]
+    present = [p for p in sources if p.exists()]
+    if not present:
+        log.info("backup_skipped_no_sources")
+        return None
+
+    stamp = datetime.now().strftime("%Y-%m-%d")
+    zip_path = backups_dir / f"jarvis_{stamp}.zip"
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for src in present:
+            zf.write(src, arcname=src.name)
+    log.info("backup_written", path=str(zip_path), files=len(present))
+    return zip_path
+
+
+def _prune_old_backups(db_path: Path, retention_days: int = BACKUP_RETENTION_DAYS) -> int:
+    """Delete ``jarvis_*.zip`` backups older than ``retention_days``.
+
+    Synchronous (called via :func:`asyncio.to_thread`). Age is taken from each
+    file's modification time. Returns the number of files pruned. Never raises on
+    an individual unlink failure — it logs and moves on.
+    """
+    backups_dir = db_path.parent / "backups"
+    if not backups_dir.exists():
+        return 0
+    cutoff = datetime.now() - timedelta(days=retention_days)
+    pruned = 0
+    for zip_file in backups_dir.glob("jarvis_*.zip"):
+        try:
+            mtime = datetime.fromtimestamp(zip_file.stat().st_mtime)
+            if mtime < cutoff:
+                zip_file.unlink()
+                pruned += 1
+        except OSError:
+            log.warning("backup_prune_failed", path=str(zip_file), exc_info=True)
+    if pruned:
+        log.info("backup_pruned", count=pruned)
+    return pruned
+
+
+async def _backup_loop(db_path: Path, vector_store_path: Path) -> None:
+    """Back up the DB + FAISS index once at startup, then daily forever.
+
+    Mirrors :func:`_consolidation_loop`: cancellable on shutdown (the
+    :class:`asyncio.CancelledError` from ``sleep`` propagates so the task ends
+    cleanly), and any other error inside a pass is swallowed so a single failed
+    backup never kills the loop. The blocking zip/prune I/O runs via
+    :func:`asyncio.to_thread` so it never stalls the event loop.
+    """
+    while True:
+        try:
+            await asyncio.to_thread(_write_backup_zip, db_path, vector_store_path)
+            await asyncio.to_thread(_prune_old_backups, db_path)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — never crash the loop on a bad pass
+            log.warning("backup_loop_pass_failed", exc_info=True)
+        try:
+            await asyncio.sleep(BACKUP_INTERVAL_S)
+        except asyncio.CancelledError:
+            raise
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Manage application startup and shutdown.
@@ -308,13 +393,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         _consolidation_loop(memory_manager), name="memory-consolidation"
     )
 
+    # Daily backup (Phase 12E): zips jarvis.db + the FAISS index/sidecar into
+    # data/backups/jarvis_<date>.zip once at startup and every 24h after, pruning
+    # backups older than 30 days. Runs its I/O off the event loop and is
+    # cancelled cleanly on shutdown.
+    backup_task = asyncio.create_task(
+        _backup_loop(Path(DEFAULT_DB_PATH), Path(DEFAULT_INDEX_PATH)),
+        name="daily-backup",
+    )
+
     try:
         yield
     finally:
-        # Stop the periodic consolidation loop first so it can't fire mid-teardown.
+        # Stop the periodic loops first so they can't fire mid-teardown.
         consolidation_task.cancel()
         try:
             await consolidation_task
+        except asyncio.CancelledError:
+            pass
+        backup_task.cancel()
+        try:
+            await backup_task
         except asyncio.CancelledError:
             pass
         # Stop the Slack listener first so no inbound event fires mid-teardown.

@@ -14,11 +14,11 @@
 ## Current Status
 
 - **Active Phase**: 12 — Three-Layer Memory System (started 2026-06-05). Phase 11 remains open (11D packaging + mic-blocked voice items).
-- **Last Completed (2026-06-05)**: **Phase 12D verified ✓** — all 4 phases (12A–12D) built and verified by debugger-agent. 126/127 tests passing. One pre-existing secret-scan failure on `get_gmail_token.py` (Google OAuth client id, not a real secret) owned by security-agent. Phase 12D `detect_open_loops` multi-trigger bug found and fixed same session (10/10 targeted tests). Full memory system now operational: voice pipeline recalls+stores per turn, agents persist context across restarts, open loops detected + surfaced on startup, failure memory extracted, people profiles built from contacts, 10-minute consolidation loop running. All storage is local SQLite + FAISS.
-- **Next Task**: **Phase 12E** — FTS5 keyword search + daily backup job. Route to `/backend-agent`. After 12E: run `/security-agent` to fix `get_gmail_token.py` secret (removes the 1 failing test). Then run `/production-manager` for full review.
+- **Last Completed (2026-06-05)**: **Phase 12E verified ✓** — FTS5 keyword search + daily backup job built and verified by debugger-agent. 134/135 tests passing (8 new 12E tests). One pre-existing secret-scan failure on `get_gmail_token.py` (Google OAuth client id, not a real secret) owned by security-agent. Full memory system operational: episodic (SQLite), semantic (FAISS), agent working memory, FTS5 keyword search, daily backups, open loops, failure memory, people profiles, consolidation loop.
+- **Next Task**: Run `/security-agent` to fix `get_gmail_token.py` secret (removes the 1 failing test). Then run `/production-manager` for Phase 13 (Agent Direct Interaction UI).
 - **Pending (Phase 13 — new)**: Agent direct interaction from AgentsWindow UI — user wants to submit tasks and chat with individual agents (Atlas/Ben/Kado/Sentinel/Vega/Quill) from the UI. Route to `/frontend-agent` + `/backend-agent`. See Phase 13 section below.
 - **Blockers**: Dedicated microphone not yet purchased — all voice E2E tests deferred. No other blockers.
-- **Test State**: 126/127 passing · 1 pre-existing failure (secret-scan on `get_gmail_token.py`) · `pnpm build` clean. New test files: `test_phase12a_verify.py`, `test_phase12b_verify.py` (in `backend/voice/`), `test_phase12c_verify.py` (in `backend/agents/`), `test_phase12d_verify.py` (in `backend/memory/`). See `docs/TEST_HISTORY.md` for full logs.
+- **Test State**: 134/135 passing · 1 pre-existing failure (secret-scan on `get_gmail_token.py`) · `pnpm build` clean. New test files: `test_phase12a_verify.py`, `test_phase12b_verify.py` (in `backend/voice/`), `test_phase12c_verify.py` (in `backend/agents/`), `test_phase12d_verify.py` (in `backend/memory/`), `test_phase12e_verify.py` (in `backend/memory/`). See `docs/TEST_HISTORY.md` for full logs.
 - **Build Started**: 2026-06-02
 
 ---
@@ -209,11 +209,11 @@ Dark theme `#080810` (updated 2026-06-04), electric blue/cyan accents `#00D4FF`,
 ### 12E — Search, Backup, and CLAUDE.md
 *Handled by: backend-agent. FTS5 keyword search, daily backup job, project state in CLAUDE.md.*
 
-- [ ] Add FTS5 virtual tables to `database.py` for keyword search over `conversations` + `memory_facts`
-- [ ] Add `MemoryManager.search_keyword(query)` — queries FTS5 tables
-- [ ] Add daily backup job in `main.py` lifespan — zips `jarvis.db` + `faiss_index.bin` + `.meta.json` to `data/backups/jarvis_YYYY-MM-DD.zip`; prunes >30 days
-- [ ] Update CLAUDE.md — Phase 12 checklist + Agent Routing Guide (this section)
-- [ ] Verify (debugger-agent): keyword search returns results; backup file created at startup; `pytest backend/` passes
+- [x] Add FTS5 virtual tables to `database.py` for keyword search over `conversations` + `memory_facts` — `conversations_fts` + `memory_facts_fts` virtual tables with `porter ascii` tokenizer + AFTER INSERT sync triggers in `init_db`; `search_conversations` + `search_memory_facts` helpers added
+- [x] Add `MemoryManager.search_keyword(query)` — queries FTS5 tables; returns `{"conversations": [...], "memory_facts": [...]}`; degrades to empty lists on malformed queries (no crash)
+- [x] Add daily backup job in `main.py` lifespan — `_backup_loop` zips `jarvis.db` + `faiss_index.bin` + `.meta.json` to `data/backups/jarvis_YYYY-MM-DD.zip` at startup then every 24h; prunes >30 days; cancellable on shutdown (mirrors `_consolidation_loop` pattern)
+- [x] Update CLAUDE.md — Phase 12E checklist + Current Status updated *(this session)*
+- [x] Verify (debugger-agent): keyword search returns results; backup file created at startup; `pytest backend/` passes *(verified 2026-06-05 — 8/8 targeted tests pass; 134/135 suite)*
 
 ---
 

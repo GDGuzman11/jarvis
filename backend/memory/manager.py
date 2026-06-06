@@ -462,6 +462,37 @@ class MemoryManager:
         result.formatted_context = self.format_context(result)
         return result
 
+    # --- Keyword search (Phase 12E): FTS5 over episodic + semantic ----------
+
+    async def search_keyword(self, query: str, limit: int = 20) -> dict:
+        """Keyword-search both episodic and semantic memory via FTS5.
+
+        Complements :meth:`recall` (which searches by *meaning* via FAISS) with
+        exact keyword/stemmed matching over the raw ``conversations`` diary and
+        the distilled ``memory_facts``. Returns::
+
+            {"conversations": [...], "memory_facts": [...]}
+
+        where each list holds the matching rows (best-rank first). An empty query
+        yields two empty lists. Never raises — a search must not break a turn.
+        """
+        try:
+            conversations = await database.search_conversations(
+                query=query, limit=limit, **self._db_kwargs()
+            )
+            memory_facts = await database.search_memory_facts(
+                query=query, limit=limit, **self._db_kwargs()
+            )
+            log.info(
+                "memory_search_keyword",
+                hits_conversations=len(conversations),
+                hits_facts=len(memory_facts),
+            )
+            return {"conversations": conversations, "memory_facts": memory_facts}
+        except Exception:  # noqa: BLE001 — a search must never break a turn
+            log.warning("memory_search_keyword_failed", exc_info=True)
+            return {"conversations": [], "memory_facts": []}
+
     # --- Context formatting for the system prompt ---------------------------
 
     def format_context(self, recalled: RecallResult) -> str:

@@ -164,6 +164,31 @@ _SCHEMA: tuple[str, ...] = (
     """,
 )
 
+# --- Phase 12E: FTS5 keyword search -----------------------------------------
+# Full-text (keyword) search over conversations + memory_facts, complementing
+# the semantic (FAISS) recall. Two FTS5 virtual tables shadow the content of the
+# base tables; AFTER INSERT triggers keep each shadow row in sync, keyed on the
+# base row's id (the FTS rowid). The ``porter ascii`` tokenizer gives stemmed,
+# case/diacritic-insensitive matching (e.g. "meeting" matches "meet").
+#
+# These run as a migration step in init_db (after the base tables exist) so the
+# triggers can reference real columns. All statements are IF NOT EXISTS, so the
+# step is idempotent and safe on every startup.
+_FTS_SCHEMA: tuple[str, ...] = (
+    "CREATE VIRTUAL TABLE IF NOT EXISTS conversations_fts "
+    "USING fts5(content, channel, tokenize='porter ascii')",
+    "CREATE VIRTUAL TABLE IF NOT EXISTS memory_facts_fts "
+    "USING fts5(content, category, tokenize='porter ascii')",
+    "CREATE TRIGGER IF NOT EXISTS conversations_fts_insert "
+    "AFTER INSERT ON conversations BEGIN "
+    "INSERT INTO conversations_fts(rowid, content, channel) "
+    "VALUES (new.id, new.content, new.channel); END",
+    "CREATE TRIGGER IF NOT EXISTS memory_facts_fts_insert "
+    "AFTER INSERT ON memory_facts BEGIN "
+    "INSERT INTO memory_facts_fts(rowid, content, category) "
+    "VALUES (new.id, new.content, new.category); END",
+)
+
 # Helpful indexes for the common access patterns (queue polling, audit reads).
 _INDEXES: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS idx_tasks_assigned_status "
@@ -214,6 +239,12 @@ async def init_db(db_path: Path | str = DEFAULT_DB_PATH) -> None:
             await conn.execute(index)
         await conn.commit()
         await _migrate_conversations_channel(conn)
+        # Phase 12E: FTS5 shadow tables + sync triggers. Created after the base
+        # tables (and the channel migration) so the triggers reference the final
+        # conversations table. Idempotent (all IF NOT EXISTS).
+        for statement in _FTS_SCHEMA:
+            await conn.execute(statement)
+        await conn.commit()
     finally:
         await conn.close()
     logger.info("Database schema ready (%d tables).", len(_SCHEMA))
@@ -911,3 +942,72 @@ async def save_agent_performance(
         await conn.close()
     assert row_id is not None
     return row_id
+
+
+# --- Phase 12E: FTS5 keyword search -----------------------------------------
+
+
+async def search_conversations(
+    db_path: Path | str = DEFAULT_DB_PATH,
+    query: str = "",
+    limit: int = 20,
+) -> list[dict]:
+    """Keyword-search ``conversations`` via the FTS5 shadow table.
+
+    Returns the best-matching conversation turns (by FTS5 ``rank``) for the
+    given ``query``, each as a dict with ``rowid`` (the source
+    ``conversations.id``) plus the indexed ``content`` and ``channel`` columns.
+    An empty/whitespace query returns ``[]`` without touching the database.
+    Never raises on a malformed FTS query — it degrades to an empty result so a
+    bad search term can't break the caller.
+    """
+    query = (query or "").strip()
+    if not query:
+        return []
+    conn = await connect(db_path)
+    try:
+        cursor = await conn.execute(
+            "SELECT rowid, content, channel FROM conversations_fts "
+            "WHERE conversations_fts MATCH ? ORDER BY rank LIMIT ?",
+            (query, limit),
+        )
+        rows = await cursor.fetchall()
+    except aiosqlite.OperationalError:
+        # Malformed MATCH expression (e.g. unbalanced quotes) — treat as no hits.
+        logger.warning("search_conversations: bad FTS query %r", query)
+        return []
+    finally:
+        await conn.close()
+    return [dict(row) for row in rows]
+
+
+async def search_memory_facts(
+    db_path: Path | str = DEFAULT_DB_PATH,
+    query: str = "",
+    limit: int = 20,
+) -> list[dict]:
+    """Keyword-search ``memory_facts`` via the FTS5 shadow table.
+
+    Returns the best-matching distilled facts (by FTS5 ``rank``) for the given
+    ``query``, each as a dict with ``rowid`` (the source ``memory_facts.id``)
+    plus the indexed ``content`` and ``category`` columns. An empty/whitespace
+    query returns ``[]``; a malformed FTS query degrades to ``[]`` rather than
+    raising.
+    """
+    query = (query or "").strip()
+    if not query:
+        return []
+    conn = await connect(db_path)
+    try:
+        cursor = await conn.execute(
+            "SELECT rowid, content, category FROM memory_facts_fts "
+            "WHERE memory_facts_fts MATCH ? ORDER BY rank LIMIT ?",
+            (query, limit),
+        )
+        rows = await cursor.fetchall()
+    except aiosqlite.OperationalError:
+        logger.warning("search_memory_facts: bad FTS query %r", query)
+        return []
+    finally:
+        await conn.close()
+    return [dict(row) for row in rows]
