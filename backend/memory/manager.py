@@ -33,6 +33,7 @@ the spoken response.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -105,6 +106,15 @@ class MemoryManager:
         self._evaluator = evaluator or MemoryEvaluator()
 
     # --- Database kwargs ----------------------------------------------------
+
+    @property
+    def db_path(self) -> str | Path:
+        """The SQLite path this manager reads/writes (for callers that need it).
+
+        The voice pipeline uses this to query open loops directly at session
+        start. Falls back to the database module's default when none was set.
+        """
+        return self._db_path if self._db_path is not None else database.DEFAULT_DB_PATH
 
     def _db_kwargs(self) -> dict[str, Any]:
         """Pass ``db_path`` to database helpers only when explicitly set."""
@@ -218,6 +228,18 @@ class MemoryManager:
         raises into the caller and adds no latency to the spoken response.
         """
         try:
+            # --- Intelligence layer (Phase 12D): open loops + people --------
+            # Both run off the hot path as fire-and-forget tasks so they never
+            # add latency, and they fire regardless of the importance score (a
+            # reminder or a contact mention is worth capturing even when the
+            # exchange itself doesn't promote to a semantic fact).
+            for desc in self._evaluator.detect_open_loops(user_text):
+                asyncio.create_task(self._save_open_loop_async(desc, source=source))
+
+            person = self._evaluator.extract_person(f"{user_text} {reply}")
+            if person:
+                asyncio.create_task(self._upsert_person_async(person))
+
             score, category = self._evaluator.score(user_text, reply)
             if score < self._evaluator.threshold:
                 log.info("memory_consolidate_skip", category=category, score=score)
@@ -258,6 +280,123 @@ class MemoryManager:
         except Exception:  # noqa: BLE001 — consolidation must never break a turn
             log.warning("memory_consolidate_failed", exc_info=True)
             return None
+
+    # --- Intelligence-layer helpers (Phase 12D) -----------------------------
+
+    async def _save_open_loop_async(self, description: str, *, source: str) -> None:
+        """Persist one detected open loop. Fire-and-forget; never raises."""
+        try:
+            await database.save_open_loop(
+                description, source=source, **self._db_kwargs()
+            )
+            log.info("memory_open_loop_saved", source=source)
+        except Exception:  # noqa: BLE001 — a loop write must not break a turn
+            log.warning("memory_open_loop_failed", exc_info=True)
+
+    async def _upsert_person_async(self, person: dict[str, Any]) -> None:
+        """Insert/update a person profile (deduped by email). Never raises."""
+        try:
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            await database.save_person(
+                person["name"],
+                email=person.get("email"),
+                notes=person.get("notes"),
+                last_contact_at=now,
+                **self._db_kwargs(),
+            )
+            log.info("memory_person_upserted", has_email=bool(person.get("email")))
+        except Exception:  # noqa: BLE001 — a person write must not break a turn
+            log.warning("memory_person_failed", exc_info=True)
+
+    # --- Periodic consolidation (Phase 12D) ---------------------------------
+
+    async def run_consolidation(self) -> int:
+        """Re-scan recent conversation pairs and back-fill missed semantic facts.
+
+        Catches exchanges that reached episodic memory (Layer 2) but never made
+        it to semantic memory (Layer 3) — e.g. the server crashed between the
+        ``store`` and the fire-and-forget ``consolidate`` of a turn. Pulls the
+        last 50 ``conversations`` rows, walks them as consecutive
+        ``user -> jarvis`` pairs, and for any pair whose distilled fact is not
+        already present (matched by a content hash over ``user_text[:100]``)
+        re-runs the evaluator, storing when the score clears the threshold.
+
+        Returns the number of facts newly stored. Idempotent across runs: a pair
+        already represented in ``memory_facts`` is skipped, so repeated calls do
+        not duplicate. Never raises — a consolidation pass must never crash the
+        background loop that drives it.
+        """
+        stored = 0
+        try:
+            rows = await database.get_recent_conversations(
+                limit=50, **self._db_kwargs()
+            )
+            # Existing fact contents, hashed the same way, so we can dedupe.
+            existing_facts = await database.get_memory_facts(
+                limit=500, **self._db_kwargs()
+            )
+            seen_hashes = {
+                self._content_hash(f["content"]) for f in existing_facts
+            }
+
+            # Walk consecutive user -> jarvis pairs.
+            for i in range(len(rows) - 1):
+                if rows[i]["role"] != "user" or rows[i + 1]["role"] != "jarvis":
+                    continue
+                user_text = rows[i]["content"]
+                reply = rows[i + 1]["content"]
+
+                score, category = self._evaluator.score(user_text, reply)
+                if score < self._evaluator.threshold:
+                    continue
+                fact = self._evaluator.extract_fact(user_text, reply, category)
+                if not fact.strip():
+                    continue
+
+                # Dedupe on the *distilled fact* content. The fact is a pure
+                # function of (user_text, reply, category), so a pair already
+                # consolidated produces an identical fact whose hash is already
+                # in seen_hashes — making repeated runs idempotent regardless of
+                # how the original utterance was phrased.
+                fact_hash = self._content_hash(fact)
+                if fact_hash in seen_hashes:
+                    continue
+
+                fact_id = await database.save_memory_fact(
+                    "consolidation",
+                    category,
+                    fact,
+                    importance=score,
+                    **self._db_kwargs(),
+                )
+                await asyncio.to_thread(
+                    self._vector_store.add,
+                    fact,
+                    {
+                        "fact_id": fact_id,
+                        "category": category,
+                        "source": "consolidation",
+                        "importance": score,
+                    },
+                )
+                seen_hashes.add(fact_hash)
+                stored += 1
+
+            if stored:
+                log.info("memory_run_consolidation", stored=stored)
+            return stored
+        except Exception:  # noqa: BLE001 — periodic pass must never crash its loop
+            log.warning("memory_run_consolidation_failed", exc_info=True)
+            return stored
+
+    @staticmethod
+    def _content_hash(text: str) -> str:
+        """Stable short hash over the first 100 chars of a text (dedupe key)."""
+        normalized = (text or "")[:100].strip().lower()
+        # Non-cryptographic: this is a dedupe key, not a security primitive.
+        return hashlib.sha1(
+            normalized.encode("utf-8"), usedforsecurity=False
+        ).hexdigest()
 
     # --- Recall: blend Layer 2 (recent) + Layer 3 (semantic) ----------------
 

@@ -4,11 +4,70 @@
 
 ---
 
-## Current State: 109/110 backend tests passing (1 pre-existing secret-scan failure, unrelated to Phase 12B) · frontend pnpm build clean
+## Current State: 125/127 backend tests passing — 1 NEW Phase 12D failure + 1 pre-existing secret-scan failure · frontend pnpm build clean
 
-- **Tests Passed**: **109 backend** (`pytest backend/` — 35s; 102 pre-existing + 7 new Phase 12B) + **frontend `pnpm build` clean** (last verified Phase 11C)
-- **Tests Failed**: **1 pre-existing** — `test_no_secrets_committed_in_source_files` (a Google OAuth client id committed in `get_gmail_token.py:9` in a prior session). NOT a Phase 12B regression. Handed to security-agent.
+- **Tests Passed**: **125 backend** (`pytest backend/` — 36s; 116 pre-existing + 9 of 10 new Phase 12D) + **frontend `pnpm build` clean** (last verified Phase 11C)
+- **Tests Failed**: **2** — (1) **NEW** `test_phase12d_verify.py::test_detect_open_loops_multiple` (genuine Phase 12D defect — see Phase 12D entry below); (2) pre-existing `test_no_secrets_committed_in_source_files` (Google OAuth client id committed in `get_gmail_token.py:9` in a prior session — NOT a memory regression, handed to security-agent).
 - **Deferred**: 6 Phase 9 items (4 UI + 2 true-E2E) — require native Tauri app and/or a microphone + live API keys. No Vitest harness yet; frontend verified via `pnpm build` + grep.
+
+---
+
+## Phase 12D — Memory Intelligence (2026-06-05, 9/10 targeted PASS — 1 FAIL · suite 125 passed / 2 fail)
+*(`backend/memory/test_phase12d_verify.py` — pure-function evaluator checks + temp SQLite + MagicMock VectorStore; no key, no network, no audio, no FAISS)*
+
+**RESULT: FAIL** — 9 of 10 targeted tests pass; targeted test 3 (open-loop multiple) fails on a genuine Phase 12D code defect. Full suite shows no regression in any previously-passing test (the only new failure is this Phase 12D bug; the +10 new tests took the suite from 117 to 127 total).
+
+Verifies the Phase 12D change set: open-loop detection, people extraction, failure memory, `older_than_hours` open-loop filter, `consolidate` side effects, and the lifespan consolidation loop.
+
+- [x] **1. Open loop detection — positive** — `detect_open_loops("remind me to follow up with Maria tomorrow")` returns ≥1 entry containing "follow up with Maria". ✓
+- [x] **2. Open loop detection — negative** — `detect_open_loops("what time is it?")` returns `[]`. ✓
+- [ ] **3. Open loop detection — multiple** — `detect_open_loops("I need to update the readme and don't forget to check the logs")` expected 2 entries, **got 1** (`['check the logs']`). **FAIL.** ✗
+- [x] **4. Person extraction — email present** — `extract_person("got an email from Sarah at sarah@example.com")` returns `name="Sarah"`, `email="sarah@example.com"`. ✓
+- [x] **5. Person extraction — no person** — `extract_person("what time is it?")` returns `None`. ✓
+- [x] **6. Failure scoring** — `score("we tried using Redis but it conflicted with the audio pipeline", "Understood, reverting.")` → score 0.85, category `"failure"`. ✓
+- [x] **7. Failure fact extraction** — `extract_fact(user, reply, "failure")` returns a string containing "failed"/"Failed approach". ✓
+- [x] **8. Open loop saved via consolidate** — `MemoryManager(in-memory).consolidate("remind me to call the client tomorrow", ...)` lands an `open_loops` row with status="open" (fire-and-forget, polled ≤2s). ✓
+- [x] **9. `get_open_loops` `older_than_hours` filter** — a row created 25h ago is returned by `older_than_hours=24` and excluded by `older_than_hours=26`. ✓
+- [x] **10. Consolidation loop in lifespan** — `main._consolidation_loop` is a defined coroutine fn; `main._startup_greeting` signature accepts `memory_manager`. ✓
+
+### FAILURE DETAIL — test 3 (`test_detect_open_loops_multiple`)
+- **Test name**: `backend/memory/test_phase12d_verify.py::test_detect_open_loops_multiple`
+- **Expected**: `detect_open_loops("I need to update the readme and don't forget to check the logs")` → list of **2** entries (one per trigger: `"i need to"` → "update the readme", `"don't forget to"` → "check the logs").
+- **Actual**: returns **1** entry — `['check the logs']`. The "update the readme" loop is dropped.
+- **Location**: `backend/memory/evaluator.py:252-271` (`MemoryEvaluator.detect_open_loops`), specifically the `break` at line 271.
+- **Root cause**: `detect_open_loops` records **at most one loop per sentence**. It splits text only on `.!?;\n` (`_SENTENCE_SPLIT_RE`, line 171) — *not* on the conjunction "and" — so the whole input is one sentence. Within that sentence it finds the first matching trigger by list order (`"don't forget to"` precedes `"i need to"` in `_OPEN_LOOP_TRIGGERS`, lines 139-157), captures its body ("check the logs"), then `break`s — so the second commitment ("update the readme") is never captured. Confirmed: splitting the same text into two sentences with a period yields both loops (`['update the readme', 'check the logs']`).
+- **Suggested fix** (two viable options):
+  - *(A, minimal)* In `detect_open_loops`, after consuming a trigger, strip the matched span from the working sentence and re-scan the remainder for further triggers instead of `break`-ing — so a single sentence with N distinct triggers yields N loops. Keep the dedupe `seen` set to collapse identical descriptions.
+  - *(B)* Extend `_SENTENCE_SPLIT_RE` (or add a pre-split) to also break on coordinating conjunctions (`\b and \b`, `\b then \b`) before the per-sentence scan. Lower-effort but coarser (would also split non-commitment "and" clauses).
+  - Recommend (A): it targets the actual one-loop-per-sentence limitation without changing sentence semantics elsewhere.
+
+**Test-harness notes (not product bugs):**
+- *Test 8 polls the DB.* `consolidate` fires the open-loop write via `asyncio.create_task` (`manager.py:236-237`) — fire-and-forget, never awaited — so the test polls `open_loops` for up to 2s rather than asserting synchronously. This confirms the write is genuinely scheduled and lands.
+- *Test 9 seeds `created_at` directly* via a raw `INSERT ... datetime('now','-25 hours')` to exercise the `older_than_hours` cutoff deterministically without waiting real time.
+- *Test 10 is an import-level check* — no server start, no lifespan run.
+
+---
+
+## Phase 12C — Agent Memory (2026-06-06, 7/7 targeted PASS · suite 116 passed / 1 pre-existing fail)
+*(`backend/agents/test_phase12c_verify.py` — mocks only: FakeMemoryManager + StubReasoner + FakeHub + temp SQLite; no key, no network, no audio, no FAISS)*
+
+Verifies the Phase 12C change set: persistent memory wired into all 6 agents. `BaseAgent.reason()` recalls shared memory before the Claude call and stores + consolidates after; `_remember()` checkpoints each exchange to `conversations` under `channel='agent:<id>'`; `start()` restores the agent's context from the DB; `ProductionLead._delegate()` writes a `decisions` row; specialists write `agent_performance` rows on completion.
+
+- [x] **1. Context checkpoint** — `BaseAgent` (no memory_manager) `_remember("hello","world")` persists exactly two `conversations` rows under `channel="agent:test"`: a `user` row "hello" and a `jarvis` row "world". The checkpoint is fire-and-forget (`asyncio.create_task`), so the test polls the DB until both rows land. ✓
+- [x] **2. Context restore** — seed 4 conversation rows for `channel="agent:test"`; a fresh agent's `start()` rebuilds `self._context` as 4 entries in Anthropic message shape (`user`→`user`, `jarvis`→`assistant`), oldest-first, matching the seeded rows exactly. ✓
+- [x] **3. Context restore empty DB** — a fresh agent on an empty DB: `start()` leaves `self._context == []`, no crash. ✓
+- [x] **4. Recall in reason()** — `MemoryManager.recall` returns one episodic message; with pre-seeded rolling context, the messages list passed to Claude is **exactly** `[recalled episodic, rolling context, new prompt]` (recalled first, then `self._context`, then the new user prompt). ✓
+- [x] **5. Store after reason()** — `reason("test prompt")` calls `MemoryManager.store` **exactly twice** (roles `["user","jarvis"]`, channel `agent:test`) and `consolidate` is **create_task'd not awaited** (polled after a loop yield; `agent_id="test"` propagated). ✓
+- [x] **6. Production lead writes decisions** — `handle_task("Build a new API endpoint")` on a `ProductionLead` with a wired MemoryManager records a `decisions` row with `agent_id="production_lead"` (fire-and-forget, polled). ✓
+- [x] **7. Specialist writes agent_performance** — `handle_task("fix a bug")` on `BackendAgent` records an `agent_performance` row with `agent_id="backend"` and `outcome` in (`success`,`failed`) (fire-and-forget, polled). ✓
+- [x] **8. Phase 4 regression** — full Phase 4 agent suite (`backend/agents/test_phase4_verify.py`) still 12/12 PASS: lifecycle, status broadcasts, DB persistence across restart, keyword routing, delegation, error recovery, lifespan wiring. No regressions from the memory wiring. ✓
+
+**Test-harness notes (not product bugs):**
+- *Tests 1, 5, 6, 7 poll the DB / call records.* The Phase 12C memory writes (`_checkpoint_context`, `consolidate`, `_record_delegation_decision`, `_record_performance`) are all fire-and-forget via `asyncio.create_task` so they never add latency to a task. Tests therefore poll for the side effect rather than asserting synchronously — this confirms the writes are genuinely scheduled (not awaited inline) and still land.
+- *Test 6 FK seeding.* Routing "Build a new API endpoint" classifies to `backend`, and `_delegate` writes a `tasks` row with `assigned_to="backend"` (FK into `agents`). The test seeds the `backend` agent row (via `upsert_agent`) in addition to `start()`-ing the lead, so the delegation FK is satisfied. Without it the delegation raised `FOREIGN KEY constraint failed` — an artifact of the minimal single-lead fixture, not a code defect.
+- *Tests 6 & 7 require a wired MemoryManager.* The `decisions` / `agent_performance` writes are gated on `self.memory_manager is not None` (so the no-memory test path stays unchanged), hence both tests inject a `FakeMemoryManager`.
+
+**Regression check:** All 109 previously-passing tests still pass. The 7 new Phase 12C tests bring the suite to **116 passed / 1 pre-existing fail (117 total)**. The brief anticipated "109/110" — that was the pre-12C baseline; adding the 7 new tests yields 116/117. The single failure remains the pre-existing secret scan (below), confirmed independent of Phase 12C — it scans `get_gmail_token.py` / `docs/TEST_HISTORY.md`, neither touched by the memory wiring. No Phase 12C regressions.
 
 ---
 

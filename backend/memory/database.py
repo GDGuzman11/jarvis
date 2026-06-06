@@ -798,24 +798,55 @@ async def save_open_loop(
 
 async def get_open_loops(
     status: str = "open",
+    older_than_hours: float | None = None,
     *,
     db_path: Path | str = DEFAULT_DB_PATH,
 ) -> list[dict]:
     """Return open loops with the given ``status`` (default ``'open'``).
 
-    Ordered oldest-first so the most stale promises surface first.
+    Ordered oldest-first so the most stale promises surface first. When
+    ``older_than_hours`` is given, only loops created at least that many hours
+    ago are returned — used at session start to surface *overdue* items the user
+    hasn't addressed, without nagging about something they said moments ago.
     """
     conn = await connect(db_path)
     try:
-        cursor = await conn.execute(
-            "SELECT id, description, source, status, due_at, resolved_at, "
-            "created_at FROM open_loops WHERE status = ? ORDER BY id ASC",
-            (status,),
-        )
+        if older_than_hours is None:
+            cursor = await conn.execute(
+                "SELECT id, description, source, status, due_at, resolved_at, "
+                "created_at FROM open_loops WHERE status = ? ORDER BY id ASC",
+                (status,),
+            )
+        else:
+            # SQLite datetime arithmetic: compare created_at against a cutoff
+            # computed as 'now' minus the requested age in hours.
+            cutoff = f"-{float(older_than_hours)} hours"
+            cursor = await conn.execute(
+                "SELECT id, description, source, status, due_at, resolved_at, "
+                "created_at FROM open_loops WHERE status = ? "
+                "AND created_at <= datetime('now', ?) ORDER BY id ASC",
+                (status, cutoff),
+            )
         rows = await cursor.fetchall()
     finally:
         await conn.close()
     return [dict(row) for row in rows]
+
+
+async def get_open_loops_async(
+    db_path: Path | str = DEFAULT_DB_PATH,
+    status: str = "open",
+    older_than_hours: float | None = None,
+) -> list[dict]:
+    """Positional-``db_path`` wrapper around :func:`get_open_loops` (Phase 12D).
+
+    The voice pipeline surfaces overdue loops at session start and calls this
+    with ``db_path`` first, so this adapts that call shape onto the keyword-only
+    ``get_open_loops`` signature. Behaviour is otherwise identical.
+    """
+    return await get_open_loops(
+        status, older_than_hours, db_path=db_path
+    )
 
 
 # --- Phase 12: decisions (the WHY behind choices) ---------------------------

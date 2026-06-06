@@ -78,11 +78,19 @@ ALLOWED_WS_ORIGINS: frozenset[str] = frozenset(ALLOWED_ORIGINS)
 log = get_logger(__name__)
 
 
-async def _startup_greeting() -> None:
-    """Speak a personalised greeting once the first Tauri window connects."""
+async def _startup_greeting(memory_manager: MemoryManager | None = None) -> None:
+    """Speak a personalised greeting once the first Tauri window connects.
+
+    When a :class:`MemoryManager` is supplied (Phase 12D), the greeting also
+    surfaces *overdue* open loops — promises/reminders created more than 12 hours
+    ago that are still open — so Jarvis proactively reminds the user of
+    unfinished follow-ups at session start. Every memory access is guarded so the
+    greeting still works when ``memory_manager is None`` or the query fails.
+    """
     from backend.ai.claude_client import ClaudeClient, ClaudeAPIError
     from backend.ai.persona import build_system_prompt
     from backend.events import VoiceStateEvent
+    from backend.memory.database import get_open_loops_async
     from backend.security.keystore import missing_credentials
     from backend.voice import tts
 
@@ -131,13 +139,60 @@ async def _startup_greeting() -> None:
     except (ClaudeAPIError, Exception):
         log.warning("startup_greeting_failed", exc_info=True)
 
+    spoken = reply.strip() if reply.strip() else fallback
+
+    # Surface overdue open loops (created > 12 hours ago, still open) so Jarvis
+    # proactively reminds the user of unfinished follow-ups (Phase 12D). Guarded:
+    # a missing manager or a query failure simply skips the reminder.
+    if memory_manager is not None:
+        try:
+            open_loops = await get_open_loops_async(
+                memory_manager.db_path, status="open", older_than_hours=12
+            )
+            if open_loops:
+                loop_text = ", ".join(
+                    loop["description"][:60] for loop in open_loops[:3]
+                )
+                spoken += (
+                    f" Also, sir — you have {len(open_loops)} open item(s) "
+                    f"to follow up on: {loop_text}."
+                )
+                log.info("startup_open_loops_surfaced", count=len(open_loops))
+        except Exception:  # noqa: BLE001 — reminders must not break the greeting
+            log.warning("startup_open_loops_failed", exc_info=True)
+
     await hub.broadcast(VoiceStateEvent(state="speaking"))
     try:
-        await tts.speak_and_play(reply.strip() if reply.strip() else fallback)
+        await tts.speak_and_play(spoken)
     except Exception:
         log.warning("startup_greeting_tts_failed", exc_info=True)
     finally:
         await hub.broadcast(VoiceStateEvent(state="idle"))
+
+
+# How often the background consolidation pass runs (Phase 12D).
+CONSOLIDATION_INTERVAL_S: int = 600  # 10 minutes
+
+
+async def _consolidation_loop(memory_manager: MemoryManager) -> None:
+    """Run :meth:`MemoryManager.run_consolidation` every 10 minutes forever.
+
+    Cancellable: the lifespan cancels this task on shutdown, raising
+    :class:`asyncio.CancelledError` out of the ``sleep`` — which we let
+    propagate so the task ends cleanly. Any other error inside a pass is
+    swallowed so a single bad consolidation never kills the loop.
+    """
+    while True:
+        try:
+            await asyncio.sleep(CONSOLIDATION_INTERVAL_S)
+        except asyncio.CancelledError:
+            raise
+        try:
+            await memory_manager.run_consolidation()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — never crash the loop on a bad pass
+            log.warning("consolidation_loop_pass_failed", exc_info=True)
 
 
 @asynccontextmanager
@@ -239,12 +294,29 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     log.info("Tool registry ready", tools=len(tool_registry.list_tools()))
 
     # Fire the startup greeting in the background — it waits for the first
-    # window to connect, then has Jarvis speak a personalised hello + status.
-    asyncio.create_task(_startup_greeting(), name="startup-greeting")
+    # window to connect, then has Jarvis speak a personalised hello + status,
+    # surfacing any overdue open loops (Phase 12D).
+    asyncio.create_task(
+        _startup_greeting(memory_manager), name="startup-greeting"
+    )
+
+    # Periodic memory consolidation (Phase 12D): every 10 minutes, re-scan recent
+    # conversation pairs and back-fill any semantic facts that were missed (e.g.
+    # a crash between episodic store and the fire-and-forget consolidate). The
+    # loop never raises into the lifespan and is cancelled cleanly on shutdown.
+    consolidation_task = asyncio.create_task(
+        _consolidation_loop(memory_manager), name="memory-consolidation"
+    )
 
     try:
         yield
     finally:
+        # Stop the periodic consolidation loop first so it can't fire mid-teardown.
+        consolidation_task.cancel()
+        try:
+            await consolidation_task
+        except asyncio.CancelledError:
+            pass
         # Stop the Slack listener first so no inbound event fires mid-teardown.
         await slack_client.stop()
         log.info("Slack integration stopped")

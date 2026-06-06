@@ -32,9 +32,12 @@ repeated_topic        0.70   same topic mentioned 3+ times recently
 general               0.20   status checks, lookups, greetings — diary only
 ====================  =====  ====================================================
 
-This is Phase 12A infrastructure: the evaluator is complete enough to score and
-extract, but it is not yet wired into the voice pipeline (that is Phase 12B) and
-the richer people/open-loop intelligence lands in Phase 12D.
+Phase 12D adds the intelligence layer on top of the 12A scoring core:
+:meth:`detect_open_loops` scans an utterance for promise/reminder/follow-up
+patterns and returns concise loop descriptions; :meth:`extract_person` pulls a
+named contact + email/"from X" hint out of Gmail/Slack-flavoured text; and the
+``failure`` category now extracts a structured "approach / reason" fact so a
+dead-end is never silently re-attempted.
 """
 
 from __future__ import annotations
@@ -63,9 +66,11 @@ _RULES: tuple[tuple[str, float, tuple[str, ...]], ...] = (
         "failure",
         0.85,
         (
-            "tried", "abandoned", "reverted", "didn't work", "did not work",
-            "rolled back", "roll back", "gave up on", "ran into", "conflicted",
-            "broke", "failed because", "doesn't work", "does not work",
+            "tried", "attempted", "abandoned", "reverted", "didn't work",
+            "did not work", "rolled back", "roll back", "gave up on", "ran into",
+            "conflicted", "conflicted with", "broke", "failed because",
+            "doesn't work", "does not work", "caused issues", "was too slow",
+            "too slow",
         ),
     ),
     (
@@ -125,6 +130,51 @@ _ARTIFACT_PATTERNS: tuple[str, ...] = (
     r"\b(?:endpoint|api|table|schema|function|class|component|module)\b",  # artifact noun
 )
 
+# --- Open-loop / people patterns (Phase 12D) --------------------------------
+
+# Trigger phrases that introduce a promise/reminder/follow-up. Ordered longest-
+# first within overlapping families so the more specific phrase is consumed (and
+# stripped) before a shorter prefix of it. Matched case-insensitively against
+# each sentence; the text after the trigger becomes the loop description.
+_OPEN_LOOP_TRIGGERS: tuple[str, ...] = (
+    "remind me to",
+    "remind me",
+    "don't forget to",
+    "dont forget to",
+    "don't forget",
+    "dont forget",
+    "follow up on",
+    "follow-up on",
+    "follow up with",
+    "follow up",
+    "remember to",
+    "make sure to",
+    "make sure",
+    "check on",
+    "schedule",
+    "we need to",
+    "i need to",
+)
+
+# A pragmatic email matcher — good enough for Gmail/Slack context strings.
+_EMAIL_RE: str = r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
+
+# "from <Name>" — captures one to three capitalised name tokens after "from".
+# Stops before a lowercase word, an email, or punctuation, so "from Sarah at
+# sarah@..." captures just "Sarah".
+_FROM_NAME_RE: str = (
+    r"\bfrom\s+([A-Z][a-zA-Z'’-]+(?:\s+[A-Z][a-zA-Z'’-]+){0,2})"
+)
+
+# Sentence splitter: break on ., !, ?, ; or newlines so each trigger scan and
+# each "from <Name>" capture stays within one clause.
+_SENTENCE_SPLIT_RE = re.compile(r"[.!?;\n]+")
+
+
+def _split_sentences(text: str) -> list[str]:
+    """Split text into trimmed sentence-ish fragments (non-empty only)."""
+    return [s.strip() for s in _SENTENCE_SPLIT_RE.split(text) if s.strip()]
+
 
 class MemoryEvaluator:
     """Score exchanges for semantic importance and extract compact facts.
@@ -179,6 +229,161 @@ class MemoryEvaluator:
         value, _ = self.score(user_text, reply)
         return value >= self.threshold
 
+    # --- Open-loop detection (Phase 12D) ------------------------------------
+
+    def detect_open_loops(self, user_text: str) -> list[str]:
+        """Scan ``user_text`` for promises/reminders/follow-ups.
+
+        Returns a list of concise open-loop description strings — one per matched
+        trigger — or an empty list when nothing looks like a commitment. Each
+        description is the *content* of the commitment (the trigger phrase
+        stripped off) so it reads naturally when surfaced later, e.g.
+        ``"remind me to follow up with Maria"`` -> ``"follow up with Maria"``.
+
+        Multiple distinct triggers in the same utterance each yield a loop, but
+        duplicates (same normalised description) are collapsed so "remind me to X
+        and don't forget to X" records X once.
+        """
+        if not user_text or not user_text.strip():
+            return []
+
+        loops: list[str] = []
+        seen: set[str] = set()
+        for sentence in _split_sentences(user_text):
+            lowered = sentence.lower()
+            # Collect every trigger occurrence as a (start, end) span. A sentence
+            # may carry more than one commitment ("I need to X and don't forget
+            # to Y"), so we must not stop at the first match.
+            spans: list[tuple[int, int]] = []
+            for trigger in _OPEN_LOOP_TRIGGERS:
+                start = 0
+                while True:
+                    idx = lowered.find(trigger, start)
+                    if idx == -1:
+                        break
+                    end = idx + len(trigger)
+                    # Skip occurrences nested inside an already-recorded span
+                    # (e.g. "remind me" inside "remind me to") so overlapping
+                    # triggers don't double-count the same commitment.
+                    if not any(s <= idx < e for s, e in spans):
+                        spans.append((idx, end))
+                    start = idx + 1
+            # Order matches by position so each commitment body can be bounded
+            # by the start of the next trigger in the same sentence.
+            spans.sort()
+            # A later trigger only starts a *new* commitment when a clause
+            # separator (",", "and", "then", ";") sits between it and the
+            # previous trigger — otherwise it is part of the current body
+            # ("remind me to [follow up with Maria]" is one loop, not two).
+            boundaries = [
+                spans[i + 1][0]
+                for i in range(len(spans) - 1)
+                if re.search(
+                    r"(?:,|\band\b|\bthen\b|;)",
+                    sentence[spans[i][1]:spans[i + 1][0]],
+                    flags=re.IGNORECASE,
+                )
+            ]
+            for i, (_, end) in enumerate(spans):
+                # Skip a trigger whose start is inside a prior commitment body
+                # (no separator preceded it): it was absorbed, not a new loop.
+                if i > 0 and spans[i][0] not in boundaries:
+                    continue
+                next_start = next(
+                    (b for b in boundaries if b > end), len(sentence)
+                )
+                body = sentence[end:next_start].strip()
+                desc = self._clean_loop_description(body)
+                if not desc:
+                    continue
+                key = desc.lower()
+                if key in seen:
+                    # Skip near-identical triggers ("remind me to X and don't
+                    # forget to X") so the same commitment records once.
+                    continue
+                seen.add(key)
+                loops.append(desc)
+        return loops
+
+    @staticmethod
+    def _clean_loop_description(body: str) -> str:
+        """Tidy a raw commitment fragment into a concise description."""
+        text = re.sub(r"\s+", " ", body).strip()
+        # Drop a leading "to "/"that "/"on " left over after the trigger word.
+        text = re.sub(r"^(?:to|that|on|about)\s+", "", text, flags=re.IGNORECASE)
+        # Trim trailing punctuation/conjunctions so the snippet ends cleanly.
+        text = text.rstrip(" .,!?;:")
+        if len(text) > 120:
+            text = text[:120].rsplit(" ", 1)[0] + "…"
+        return text
+
+    # --- People extraction (Phase 12D) --------------------------------------
+
+    def extract_person(self, text: str) -> dict | None:
+        """Extract a named person + contact hint from ``text``.
+
+        Built for Gmail/Slack-flavoured context such as "I got an email from
+        Sarah at sarah@example.com" or "message from Maria Lopez". Returns
+        ``{"name": str, "email": str | None, "notes": str}`` when a person is
+        found, else ``None``.
+
+        Strategy (cheap, rule-based):
+
+        * An email address is captured if present.
+        * A name is taken from a "from <Name>" pattern (Gmail/Slack style) or,
+          failing that, from the local-part of the email when it looks like a
+          name. The first capitalised token(s) after "from" win.
+        """
+        if not text or not text.strip():
+            return None
+
+        email_match = re.search(_EMAIL_RE, text)
+        email = email_match.group(0) if email_match else None
+
+        name: str | None = None
+        from_match = re.search(_FROM_NAME_RE, text)
+        if from_match:
+            name = from_match.group(1).strip()
+            # Don't let a "from" immediately followed by the email steal the
+            # email as a name (e.g. "from sarah@example.com").
+            if email and name.lower() in email.lower():
+                name = None
+
+        if name is None and email:
+            # Derive a display name from the local-part: "sarah.lopez" -> "Sarah Lopez".
+            local = email.split("@", 1)[0]
+            parts = re.split(r"[._-]+", local)
+            if parts and all(p.isalpha() for p in parts):
+                name = " ".join(p.capitalize() for p in parts)
+
+        if not name:
+            return None
+
+        notes = self._compress(text, max_len=160)
+        return {"name": name, "email": email, "notes": notes}
+
+    # --- Failure splitting (Phase 12D) --------------------------------------
+
+    @staticmethod
+    def _split_failure(detail: str) -> tuple[str, str]:
+        """Split a failure clause into ``(approach, reason)`` halves.
+
+        Splits on the first "but/because/since/as" conjunction so
+        "we tried Redis but it conflicted with the audio pipeline" yields
+        ``("we tried Redis", "it conflicted with the audio pipeline")``. When no
+        conjunction is present the whole clause is the approach and the reason is
+        left unspecified.
+        """
+        text = re.sub(r"\s+", " ", detail or "").strip()
+        if not text:
+            return "unspecified", "unspecified"
+        match = re.search(r"\b(but|because|since|as)\b", text, flags=re.IGNORECASE)
+        if match:
+            approach = text[: match.start()].strip(" .,;:")
+            reason = text[match.end():].strip(" .,;:")
+            return (approach or "unspecified", reason or "unspecified")
+        return text.strip(" .,;:"), "unspecified"
+
     # --- Fact extraction ----------------------------------------------------
 
     def extract_fact(self, user_text: str, reply: str, category: str) -> str:
@@ -207,8 +412,11 @@ class MemoryEvaluator:
             detail = user or reply_c
             return f"Decision: {detail} (decided {stamp})."
         if category == "failure":
-            detail = user or reply_c
-            return f"Failure/dead-end: {detail} (recorded {stamp})."
+            approach, reason = self._split_failure(user or reply_c)
+            return (
+                f"Failed approach: {approach}. Reason: {reason}. "
+                f"Date: {stamp}."
+            )
         if category == "open_loop":
             return f"Open loop: {user} (created {stamp})."
         if category == "external_comm":
