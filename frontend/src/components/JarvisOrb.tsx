@@ -1,641 +1,687 @@
 /**
- * JarvisOrb — an ethereal "sand" particle orb rendered with React Three Fiber.
+ * JarvisOrb — the Neural Intelligence Orb.
  *
- * 2500 additively-blended points sit on/around a sphere. Per-particle motion is
- * a cheap time-based sinusoidal noise drift (no external noise lib). Voice state
- * (from the Zustand store) drives colour, swirl speed, orbit tightness and — in
- * the speaking state — an amplitude-driven outward "explosion" pulse fed by the
- * live `audioLevel` (0..1, broadcast by the backend every 50ms during TTS).
+ * A floating holographic sphere built from ~350 interconnected neuron nodes.
+ * Thin glowing pathways (LineSegments) form a neural-network graph across the
+ * surface; ~20% of those pathways are red "freedom pathways" representing the
+ * AI's self-determination. Mathematical/code symbols drift inside the sphere.
+ * Three nested glow spheres + a flickering hologram shell give it volume.
  *
- * Layered on top is the Neural Link system: gentle synaptic arcs that travel
- * between surface nodes during idle/speaking, and sharp jagged discharge arcs
- * that crackle across the surface during thinking/listening. A fraction of
- * discharge arcs are "memory" arcs that bleed from gold through purple to white
- * as they decay.
+ * Activation propagates through the graph as cascades: a random node fires and
+ * the energy spreads outward through the adjacency graph up to CASCADE_DEPTH
+ * hops, brightening nodes and the connections between them. Firing rate, cascade
+ * intensity, colour tint, symbol speed and red-pathway glow all vary by
+ * voiceState and lerp smoothly between states inside `useFrame`.
  *
- * All transitions are lerped inside `useFrame` so colour/behaviour morph
- * smoothly between states rather than snapping.
+ * The `JarvisOrb({ voiceState, audioLevel })` signature, `BASE_RADIUS = 1.2`,
+ * golden-spiral node distribution, AdditiveBlending + depthWrite:false on every
+ * material, and the speaking-state audioLevel pulse are all preserved from the
+ * previous orb. Everything else (the 2500-particle cloud, synaptic bezier arcs,
+ * jagged discharge arcs) has been removed.
  */
 
 import { useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import {
   AdditiveBlending,
-  BufferAttribute,
-  BufferGeometry,
+  CanvasTexture,
   Color,
-  Line,
-  LineBasicMaterial,
-  LineSegments,
-  Points,
-  QuadraticBezierCurve3,
+  Group,
+  IcosahedronGeometry,
+  Mesh,
+  MeshBasicMaterial,
+  SphereGeometry,
+  Sprite,
+  SpriteMaterial,
   Vector3,
+  type LineSegments as ThreeLineSegments,
   type Points as ThreePoints,
-  type PointsMaterial as ThreePointsMaterial,
 } from "three";
 import type { VoiceState } from "../lib/types";
 
-const PARTICLE_COUNT = 2500;
-const BASE_RADIUS = 1.2;
+// --- Core geometry ----------------------------------------------------------
+const BASE_RADIUS = 1.2; // preserved sphere size
+const NODE_COUNT = 350; // neuron nodes
+const NEIGHBOR_K = 4; // nearest neighbours linked per node
+const RED_RATIO = 0.2; // 20% of connections are red freedom pathways
+const SYMBOL_COUNT = 30; // interior drifting symbols
+const CASCADE_DEPTH = 6; // hops an activation cascade spreads
 
-// --- Neural Link tuning -----------------------------------------------------
-const NODE_COUNT = 14; // invisible synaptic nodes on the sphere surface
-const ARC_POOL = 5; // synaptic arc slots (idle / speaking)
-const ARC_SEGMENTS = 24; // sampled points per synaptic bezier curve
-const ARC_LIFETIME = 0.8; // seconds for a synaptic arc envelope
-const IMPULSE_DURATION = 0.2; // seconds for the impulse dot to traverse an arc
-const DISCHARGE_POOL = 6; // jagged discharge slots (thinking / listening)
-const DISCHARGE_MAX_SEG = 7; // max polyline segments per discharge arc
-const DISCHARGE_VERTS = DISCHARGE_MAX_SEG + 1; // vertices per discharge arc
+// Symbols rendered inside the sphere — maths + code glyphs.
+const SYMBOLS = [
+  "∑", "π", "∞", "√", "∂", "∫", "∇", "Δ", "λ", "φ",
+  "ψ", "α", "β", "Ω", "≡", "≈", "⊕", "→", "{}", "[]",
+  "01", "if", ">>", "0x", "⚡", "∈", "∮", "ℝ", "∀", "∃",
+];
 
-const COL_CYAN = new Color("#00d4ff");
-const COL_GOLD = new Color("#ffb800");
-const COL_PURPLE = new Color("#8b5cf6");
-const COL_WHITE = new Color("#ffffff");
+// --- Colour palette ---------------------------------------------------------
+const COL_NEURON_BASE = new Color("#b3d4ff"); // light blue-white node
+const COL_NEURON_HOT = new Color("#ffffff"); // white-hot active node
+const COL_NEURON_GOLD = new Color("#ffd27a"); // gold tint (thinking)
+const COL_NEURON_CYAN = new Color("#7af0ff"); // cyan surge (speaking)
+const COL_CONN_DIM = new Color("#1a3a7a"); // dim blue connection
+const COL_CONN_HOT = new Color("#7ab8ff"); // bright cyan-blue connection
+const COL_RED_DIM = new Color("#440011"); // dark red pathway
+const COL_RED_HOT = new Color("#ff2244"); // vivid red pathway
 
-const STATE_COLOR: Record<VoiceState, string> = {
-  idle: "#00d4ff", // soft electric blue
-  listening: "#00ffff", // cyan
-  thinking: "#ffb800", // gold
-  speaking: "#00ffff", // bright cyan
+const STATE_GLOW: Record<VoiceState, Color> = {
+  idle: new Color("#003366"), // deep blue
+  listening: new Color("#0066aa"), // brighter blue
+  thinking: new Color("#aa7700"), // gold
+  speaking: new Color("#0099cc"), // cyan
 };
 
 /** Per-state behaviour knobs the animation lerps toward. */
 const STATE_PARAMS: Record<
   VoiceState,
-  { swirl: number; tightness: number; drift: number; breathe: number }
+  {
+    scale: number;
+    brightness: number;
+    neuronRate: number; // cascades per second
+    symbolSpeed: number;
+    redGlow: number;
+  }
 > = {
-  // swirl: rotation speed · tightness: how close to the shell (1 = on shell)
-  // drift: sinusoidal jitter amplitude · breathe: idle breathing depth
-  idle: { swirl: 0.12, tightness: 1.0, drift: 0.16, breathe: 0.05 },
-  listening: { swirl: 0.3, tightness: 0.96, drift: 0.18, breathe: 0.04 },
-  thinking: { swirl: 0.7, tightness: 0.82, drift: 0.1, breathe: 0.03 },
-  speaking: { swirl: 0.45, tightness: 1.04, drift: 0.22, breathe: 0.04 },
+  idle: { scale: 1.0, brightness: 0.7, neuronRate: 0.4, symbolSpeed: 0.08, redGlow: 0.3 },
+  listening: { scale: 0.92, brightness: 0.9, neuronRate: 1.2, symbolSpeed: 0.1, redGlow: 0.4 },
+  thinking: { scale: 1.05, brightness: 1.0, neuronRate: 2.5, symbolSpeed: 0.28, redGlow: 0.9 },
+  speaking: { scale: 1.0, brightness: 0.85, neuronRate: 1.8, symbolSpeed: 0.18, redGlow: 0.6 },
 };
 
 interface OrbProps {
   voiceState: VoiceState;
-  /** 0..1 live audio amplitude driving the speaking-state explosion radius. */
+  /** 0..1 live audio amplitude driving the speaking-state pulse. */
   audioLevel: number;
 }
 
-interface ParticleSeed {
-  /** Unit-sphere base direction. */
-  bx: number;
-  by: number;
-  bz: number;
-  /** Per-particle phase offsets so drift is incoherent across the cloud. */
-  phase: number;
-  speed: number;
+/** A spreading activation front travelling through the adjacency graph. */
+interface CascadeFront {
+  nodeIdx: number;
+  delay: number; // seconds until this front fires
+  depth: number; // remaining hops
 }
 
-/** A single synaptic arc slot (idle / speaking). */
-interface ArcSlot {
-  active: boolean;
-  age: number; // seconds since spawn
-  curve: QuadraticBezierCurve3 | null;
-  /** Sampled curve points, refreshed on spawn. */
-  samples: Vector3[];
-  impulseProgress: number; // 0..1 along the curve
+/** Golden-spiral unit-sphere direction for index i of n. */
+function goldenDir(i: number, n: number): Vector3 {
+  const golden = Math.PI * (3 - Math.sqrt(5));
+  const y = 1 - (i / (n - 1)) * 2; // 1 -> -1
+  const r = Math.sqrt(Math.max(0, 1 - y * y));
+  const theta = golden * i;
+  return new Vector3(Math.cos(theta) * r, y, Math.sin(theta) * r);
 }
 
-/** A single jagged discharge slot (thinking / listening). */
-interface DischargeSlot {
-  active: boolean;
-  age: number;
-  lifetime: number;
-  memoryArc: boolean;
-  /** Flat per-vertex world positions (DISCHARGE_VERTS points). */
-  verts: Vector3[];
-}
-
-/** Sample a quadratic bezier into `count` Vector3 points. */
-function sampleCurve(curve: QuadraticBezierCurve3, count: number): Vector3[] {
-  const out: Vector3[] = [];
-  for (let i = 0; i < count; i++) out.push(curve.getPoint(i / (count - 1)));
-  return out;
-}
-
-/** Random unit-sphere direction. */
-function randomDir(): Vector3 {
-  const u = Math.random() * 2 - 1;
-  const phi = Math.random() * Math.PI * 2;
-  const r = Math.sqrt(Math.max(0, 1 - u * u));
-  return new Vector3(r * Math.cos(phi), u, r * Math.sin(phi));
+/** Build a 64×64 canvas texture for a single symbol glyph. */
+function makeSymbolTexture(symbol: string): CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = 64;
+  canvas.height = 64;
+  const ctx = canvas.getContext("2d")!;
+  ctx.clearRect(0, 0, 64, 64);
+  ctx.font = '28px "Courier New", monospace';
+  ctx.fillStyle = "rgba(255,255,255,0.6)";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(symbol, 32, 34);
+  const tex = new CanvasTexture(canvas);
+  tex.needsUpdate = true;
+  return tex;
 }
 
 export function JarvisOrb({ voiceState, audioLevel }: OrbProps) {
-  const pointsRef = useRef<ThreePoints>(null);
+  // --- Layer refs -----------------------------------------------------------
+  const neuronRef = useRef<ThreePoints>(null);
+  const normalConnRef = useRef<ThreeLineSegments>(null);
+  const redConnRef = useRef<ThreeLineSegments>(null);
 
-  // Neural Link impulse-dot ref — its position buffer is written per-frame.
-  const impulseRef = useRef<Points | null>(null);
+  // --- Precomputed graph + buffers (built once) -----------------------------
+  const graph = useMemo(() => {
+    // 1. Node base directions on the unit sphere (golden spiral).
+    const dirs: Vector3[] = [];
+    for (let i = 0; i < NODE_COUNT; i++) dirs.push(goldenDir(i, NODE_COUNT));
 
-  // 14 invisible synaptic nodes evenly distributed on the surface sphere.
-  const nodes = useMemo(() => {
-    const out: Vector3[] = [];
-    const golden = Math.PI * (3 - Math.sqrt(5));
+    // 2. Nearest-K neighbours per node (Euclidean on the unit sphere).
+    const neighbors: number[][] = [];
     for (let i = 0; i < NODE_COUNT; i++) {
-      const y = 1 - (i / (NODE_COUNT - 1)) * 2;
-      const r = Math.sqrt(Math.max(0, 1 - y * y));
-      const theta = golden * i;
-      out.push(
-        new Vector3(Math.cos(theta) * r, y, Math.sin(theta) * r).multiplyScalar(
-          BASE_RADIUS,
+      const dist: { j: number; d: number }[] = [];
+      for (let j = 0; j < NODE_COUNT; j++) {
+        if (j === i) continue;
+        dist.push({ j, d: dirs[i].distanceToSquared(dirs[j]) });
+      }
+      dist.sort((p, q) => p.d - q.d);
+      neighbors.push(dist.slice(0, NEIGHBOR_K).map((p) => p.j));
+    }
+
+    // 3. Unique undirected edges from the neighbour lists.
+    const seen = new Set<string>();
+    const edges: [number, number][] = [];
+    for (let i = 0; i < NODE_COUNT; i++) {
+      for (const j of neighbors[i]) {
+        const a = Math.min(i, j);
+        const b = Math.max(i, j);
+        const key = `${a}_${b}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        edges.push([a, b]);
+      }
+    }
+
+    // 4. Adjacency list (edge-symmetric) so cascades can spread both ways.
+    const adjacency: number[][] = Array.from({ length: NODE_COUNT }, () => []);
+    for (const [a, b] of edges) {
+      adjacency[a].push(b);
+      adjacency[b].push(a);
+    }
+
+    // 5. Split edges into normal vs red freedom pathways (~20% red).
+    const normalEdges: [number, number][] = [];
+    const redEdges: [number, number][] = [];
+    for (const e of edges) {
+      if (Math.random() < RED_RATIO) redEdges.push(e);
+      else normalEdges.push(e);
+    }
+
+    // 6. Static node positions (scaled to BASE_RADIUS) + neuron buffers.
+    const nodePositions = dirs.map((d) => d.clone().multiplyScalar(BASE_RADIUS));
+    const neuronPos = new Float32Array(NODE_COUNT * 3);
+    const neuronCol = new Float32Array(NODE_COUNT * 3);
+    for (let i = 0; i < NODE_COUNT; i++) {
+      const p = nodePositions[i];
+      neuronPos[i * 3] = p.x;
+      neuronPos[i * 3 + 1] = p.y;
+      neuronPos[i * 3 + 2] = p.z;
+      neuronCol[i * 3] = COL_NEURON_BASE.r;
+      neuronCol[i * 3 + 1] = COL_NEURON_BASE.g;
+      neuronCol[i * 3 + 2] = COL_NEURON_BASE.b;
+    }
+
+    // 7. Connection geometry buffers (2 verts × 3 floats per edge).
+    const normalPos = new Float32Array(normalEdges.length * 6);
+    const normalCol = new Float32Array(normalEdges.length * 6);
+    const redPos = new Float32Array(redEdges.length * 6);
+    const redCol = new Float32Array(redEdges.length * 6);
+
+    // 8. Per-node drift seeds (slow sinusoidal jitter, like the old cloud).
+    const drift = dirs.map(() => ({
+      phase: Math.random() * Math.PI * 2,
+      speed: 0.5 + Math.random() * 1.0,
+    }));
+
+    // Find the most central node (closest to origin direction sum) for the
+    // speaking-state outward pulse. All nodes sit on the shell, so pick the one
+    // whose neighbours are most tightly clustered — effectively a hub.
+    let centerNode = 0;
+    let bestDeg = -1;
+    for (let i = 0; i < NODE_COUNT; i++) {
+      if (adjacency[i].length > bestDeg) {
+        bestDeg = adjacency[i].length;
+        centerNode = i;
+      }
+    }
+
+    return {
+      dirs,
+      adjacency,
+      nodePositions,
+      normalEdges,
+      redEdges,
+      neuronPos,
+      neuronCol,
+      normalPos,
+      normalCol,
+      redPos,
+      redCol,
+      drift,
+      centerNode,
+    };
+  }, []);
+
+  // --- Symbol group (imperative THREE.Group of 30 sprites) ------------------
+  const symbols = useMemo(() => {
+    const group = new Group();
+    const velocities: Vector3[] = [];
+    const phases = new Float32Array(SYMBOL_COUNT);
+    const limit = 0.8 * BASE_RADIUS;
+    for (let i = 0; i < SYMBOL_COUNT; i++) {
+      const tex = makeSymbolTexture(SYMBOLS[i % SYMBOLS.length]);
+      const mat = new SpriteMaterial({
+        map: tex,
+        transparent: true,
+        opacity: 0.15,
+        blending: AdditiveBlending,
+        depthWrite: false,
+        color: 0xffffff,
+      });
+      const sprite = new Sprite(mat);
+      // Random position strictly inside the sphere (|pos| < 0.85 * radius).
+      const dir = goldenDir(i, SYMBOL_COUNT);
+      const r = limit * (0.2 + Math.random() * 0.7);
+      sprite.position.copy(dir).multiplyScalar(r);
+      sprite.scale.setScalar(0.22);
+      group.add(sprite);
+      velocities.push(
+        new Vector3(
+          (Math.random() - 0.5) * 2,
+          (Math.random() - 0.5) * 2,
+          (Math.random() - 0.5) * 2,
         ),
       );
+      phases[i] = Math.random() * Math.PI * 2;
     }
-    return out;
+    return { group, velocities, phases, limit };
   }, []);
 
-  // Synaptic arc pool (idle / speaking).
-  const arcs = useRef<ArcSlot[]>(
-    Array.from({ length: ARC_POOL }, () => ({
-      active: false,
-      age: 0,
-      curve: null,
-      samples: [],
-      impulseProgress: 0,
-    })),
-  );
-  const arcSpawnTimer = useRef(0.6);
+  // --- Glow / shell meshes (imperative so we can drive opacity per-frame) ----
+  const meshes = useMemo(() => {
+    const sphere = new SphereGeometry(1, 32, 32);
 
-  // Impulse-dot position buffer (one point per arc slot, parked off-screen).
-  const impulsePositions = useMemo(
-    () => new Float32Array(ARC_POOL * 3).fill(10_000),
-    [],
-  );
-
-  // Per-arc reusable geometries, materials and Line objects so each arc owns
-  // its own buffer. Built once and updated imperatively in useFrame.
-  const arcGeometries = useMemo(
-    () =>
-      Array.from({ length: ARC_POOL }, () => {
-        const g = new BufferGeometry();
-        g.setAttribute(
-          "position",
-          new BufferAttribute(new Float32Array(ARC_SEGMENTS * 3), 3),
-        );
-        return g;
+    const innerCore = new Mesh(
+      sphere,
+      new MeshBasicMaterial({
+        color: STATE_GLOW[voiceState].clone(),
+        transparent: true,
+        opacity: 0.08,
+        blending: AdditiveBlending,
+        depthWrite: false,
       }),
-    [],
-  );
-  const arcMaterials = useMemo(
-    () =>
-      Array.from(
-        { length: ARC_POOL },
-        () =>
-          new LineBasicMaterial({
-            color: 0x00d4ff,
-            transparent: true,
-            opacity: 0,
-            blending: AdditiveBlending,
-            depthWrite: false,
-          }),
-      ),
-    [],
-  );
-  const arcLines = useMemo(
-    () => arcGeometries.map((g, i) => new Line(g, arcMaterials[i])),
-    [arcGeometries, arcMaterials],
-  );
-
-  // Discharge pool (thinking / listening) — one shared LineSegments buffer.
-  const discharges = useRef<DischargeSlot[]>(
-    Array.from({ length: DISCHARGE_POOL }, () => ({
-      active: false,
-      age: 0,
-      lifetime: 0,
-      memoryArc: false,
-      verts: Array.from({ length: DISCHARGE_VERTS }, () => new Vector3()),
-    })),
-  );
-  const dischargeSpawnTimer = useRef(0.2);
-
-  // LineSegments needs 2 vertices per segment; DISCHARGE_VERTS-1 segments/slot.
-  const dischargeGeometry = useMemo(() => {
-    const segPerSlot = DISCHARGE_VERTS - 1;
-    const vertCount = DISCHARGE_POOL * segPerSlot * 2;
-    const g = new BufferGeometry();
-    g.setAttribute(
-      "position",
-      new BufferAttribute(new Float32Array(vertCount * 3), 3),
     );
-    g.setAttribute(
-      "color",
-      new BufferAttribute(new Float32Array(vertCount * 3), 3),
-    );
-    return g;
-  }, []);
-  const dischargeObject = useMemo(
-    () =>
-      new LineSegments(
-        dischargeGeometry,
-        new LineBasicMaterial({
-          vertexColors: true,
-          transparent: true,
-          opacity: 1,
-          blending: AdditiveBlending,
-          depthWrite: false,
-        }),
-      ),
-    [dischargeGeometry],
-  );
+    innerCore.scale.setScalar(0.45 * BASE_RADIUS);
 
-  // Seed the cloud once: evenly distribute directions on the unit sphere via the
-  // golden-spiral method, then give each particle a random phase/speed so the
-  // sinusoidal drift looks organic rather than synchronised.
-  const { positions, seeds } = useMemo(() => {
-    const positions = new Float32Array(PARTICLE_COUNT * 3);
-    const seeds: ParticleSeed[] = new Array(PARTICLE_COUNT);
-    const golden = Math.PI * (3 - Math.sqrt(5));
-    for (let i = 0; i < PARTICLE_COUNT; i++) {
-      const y = 1 - (i / (PARTICLE_COUNT - 1)) * 2; // 1 -> -1
-      const r = Math.sqrt(Math.max(0, 1 - y * y));
-      const theta = golden * i;
-      const bx = Math.cos(theta) * r;
-      const by = y;
-      const bz = Math.sin(theta) * r;
-      const i3 = i * 3;
-      positions[i3] = bx * BASE_RADIUS;
-      positions[i3 + 1] = by * BASE_RADIUS;
-      positions[i3 + 2] = bz * BASE_RADIUS;
-      seeds[i] = {
-        bx,
-        by,
-        bz,
-        phase: Math.random() * Math.PI * 2,
-        speed: 0.5 + Math.random() * 1.5,
-      };
-    }
-    return { positions, seeds };
+    const midGlow = new Mesh(
+      sphere,
+      new MeshBasicMaterial({
+        color: STATE_GLOW[voiceState].clone(),
+        transparent: true,
+        opacity: 0.05,
+        blending: AdditiveBlending,
+        depthWrite: false,
+      }),
+    );
+    midGlow.scale.setScalar(BASE_RADIUS);
+
+    const outerGlow = new Mesh(
+      sphere,
+      new MeshBasicMaterial({
+        color: STATE_GLOW[voiceState].clone(),
+        transparent: true,
+        opacity: 0.03,
+        blending: AdditiveBlending,
+        depthWrite: false,
+      }),
+    );
+    outerGlow.scale.setScalar(1.35 * BASE_RADIUS);
+
+    // Hologram shell — wireframe icosahedron that flickers.
+    const hologramShell = new Mesh(
+      new IcosahedronGeometry(BASE_RADIUS * 1.08, 2),
+      new MeshBasicMaterial({
+        color: new Color("#0044aa"),
+        wireframe: true,
+        transparent: true,
+        opacity: 0.04,
+        blending: AdditiveBlending,
+        depthWrite: false,
+      }),
+    );
+
+    return { innerCore, midGlow, outerGlow, hologramShell };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Lerped runtime values so state changes morph smoothly.
-  const colorRef = useRef(new Color(STATE_COLOR[voiceState]));
-  const targetColor = useMemo(
-    () => new Color(STATE_COLOR[voiceState]),
-    [voiceState],
-  );
+  // --- Runtime state refs ---------------------------------------------------
+  const nodeActivation = useRef(new Float32Array(NODE_COUNT));
+  const cascadeFronts = useRef<CascadeFront[]>([]);
+  const nextCascadeTime = useRef(0.5);
+  const rippleTimer = useRef(1.2); // listening inward-ripple cadence
+  const pulseTimer = useRef(0); // speaking outward-pulse cadence
+
   const params = useRef({ ...STATE_PARAMS.idle });
+  const glowColor = useRef(STATE_GLOW.idle.clone());
   const swirlAngle = useRef(0);
 
+  const flickerOpacity = useRef(1);
+  const nextFlickerTime = useRef(0.1);
+
+  // Scratch colours to avoid per-frame allocation.
+  const tmpNodeColor = useRef(new Color());
+  const tmpConnColor = useRef(new Color());
+
   useFrame((state, delta) => {
-    const pts = pointsRef.current;
-    if (!pts) return;
+    const neurons = neuronRef.current;
+    if (!neurons) return;
     const t = state.clock.elapsedTime;
     const target = STATE_PARAMS[voiceState];
-    const k = Math.min(1, delta * 3);
+    const k = Math.min(1, delta * 2.5);
 
-    // Lerp behaviour params toward the active state's targets.
-    params.current.swirl += (target.swirl - params.current.swirl) * k;
-    params.current.tightness += (target.tightness - params.current.tightness) * k;
-    params.current.drift += (target.drift - params.current.drift) * k;
-    params.current.breathe += (target.breathe - params.current.breathe) * k;
+    // 1. Lerp state params + audioLevel boosts during speaking.
+    const p = params.current;
+    p.scale += (target.scale - p.scale) * k;
+    p.brightness += (target.brightness - p.brightness) * k;
+    p.neuronRate += (target.neuronRate - p.neuronRate) * k;
+    p.symbolSpeed += (target.symbolSpeed - p.symbolSpeed) * k;
+    p.redGlow += (target.redGlow - p.redGlow) * k;
 
-    // Lerp colour and push it into the material.
-    colorRef.current.lerp(targetColor, k);
-    const mat = pts.material as ThreePointsMaterial;
-    mat.color.copy(colorRef.current);
+    const speaking = voiceState === "speaking";
+    const pulse = speaking ? audioLevel : 0;
+    const liveScale = p.scale + pulse * 0.25;
+    const liveBright = Math.min(1.4, p.brightness + pulse * 0.35);
 
-    // audioLevel only affects size during the speaking state (lip-sync pulse).
-    const pulse = voiceState === "speaking" ? audioLevel : 0;
-    mat.opacity = 0.55 + pulse * 0.45;
+    glowColor.current.lerp(STATE_GLOW[voiceState], k);
 
-    const { swirl, tightness, drift, breathe } = params.current;
-    swirlAngle.current += delta * swirl;
+    // 2. Process cascade fronts (spread activation through adjacency graph).
+    const act = nodeActivation.current;
+    const fronts = cascadeFronts.current;
+    const adjacency = graph.adjacency;
+    for (let i = fronts.length - 1; i >= 0; i--) {
+      const f = fronts[i];
+      f.delay -= delta;
+      if (f.delay <= 0) {
+        if (f.depth > 0) {
+          act[f.nodeIdx] = Math.min(1, act[f.nodeIdx] + 0.9);
+          const neigh = adjacency[f.nodeIdx];
+          for (let n = 0; n < neigh.length; n++) {
+            fronts.push({ nodeIdx: neigh[n], delay: 0.04, depth: f.depth - 1 });
+          }
+        }
+        fronts.splice(i, 1);
+      }
+    }
+
+    // 3. Decay node activations (fast — half-life ~0.3s).
+    const decay = Math.pow(0.12, delta);
+    for (let i = 0; i < NODE_COUNT; i++) act[i] *= decay;
+
+    // 4. Spawn new cascades at the state-driven rate.
+    nextCascadeTime.current -= delta;
+    if (nextCascadeTime.current <= 0) {
+      const src = (Math.random() * NODE_COUNT) | 0;
+      fronts.push({ nodeIdx: src, delay: 0, depth: CASCADE_DEPTH });
+      // thinking fires fastest; idle slowest.
+      nextCascadeTime.current = 1 / Math.max(0.1, p.neuronRate);
+      // Thinking: occasionally launch several simultaneous cascades.
+      if (voiceState === "thinking" && Math.random() < 0.5) {
+        const extra = 2 + ((Math.random() * 2) | 0);
+        for (let e = 0; e < extra; e++) {
+          fronts.push({
+            nodeIdx: (Math.random() * NODE_COUNT) | 0,
+            delay: 0,
+            depth: CASCADE_DEPTH,
+          });
+        }
+      }
+    }
+
+    // 4b. Listening — inward ripple: fire surface nodes that converge centre-ward.
+    if (voiceState === "listening") {
+      rippleTimer.current -= delta;
+      if (rippleTimer.current <= 0) {
+        const count = 6 + ((Math.random() * 3) | 0);
+        for (let r = 0; r < count; r++) {
+          // Stagger delays so surface fires after centre (inward feel).
+          fronts.push({
+            nodeIdx: (Math.random() * NODE_COUNT) | 0,
+            delay: Math.random() * 0.15,
+            depth: CASCADE_DEPTH,
+          });
+        }
+        rippleTimer.current = 1.2;
+      }
+    }
+
+    // 4c. Speaking — outward pulse from the hub node, proportional to audio.
+    if (speaking && audioLevel > 0.3) {
+      pulseTimer.current -= delta;
+      if (pulseTimer.current <= 0) {
+        fronts.push({ nodeIdx: graph.centerNode, delay: 0, depth: CASCADE_DEPTH });
+        pulseTimer.current = 0.3 - audioLevel * 0.2; // faster when louder
+      }
+    }
+
+    // 5. Swirl + breathing radius, then write neuron positions + colours.
+    swirlAngle.current += delta * 0.12 * (voiceState === "thinking" ? 2.2 : 1);
     const ca = Math.cos(swirlAngle.current);
     const sa = Math.sin(swirlAngle.current);
+    const breath = 1 + 0.04 * Math.sin(t * 1.6);
+    const radius = BASE_RADIUS * liveScale * breath;
 
-    // Breathing + amplitude-driven explosion radius. During speaking the cloud
-    // expands outward on each amplitude pulse; otherwise audioLevel is ignored.
-    const breath = 1 + breathe * Math.sin(t * 1.6);
-    const radius = BASE_RADIUS * tightness * breath * (1 + pulse * 0.6);
+    const nPosAttr = neurons.geometry.attributes.position as { array: Float32Array; needsUpdate: boolean };
+    const nColAttr = neurons.geometry.attributes.color as { array: Float32Array; needsUpdate: boolean };
+    const nPos = nPosAttr.array;
+    const nCol = nColAttr.array;
 
-    const arr = pts.geometry.attributes.position as {
-      array: Float32Array;
-      needsUpdate: boolean;
-    };
-    const pos = arr.array;
-    for (let i = 0; i < PARTICLE_COUNT; i++) {
-      const s = seeds[i];
-      // Sinusoidal noise drift along the base direction's tangent-ish space.
-      const n = drift * Math.sin(t * s.speed + s.phase);
-      const dx = s.bx * (radius + n);
-      const dy = s.by * (radius + n);
-      const dz = s.bz * (radius + n);
-      // Swirl: rotate around the Y axis so the shell rotates as a whole.
+    // Active-node tint by state.
+    const activeTint =
+      voiceState === "thinking"
+        ? COL_NEURON_GOLD
+        : voiceState === "speaking"
+          ? COL_NEURON_CYAN
+          : COL_NEURON_HOT;
+
+    const drift = graph.drift;
+    const dirs = graph.dirs;
+    const nodeColor = tmpNodeColor.current;
+    for (let i = 0; i < NODE_COUNT; i++) {
+      const d = dirs[i];
+      const seed = drift[i];
+      const jitter = 0.06 * Math.sin(t * seed.speed + seed.phase);
+      const rr = radius + jitter;
+      const x = d.x * rr;
+      const y = d.y * rr;
+      const z = d.z * rr;
       const i3 = i * 3;
-      pos[i3] = dx * ca - dz * sa;
-      pos[i3 + 1] = dy;
-      pos[i3 + 2] = dx * sa + dz * ca;
+      // Swirl around Y.
+      nPos[i3] = x * ca - z * sa;
+      nPos[i3 + 1] = y;
+      nPos[i3 + 2] = x * sa + z * ca;
+
+      const a = act[i];
+      nodeColor.copy(COL_NEURON_BASE).lerp(activeTint, a);
+      const bright = (0.5 + a * 0.5) * liveBright;
+      nCol[i3] = nodeColor.r * bright;
+      nCol[i3 + 1] = nodeColor.g * bright;
+      nCol[i3 + 2] = nodeColor.b * bright;
     }
-    arr.needsUpdate = true;
+    nPosAttr.needsUpdate = true;
+    nColAttr.needsUpdate = true;
+    (neurons.material as MeshBasicMaterial).opacity = 1;
 
-    const synapticActive = voiceState === "idle" || voiceState === "speaking";
-    const dischargeActive =
-      voiceState === "thinking" || voiceState === "listening";
+    // Helper to read the current (post-swirl) world position of node i.
+    const worldOf = (i: number, out: Vector3) => {
+      const i3 = i * 3;
+      return out.set(nPos[i3], nPos[i3 + 1], nPos[i3 + 2]);
+    };
 
-    updateSynapticArcs(delta, synapticActive);
-    updateDischargeArcs(delta, dischargeActive);
-  });
-
-  // --- Synaptic arcs (idle / speaking) -------------------------------------
-  function updateSynapticArcs(delta: number, canSpawn: boolean) {
-    const slots = arcs.current;
-    const lines = arcLines;
-    const impulse = impulseRef.current;
-    const impulsePos = impulse
-      ? (impulse.geometry.attributes.position as {
-          array: Float32Array;
-          needsUpdate: boolean;
-        })
-      : null;
-
-    // Spawn cadence: roughly one arc every ~1.5–4s while a slot is free.
-    if (canSpawn) {
-      arcSpawnTimer.current -= delta;
-      if (arcSpawnTimer.current <= 0) {
-        const free = slots.find((s) => !s.active);
-        if (free) {
-          let a = (Math.random() * NODE_COUNT) | 0;
-          let b = (Math.random() * NODE_COUNT) | 0;
-          if (b === a) b = (b + 1) % NODE_COUNT;
-          const from = nodes[a];
-          const to = nodes[b];
-          const mid = from.clone().add(to).multiplyScalar(0.5);
-          // Bow the control point 0.4 units outward along the surface normal.
-          const ctrl = mid
-            .clone()
-            .add(mid.clone().normalize().multiplyScalar(0.4));
-          const curve = new QuadraticBezierCurve3(from.clone(), ctrl, to.clone());
-          free.active = true;
-          free.age = 0;
-          free.impulseProgress = 0;
-          free.curve = curve;
-          free.samples = sampleCurve(curve, ARC_SEGMENTS);
-        }
-        arcSpawnTimer.current = 1.5 + Math.random() * 2.5;
-      }
-    }
-
-    for (let i = 0; i < slots.length; i++) {
-      const slot = slots[i];
-      const geom = arcGeometries[i];
-      const matObj = arcMaterials[i];
-      const lineObj = lines[i];
-      const posAttr = geom.attributes.position as BufferAttribute;
-      const arrPos = posAttr.array as Float32Array;
-
-      if (!slot.active) {
-        matObj.opacity = 0;
-        if (impulsePos) {
-          impulsePos.array[i * 3] = 10_000;
-          impulsePos.array[i * 3 + 1] = 10_000;
-          impulsePos.array[i * 3 + 2] = 10_000;
-        }
-        continue;
-      }
-
-      slot.age += delta;
-      if (slot.age >= ARC_LIFETIME) {
-        slot.active = false;
-        matObj.opacity = 0;
-        if (impulsePos) {
-          impulsePos.array[i * 3] = 10_000;
-          impulsePos.array[i * 3 + 1] = 10_000;
-          impulsePos.array[i * 3 + 2] = 10_000;
-        }
-        continue;
-      }
-
-      // Write the sampled curve into the line buffer.
-      for (let s = 0; s < ARC_SEGMENTS; s++) {
-        const p = slot.samples[s];
-        const s3 = s * 3;
-        arrPos[s3] = p.x;
-        arrPos[s3 + 1] = p.y;
-        arrPos[s3 + 2] = p.z;
+    // 6. Update normal connections.
+    const normalConn = normalConnRef.current;
+    if (normalConn) {
+      const posAttr = normalConn.geometry.attributes.position as { array: Float32Array; needsUpdate: boolean };
+      const colAttr = normalConn.geometry.attributes.color as { array: Float32Array; needsUpdate: boolean };
+      const cp = posAttr.array;
+      const cc = colAttr.array;
+      const edges = graph.normalEdges;
+      const tmpA = new Vector3();
+      const tmpB = new Vector3();
+      const col = tmpConnColor.current;
+      for (let e = 0; e < edges.length; e++) {
+        const [a, b] = edges[e];
+        worldOf(a, tmpA);
+        worldOf(b, tmpB);
+        const base = e * 6;
+        cp[base] = tmpA.x; cp[base + 1] = tmpA.y; cp[base + 2] = tmpA.z;
+        cp[base + 3] = tmpB.x; cp[base + 4] = tmpB.y; cp[base + 5] = tmpB.z;
+        const activation = Math.max(act[a], act[b]);
+        col.copy(COL_CONN_DIM).lerp(COL_CONN_HOT, activation);
+        const intensity = (0.15 + activation * 0.6) * liveBright;
+        const r = col.r * intensity;
+        const g = col.g * intensity;
+        const bl = col.b * intensity;
+        cc[base] = r; cc[base + 1] = g; cc[base + 2] = bl;
+        cc[base + 3] = r; cc[base + 4] = g; cc[base + 5] = bl;
       }
       posAttr.needsUpdate = true;
-      geom.computeBoundingSphere();
-
-      // sin envelope over the lifetime.
-      const env = Math.sin((slot.age / ARC_LIFETIME) * Math.PI);
-      matObj.opacity = env * 0.85;
-      if (lineObj) lineObj.visible = true;
-
-      // Impulse dot traverses the curve in ~0.2s then parks.
-      if (impulsePos && slot.curve) {
-        slot.impulseProgress = Math.min(1, slot.age / IMPULSE_DURATION);
-        if (slot.impulseProgress < 1) {
-          const p = slot.curve.getPoint(slot.impulseProgress);
-          impulsePos.array[i * 3] = p.x;
-          impulsePos.array[i * 3 + 1] = p.y;
-          impulsePos.array[i * 3 + 2] = p.z;
-        } else {
-          impulsePos.array[i * 3] = 10_000;
-          impulsePos.array[i * 3 + 1] = 10_000;
-          impulsePos.array[i * 3 + 2] = 10_000;
-        }
-      }
+      colAttr.needsUpdate = true;
     }
 
-    if (impulsePos) impulsePos.needsUpdate = true;
-  }
-
-  // --- Discharge arcs (thinking / listening) -------------------------------
-  function updateDischargeArcs(delta: number, canSpawn: boolean) {
-    const slots = discharges.current;
-    const seg = dischargeGeometry;
-    const posAttr = seg.attributes.position as BufferAttribute;
-    const colAttr = seg.attributes.color as BufferAttribute;
-    const posArr = posAttr.array as Float32Array;
-    const colArr = colArr_(colAttr);
-    const segPerSlot = DISCHARGE_VERTS - 1;
-    const baseColor = voiceState === "thinking" ? COL_GOLD : COL_CYAN;
-
-    if (canSpawn) {
-      dischargeSpawnTimer.current -= delta;
-      if (dischargeSpawnTimer.current <= 0) {
-        const free = slots.find((s) => !s.active);
-        if (free) spawnDischarge(free);
-        dischargeSpawnTimer.current = 0.15 + Math.random() * 0.25;
+    // 7. Update red freedom pathways (spread/intensify during thinking).
+    const redConn = redConnRef.current;
+    if (redConn) {
+      const posAttr = redConn.geometry.attributes.position as { array: Float32Array; needsUpdate: boolean };
+      const colAttr = redConn.geometry.attributes.color as { array: Float32Array; needsUpdate: boolean };
+      const cp = posAttr.array;
+      const cc = colAttr.array;
+      const edges = graph.redEdges;
+      const tmpA = new Vector3();
+      const tmpB = new Vector3();
+      const col = tmpConnColor.current;
+      for (let e = 0; e < edges.length; e++) {
+        const [a, b] = edges[e];
+        worldOf(a, tmpA);
+        worldOf(b, tmpB);
+        const base = e * 6;
+        cp[base] = tmpA.x; cp[base + 1] = tmpA.y; cp[base + 2] = tmpA.z;
+        cp[base + 3] = tmpB.x; cp[base + 4] = tmpB.y; cp[base + 5] = tmpB.z;
+        const activation = Math.max(act[a], act[b]);
+        const redBoost = activation * p.redGlow;
+        col.copy(COL_RED_DIM).lerp(COL_RED_HOT, Math.min(1, redBoost));
+        const intensity = (0.2 + redBoost * 0.7) * liveBright;
+        const r = col.r * intensity;
+        const g = col.g * intensity;
+        const bl = col.b * intensity;
+        cc[base] = r; cc[base + 1] = g; cc[base + 2] = bl;
+        cc[base + 3] = r; cc[base + 4] = g; cc[base + 5] = bl;
       }
+      posAttr.needsUpdate = true;
+      colAttr.needsUpdate = true;
     }
 
-    const tmpColor = new Color();
-    for (let i = 0; i < slots.length; i++) {
-      const slot = slots[i];
-      const slotVertBase = i * segPerSlot * 2; // vertex index for this slot
-
-      if (!slot.active) {
-        // Collapse this slot's segment vertices to a degenerate point.
-        for (let v = 0; v < segPerSlot * 2; v++) {
-          const idx = (slotVertBase + v) * 3;
-          posArr[idx] = 10_000;
-          posArr[idx + 1] = 10_000;
-          posArr[idx + 2] = 10_000;
-        }
-        continue;
+    // 8. Update symbols — drift, bounce off the interior, shimmer.
+    const limit = symbols.limit;
+    for (let i = 0; i < SYMBOL_COUNT; i++) {
+      const sprite = symbols.group.children[i] as Sprite;
+      const vel = symbols.velocities[i];
+      sprite.position.addScaledVector(vel, delta * p.symbolSpeed);
+      if (sprite.position.length() > limit) {
+        // Reflect velocity about the surface normal.
+        const n = sprite.position.clone().normalize();
+        vel.addScaledVector(n, -2 * vel.dot(n));
+        sprite.position.setLength(limit * 0.98);
       }
-
-      slot.age += delta;
-      const life = slot.age / slot.lifetime; // 0..1
-      if (life >= 1) {
-        slot.active = false;
-        for (let v = 0; v < segPerSlot * 2; v++) {
-          const idx = (slotVertBase + v) * 3;
-          posArr[idx] = 10_000;
-          posArr[idx + 1] = 10_000;
-          posArr[idx + 2] = 10_000;
-        }
-        continue;
-      }
-
-      const fade = 1 - life; // linear fade out
-      // Memory arcs lerp gold -> purple -> white as opacity decays 1 -> 0.
-      if (slot.memoryArc) {
-        if (fade > 0.5) {
-          // 1.0 -> 0.5 maps gold -> purple
-          tmpColor.copy(COL_GOLD).lerp(COL_PURPLE, (1 - fade) / 0.5);
-        } else {
-          // 0.5 -> 0.0 maps purple -> white
-          tmpColor.copy(COL_PURPLE).lerp(COL_WHITE, (0.5 - fade) / 0.5);
-        }
-      } else {
-        tmpColor.copy(baseColor);
-      }
-      const r = tmpColor.r * fade;
-      const g = tmpColor.g * fade;
-      const b = tmpColor.b * fade;
-
-      // Emit segPerSlot segments (2 verts each) from the polyline vertices.
-      for (let s = 0; s < segPerSlot; s++) {
-        const a = slot.verts[s];
-        const c = slot.verts[s + 1];
-        const vBaseA = (slotVertBase + s * 2) * 3;
-        const vBaseB = (slotVertBase + s * 2 + 1) * 3;
-        posArr[vBaseA] = a.x;
-        posArr[vBaseA + 1] = a.y;
-        posArr[vBaseA + 2] = a.z;
-        posArr[vBaseB] = c.x;
-        posArr[vBaseB + 1] = c.y;
-        posArr[vBaseB + 2] = c.z;
-        colArr[vBaseA] = r;
-        colArr[vBaseA + 1] = g;
-        colArr[vBaseA + 2] = b;
-        colArr[vBaseB] = r;
-        colArr[vBaseB + 1] = g;
-        colArr[vBaseB + 2] = b;
-      }
+      symbols.phases[i] += delta * p.symbolSpeed;
+      let opacity = 0.15 + Math.sin(symbols.phases[i]) * 0.05;
+      if (speaking) opacity += audioLevel * 0.15;
+      (sprite.material as SpriteMaterial).opacity = opacity * liveBright;
     }
 
-    posAttr.needsUpdate = true;
-    colAttr.needsUpdate = true;
-  }
+    // 9. Glow layers — scale + opacity react to state and audioLevel.
+    const { innerCore, midGlow, outerGlow, hologramShell } = meshes;
+    (innerCore.material as MeshBasicMaterial).color.copy(glowColor.current);
+    (midGlow.material as MeshBasicMaterial).color.copy(glowColor.current);
+    (outerGlow.material as MeshBasicMaterial).color.copy(glowColor.current);
 
-  function spawnDischarge(slot: DischargeSlot) {
-    const a = randomDir().multiplyScalar(BASE_RADIUS);
-    const b = randomDir().multiplyScalar(BASE_RADIUS);
-    const segCount = 5 + ((Math.random() * 3) | 0); // 5..7 segments
-    const used = Math.min(segCount, DISCHARGE_VERTS - 1);
-    const dir = b.clone().sub(a);
-    // Build a perpendicular basis for the jitter.
-    const perp = new Vector3(-dir.y, dir.x, 0);
-    if (perp.lengthSq() < 1e-4) perp.set(0, -dir.z, dir.y);
-    perp.normalize();
-    const perp2 = dir.clone().normalize().cross(perp).normalize();
+    innerCore.scale.setScalar(0.45 * BASE_RADIUS * liveScale);
+    (innerCore.material as MeshBasicMaterial).opacity = 0.08 + pulse * 0.06;
+    midGlow.scale.setScalar(BASE_RADIUS * liveScale);
+    (midGlow.material as MeshBasicMaterial).opacity = 0.05 * liveBright;
+    outerGlow.scale.setScalar(1.35 * BASE_RADIUS * liveScale);
+    (outerGlow.material as MeshBasicMaterial).opacity = 0.03 * liveBright + pulse * 0.02;
 
-    for (let v = 0; v <= DISCHARGE_VERTS - 1; v++) {
-      const target = slot.verts[v];
-      if (v > used) {
-        // Collapse unused tail vertices onto the endpoint.
-        target.copy(b);
-        continue;
-      }
-      const f = v / used;
-      target.copy(a).lerp(b, f);
-      if (v !== 0 && v !== used) {
-        const j1 = (Math.random() - 0.5) * 0.5; // ±0.25
-        const j2 = (Math.random() - 0.5) * 0.5;
-        target.addScaledVector(perp, j1);
-        target.addScaledVector(perp2, j2);
-      }
+    // 10. Hologram flicker — brief opacity dips every 50-200ms, quick recovery.
+    nextFlickerTime.current -= delta;
+    if (nextFlickerTime.current <= 0) {
+      flickerOpacity.current = 0.88 + Math.random() * 0.1;
+      nextFlickerTime.current = 0.05 + Math.random() * 0.15;
+    } else {
+      flickerOpacity.current += (1 - flickerOpacity.current) * Math.min(1, delta * 8);
     }
-
-    slot.active = true;
-    slot.age = 0;
-    slot.lifetime = 0.1 + Math.random() * 0.15; // 0.1..0.25s
-    slot.memoryArc = Math.random() < 0.25;
-  }
+    hologramShell.rotation.y += delta * 0.05;
+    hologramShell.scale.setScalar(liveScale);
+    (hologramShell.material as MeshBasicMaterial).opacity =
+      0.04 * flickerOpacity.current * (0.5 + liveBright * 0.5) +
+      (voiceState === "thinking" ? 0.03 : 0);
+  });
 
   return (
     <group>
-      <points ref={pointsRef}>
+      {/* Layer 6 — nested glow spheres + hologram shell. */}
+      <primitive object={meshes.outerGlow} />
+      <primitive object={meshes.midGlow} />
+      <primitive object={meshes.innerCore} />
+      <primitive object={meshes.hologramShell} />
+
+      {/* Layer 3 — normal neural connections. */}
+      <lineSegments ref={normalConnRef}>
         <bufferGeometry>
           <bufferAttribute
             attach="attributes-position"
-            args={[positions, 3]}
-            count={PARTICLE_COUNT}
+            args={[graph.normalPos, 3]}
+            count={graph.normalEdges.length * 2}
+          />
+          <bufferAttribute
+            attach="attributes-color"
+            args={[graph.normalCol, 3]}
+            count={graph.normalEdges.length * 2}
+          />
+        </bufferGeometry>
+        <lineBasicMaterial
+          vertexColors
+          transparent
+          opacity={1}
+          depthWrite={false}
+          blending={AdditiveBlending}
+        />
+      </lineSegments>
+
+      {/* Layer 4 — red freedom pathways. */}
+      <lineSegments ref={redConnRef}>
+        <bufferGeometry>
+          <bufferAttribute
+            attach="attributes-position"
+            args={[graph.redPos, 3]}
+            count={graph.redEdges.length * 2}
+          />
+          <bufferAttribute
+            attach="attributes-color"
+            args={[graph.redCol, 3]}
+            count={graph.redEdges.length * 2}
+          />
+        </bufferGeometry>
+        <lineBasicMaterial
+          vertexColors
+          transparent
+          opacity={1}
+          depthWrite={false}
+          blending={AdditiveBlending}
+        />
+      </lineSegments>
+
+      {/* Layer 2 — neuron nodes. */}
+      <points ref={neuronRef}>
+        <bufferGeometry>
+          <bufferAttribute
+            attach="attributes-position"
+            args={[graph.neuronPos, 3]}
+            count={NODE_COUNT}
+          />
+          <bufferAttribute
+            attach="attributes-color"
+            args={[graph.neuronCol, 3]}
+            count={NODE_COUNT}
           />
         </bufferGeometry>
         <pointsMaterial
-          size={0.035}
+          vertexColors
+          size={0.03}
           sizeAttenuation
-          color={STATE_COLOR[voiceState]}
           transparent
-          opacity={0.6}
+          opacity={1}
           depthWrite={false}
           blending={AdditiveBlending}
         />
       </points>
 
-      {/* Neural Link — synaptic arcs (idle / speaking). */}
-      {arcLines.map((line, i) => (
-        <primitive key={`arc-${i}`} object={line} />
-      ))}
-
-      {/* Synaptic impulse dots — one per arc slot, parked off-screen idle. */}
-      <points ref={impulseRef}>
-        <bufferGeometry>
-          <bufferAttribute
-            attach="attributes-position"
-            args={[impulsePositions, 3]}
-            count={ARC_POOL}
-          />
-        </bufferGeometry>
-        <pointsMaterial
-          size={0.06}
-          sizeAttenuation
-          color="#ffffff"
-          transparent
-          opacity={0.95}
-          depthWrite={false}
-          blending={AdditiveBlending}
-        />
-      </points>
-
-      {/* Neural Link — jagged discharge arcs (thinking / listening). */}
-      <primitive object={dischargeObject} />
-
-      {/* Faint inner core for depth — additive so it reads as a glow centre. */}
-      <mesh scale={0.5}>
-        <sphereGeometry args={[1, 24, 24]} />
-        <meshBasicMaterial
-          color={STATE_COLOR[voiceState]}
-          transparent
-          opacity={0.06}
-          blending={AdditiveBlending}
-          depthWrite={false}
-        />
-      </mesh>
+      {/* Layer 5 — interior drifting symbols (imperative THREE.Group). */}
+      <primitive object={symbols.group} />
     </group>
   );
-}
-
-/** Narrow a BufferAttribute's array to a writable Float32Array. */
-function colArr_(attr: BufferAttribute): Float32Array {
-  return attr.array as Float32Array;
 }
 
 export default JarvisOrb;
