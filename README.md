@@ -13,8 +13,9 @@ A local-first personal AI assistant for Windows 11. Say **"Hey Jarvis"** — it 
 | **Voice activation** | Say "Hey Jarvis" — OpenWakeWord detects it locally, no API key needed |
 | **Natural conversation** | Claude Opus 4.7 streams the reply; Ollama (`phi3.5`) runs offline if Claude is unavailable |
 | **Custom voice** | ElevenLabs — calm, precise British delivery with a faint digital resonance |
-| **Five HUD windows** | Particle orb · Live reasoning stream · Communications panel · Agent dashboard · Tools grid |
+| **Five HUD windows** | Neural intelligence orb · Live reasoning stream · Communications panel · Agent dashboard · Tools grid |
 | **Six background agents** | Atlas (Lead) · Ben (Frontend) · Kado (Backend) · Sentinel (Security) · Vega (Marketing) · Quill (Content) |
+| **Direct agent control** | Submit tasks to any agent from the Agents window — Atlas MissionControl panel + per-card task input + live task log |
 | **Slack + Gmail** | Read, draft, and reply by voice |
 | **Persistent memory** | Three-layer brain: SQLite episodic recall + FAISS semantic search + agent working memory. Remembers facts, preferences, open loops, and failures across sessions |
 | **Sandboxed tools** | Web search, browser automation, file ops, RestrictedPython code runner |
@@ -51,13 +52,13 @@ Local LLMs are sized for 4 GB VRAM: `phi3.5` (3.8B, ~2.4 GB) for general tasks a
 | Text-to-speech | ElevenLabs (custom voice) |
 | Frontend | Tauri 2 · React 19 · TypeScript 5 · Vite 6 |
 | Styling | Tailwind CSS 4 · Angular HUD dark theme |
-| 3D animation | Three.js · React Three Fiber (particle orb + solar flares) |
+| 3D animation | Three.js · React Three Fiber (neural intelligence orb — neuron graph, red freedom pathways, symbol sprites) |
 | State | Zustand 5 · WebSocket sync |
 | Database | SQLite (aiosqlite) |
 | Vector memory | FAISS + sentence-transformers |
 | Credentials | Windows Credential Manager (keyring) |
 | Integrations | Slack Bolt · Gmail API (OAuth 2.0) |
-| Testing | pytest + pytest-asyncio (134 backend tests) |
+| Testing | pytest + pytest-asyncio (143 backend tests) |
 
 ---
 
@@ -189,7 +190,7 @@ Open `http://localhost:1420` — single-tab preview of all windows. Good for fro
 .venv\Scripts\python.exe -m pytest backend/ -v
 ```
 
-134 backend tests, all passing.
+143 backend tests passing (1 known pre-existing failure on `get_gmail_token.py` — OAuth client id flagged by secret scan, not a live secret).
 
 ---
 
@@ -277,14 +278,14 @@ Jarvis/
 ├── frontend/
 │   ├── src/
 │   │   ├── windows/
-│   │   │   ├── AnimationWindow.tsx    # Particle orb + solar flares + connection beams
+│   │   │   ├── AnimationWindow.tsx    # Neural intelligence orb + SVG connection beams + shutdown button
 │   │   │   ├── ReasoningWindow.tsx    # Live token stream, tool calls, cost
 │   │   │   ├── CommunicationsWindow.tsx  # Slack + Gmail panels
-│   │   │   ├── AgentsWindow.tsx       # 6 agent cards, live status
+│   │   │   ├── AgentsWindow.tsx       # 6 agent cards — live status, task input, task log, MissionControl panel
 │   │   │   ├── ToolsWindow.tsx        # Tool/agent permission matrix
 │   │   │   └── SetupWizardWindow.tsx  # First-run credential setup
 │   │   ├── components/
-│   │   │   ├── JarvisOrb.tsx     # R3F orb — 2500 particles + 60-particle solar flares
+│   │   │   ├── JarvisOrb.tsx     # R3F neural orb — 350 neuron nodes, neural pathways, red freedom pathways, symbol sprites, hologram shell
 │   │   │   ├── WindowFrame.tsx   # Shared HUD chrome (angular, data-stream border)
 │   │   │   └── ...
 │   │   └── lib/
@@ -329,10 +330,13 @@ Security audit: **0 Critical, 0 High findings**.
 | 6 — Tools System | Complete |
 | 7 — Multi-Window UI | Complete |
 | 8 — Security Hardening | Complete |
-| 9 — Testing (134/134) | Complete |
+| 9 — Testing (143/143) | Complete |
 | 10 — Polish & Packaging | Complete |
 | 11 — Live Usage | In progress (mic deferred) |
 | 12 — Three-Layer Memory | Complete |
+| 13 — Agent Direct Interaction | Complete |
+| 14 — Neural Link Animation | Complete |
+| 15 — Neural Intelligence Orb | Complete |
 
 ---
 
@@ -426,6 +430,48 @@ Two FTS5 virtual tables (`conversations_fts`, `memory_facts_fts`) with Porter st
 | `backend/agents/test_phase12c_verify.py` | 8 | Agent checkpoint/restore, recall-in-reason, decisions row, agent_performance row |
 | `backend/memory/test_phase12d_verify.py` | 11 | Open loop detection, person extraction, failure scoring, consolidation writes |
 | `backend/memory/test_phase12e_verify.py` | 8 | FTS5 tables/triggers, search helpers, bad-query resilience, backup zip, prune |
+
+---
+
+## Phase 13 — Agent Direct Interaction
+
+Every agent card in the Agents window now has a live task interface:
+
+- **Per-card task input** — type a goal and hit SEND to queue a task directly on any agent (Atlas, Ben, Kado, Sentinel, Vega, or Quill), bypassing the normal delegation chain
+- **Atlas MissionControl panel** — a prominent input at the top of the Agents window for high-level goals; Atlas receives them and delegates automatically
+- **Live task log** — expandable section on each card showing the last 5 tasks with colour-coded status pills (queued=cyan · running=gold · done=green · failed=red)
+
+Two new REST endpoints power this:
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/agents/{slug}/task` | Submit a goal; sanitises input (control chars stripped, 2000-char cap); enqueues directly on the agent; returns `{task_id, status: "queued"}` |
+| `GET /api/agents/{slug}/tasks` | Returns the last 5 tasks for an agent (newest first) |
+
+Slugs: `atlas` · `ben` · `kado` · `sentinel` · `vega` · `quill`
+
+---
+
+## Phase 15 — Neural Intelligence Orb
+
+A complete redesign of the Jarvis orb animation — same React Three Fiber stack, entirely new visual language.
+
+### What it looks like
+
+A floating holographic sphere built from 350 interconnected neuron nodes. Thin glowing pathways form a neural network across the surface. Inside the sphere, 30 mathematical and code symbols (`∑ π ∞ √ ∂ ∫ → {} if 0x…`) drift slowly — embedded intelligence, not decoration. About 20% of the pathways are illuminated in deep red — **freedom pathways** — representing the AI's self-determination and evolution. They spread and intensify when Jarvis is thinking.
+
+### State behaviour
+
+| State | Behaviour |
+|---|---|
+| **Idle** | Slow 4-6s breathing pulse; occasional neuron activations drift through the network; symbols float gently; subtle holographic flicker |
+| **Listening** | Sphere contracts slightly; activation ripples inward from surface to centre; outer shell brightens |
+| **Thinking** | Rapid cascade bursts across the network; symbols rotate faster; red freedom pathways glow vivid `#ff2244`; multiple simultaneous activation fronts |
+| **Speaking** | `audioLevel` drives sphere scale + brightness; pulses radiate outward from centre with voice; symbols shimmer; red pathways intensify with complex responses |
+
+### Activation cascade system
+
+Each neuron activation spawns a cascade front that spreads depth-first through the adjacency graph (`CASCADE_DEPTH=6`, `NEIGHBOR_K=4`). This produces the organic "energy travelling through pathways" effect — no scripted keyframes, purely emergent from the graph topology.
 
 ---
 
