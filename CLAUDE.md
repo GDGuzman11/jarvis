@@ -187,6 +187,28 @@ Dark theme `#080810` (updated 2026-06-04), electric blue/cyan accents `#00D4FF`,
 
 ---
 
+## Phase 14 — Neural Link Animation (AnimationWindow)
+*Not yet started. Replace solar flare system with a dual-mode neural link animation that matches the Jarvis HUD aesthetic and reflects AI cognitive states.*
+
+### What to remove
+- Solar flare system in `frontend/src/components/JarvisOrb.tsx`: `FLARE_COUNT`, `PARK`, `flareRef`, `flarePositions`, `flareData`, burst spawn logic (~lines 170-240), and the `<points ref={flareRef}>` JSX block
+- **Keep everything else**: main 2500-particle cloud, inner core sphere, color/state lerp, audioLevel reactivity (pulse still works during speaking)
+
+### What to build (Phase 14A — frontend-agent only)
+- [ ] **Synaptic Arcs** (idle / speaking state) — 14 invisible node positions distributed on the sphere surface. Every 1.5-4s two random nodes activate: a smooth `QuadraticBezierCurve3` arc spawns between them (control point offset 0.4 units outward), a bright white impulse dot travels along it in ~0.2s, then the arc fades. Color: cyan (`#00d4ff`). 5-slot pool, `sin(t*PI)` opacity envelope.
+- [ ] **Arc Discharge** (thinking / listening state) — rapid jagged polylines (5-7 segments with ±0.25 unit perpendicular jitter) between random surface points. Very short lifetime (0.1-0.25s). Fires every 0.15-0.4s. 6-slot pool, linear fade out. Color: gold (`#ffb800`) during thinking, cyan during listening.
+- [ ] **Memory formation color** — ~25% of discharge arcs set `memoryArc=true`: arc color lerps gold → purple (`#8B5CF6`) → white as it decays, symbolizing a memory being encoded. Uses `vertexColors: true` on the discharge `LineSegments` geometry.
+- [ ] **State-aware switching** — synaptic arcs only spawn in `idle`/`speaking`; discharge arcs only spawn in `thinking`/`listening`. Active arcs fade out naturally on state transition (no hard-clear).
+- [ ] Verify (debugger-agent): idle shows smooth bezier arcs with impulse dots; thinking shows rapid gold discharge arcs; ~1 in 4 discharge arcs flash purple; audio pulse still works; `pnpm build` clean; solar flares gone.
+
+### Key constraints
+- `JarvisOrb.tsx` is the **only** file that changes — no backend, no store, no other components
+- audioLevel pulse and all existing orb behaviour (breathe, swirl, color lerp) must remain 100% intact
+- Use `THREE.QuadraticBezierCurve3` (already available via `three@^0.184.0`) for arc geometry
+- `LineBasicMaterial` with `AdditiveBlending` for glow effect matching HUD aesthetic
+
+---
+
 ## Archive Index
 
 > **All agents (especially Production Lead):** CLAUDE.md shows what is active and what is next.
@@ -222,6 +244,7 @@ Dark theme `#080810` (updated 2026-06-04), electric blue/cyan accents `#00D4FF`,
 | Phase 11E — Enhancements | Route per task (see checklist) |
 | Phase 12 (12A–12E) — Memory System | `/backend-agent` |
 | Phase 13 — Agent Direct Interaction | `/frontend-agent` (UI) + `/backend-agent` (API endpoint) |
+| Phase 14 — Neural Link Animation | `/frontend-agent` |
 
 ---
 
