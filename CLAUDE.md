@@ -211,6 +211,40 @@ Dark theme `#080810` (updated 2026-06-04), electric blue/cyan accents `#00D4FF`,
 
 ---
 
+## Phase 15 — Rive Animation Integration (AnimationWindow)
+*Not yet started. Swap the Three.js orb renderer for a Rive animation — same voiceState logic, same audioLevel pulse, better visual quality.*
+
+### What stays exactly the same
+- All 4 voice states (idle / listening / thinking / speaking) and their color behavior
+- The audioLevel pulse when Jarvis speaks (orb brightness/scale reacts to audio)
+- SVG connection beams, shutdown button, drag handle in AnimationWindow
+- Backend, store, WebSocket — no changes anywhere outside the animation component
+
+### Prerequisites (user action — design in Rive)
+1. Install **Rive** desktop app for Windows: **rive.app**
+2. Design the Jarvis orb animation with any visual style you want
+3. Add a state machine with **this exact naming** so the React wrapper drives it:
+
+| Item | Type | Name | Values |
+|---|---|---|---|
+| State machine | — | `VoiceStateMachine` | — |
+| State input | Number | `StateIndex` | 0=idle · 1=listening · 2=thinking · 3=speaking |
+| Audio input | Number | `AudioLevel` | 0.0–1.0 (drives pulse / brightness during speaking) |
+
+4. Export → **For Web** → save `.riv` file to `frontend/public/jarvis-orb.riv`
+
+### What to build (Phase 15A — frontend-agent only, after .riv file is ready)
+- [ ] `pnpm add @rive-app/react-canvas`
+- [ ] Create `frontend/src/components/JarvisOrbRive.tsx` — `useRive` + `useStateMachineInput`; reads `voiceState` + `audioLevel` from store; drives `StateIndex` + `AudioLevel` each frame
+- [ ] Update `frontend/src/windows/AnimationWindow.tsx` — swap `<JarvisOrb>` for `<JarvisOrbRive>`; everything else in the window unchanged
+- [ ] Keep `JarvisOrb.tsx` (Three.js fallback) — not deleted until Phase 15 is verified
+- [ ] Verify (debugger-agent): animation renders in Tauri; state changes drive Rive correctly; audio pulse works during speaking; `pnpm build` clean
+
+### Agent Routing Guide addition
+| Phase 15 — Rive Animation | `/frontend-agent` |
+
+---
+
 ## Archive Index
 
 > **All agents (especially Production Lead):** CLAUDE.md shows what is active and what is next.
@@ -247,6 +281,7 @@ Dark theme `#080810` (updated 2026-06-04), electric blue/cyan accents `#00D4FF`,
 | Phase 12 (12A–12E) — Memory System | `/backend-agent` |
 | Phase 13 — Agent Direct Interaction | `/frontend-agent` (UI) + `/backend-agent` (API endpoint) |
 | Phase 14 — Neural Link Animation | `/frontend-agent` |
+| Phase 15 — Rive Animation Integration | `/frontend-agent` |
 
 ---
 
