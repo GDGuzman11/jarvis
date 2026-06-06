@@ -211,37 +211,40 @@ Dark theme `#080810` (updated 2026-06-04), electric blue/cyan accents `#00D4FF`,
 
 ---
 
-## Phase 15 — Rive Animation Integration (AnimationWindow)
-*Not yet started. Swap the Three.js orb renderer for a Rive animation — same voiceState logic, same audioLevel pulse, better visual quality.*
+## Phase 15 — Neural Intelligence Orb (AnimationWindow)
+*Not yet started. Full rewrite of `frontend/src/components/JarvisOrb.tsx` — same voiceState + audioLevel interface, entirely new visual design.*
+
+### Design Intent
+A floating holographic sphere of interconnected neuron nodes. Thin glowing pathways form a neural network across the surface. Mathematical and code symbols drift inside. ~20% of pathways are red "freedom pathways" representing the AI's self-determination — they spread and intensify during thinking. Ethereal white/blue holographic energy. Alive, intelligent, self-aware.
 
 ### What stays exactly the same
-- All 4 voice states (idle / listening / thinking / speaking) and their color behavior
-- The audioLevel pulse when Jarvis speaks (orb brightness/scale reacts to audio)
-- SVG connection beams, shutdown button, drag handle in AnimationWindow
-- Backend, store, WebSocket — no changes anywhere outside the animation component
+- Component signature: `JarvisOrb({ voiceState, audioLevel })` — identical
+- `BASE_RADIUS = 1.2` — same sphere size
+- audioLevel pulse during speaking — orb expands/contracts with voice amplitude
+- SVG connection beams, shutdown button, drag handle in `AnimationWindow.tsx` — untouched
+- Backend, store, WebSocket, all other files — no changes
 
-### Prerequisites (user action — design in Rive)
-1. Install **Rive** desktop app for Windows: **rive.app**
-2. Design the Jarvis orb animation with any visual style you want
-3. Add a state machine with **this exact naming** so the React wrapper drives it:
+### 7 Rendering Layers (all in `JarvisOrb.tsx`)
+| Layer | Primitive | Description |
+|---|---|---|
+| Glow | 3× Mesh (spheres) | Nested volumetric glow, additive blending |
+| Neurons | Points (~350 nodes) | Sphere-distributed nodes, white/blue, vertex colors |
+| Normal Connections | LineSegments (~480) | Neural pathways, dim blue → bright white on activation |
+| Red Freedom Pathways | LineSegments (~120) | Dark red → vivid `#ff2244`, spread during thinking/speaking |
+| Internal Symbols | 30× Sprite | `∑ π ∞ √ ∂ ∫ ∇ Δ λ φ ψ α β {}  [] 01 if →` etc., drift inside sphere |
+| Hologram Shell | Mesh (outer sphere) | Subtle opacity flicker every 50-200ms |
 
-| Item | Type | Name | Values |
-|---|---|---|---|
-| State machine | — | `VoiceStateMachine` | — |
-| State input | Number | `StateIndex` | 0=idle · 1=listening · 2=thinking · 3=speaking |
-| Audio input | Number | `AudioLevel` | 0.0–1.0 (drives pulse / brightness during speaking) |
+### State Behaviour
+| State | Behaviour |
+|---|---|
+| **Idle** | Slow breathing pulse every 4-6s; tiny random neuron activations; symbols drift softly; hologram flicker subtle |
+| **Listening** | Sphere contracts (scale 0.92); neurons activate faster; activation ripples inward from surface to centre |
+| **Thinking** | Rapid cascade bursts through network; symbols rotate 3× faster; red pathways activate strongly (`redGlow: 0.9`); multi-front cascades |
+| **Speaking** | `audioLevel` drives scale + brightness; neuron pulses radiate outward from centre; symbols shimmer; red pathways glow proportional to audio |
 
-4. Export → **For Web** → save `.riv` file to `frontend/public/jarvis-orb.riv`
-
-### What to build (Phase 15A — frontend-agent only, after .riv file is ready)
-- [ ] `pnpm add @rive-app/react-canvas`
-- [ ] Create `frontend/src/components/JarvisOrbRive.tsx` — `useRive` + `useStateMachineInput`; reads `voiceState` + `audioLevel` from store; drives `StateIndex` + `AudioLevel` each frame
-- [ ] Update `frontend/src/windows/AnimationWindow.tsx` — swap `<JarvisOrb>` for `<JarvisOrbRive>`; everything else in the window unchanged
-- [ ] Keep `JarvisOrb.tsx` (Three.js fallback) — not deleted until Phase 15 is verified
-- [ ] Verify (debugger-agent): animation renders in Tauri; state changes drive Rive correctly; audio pulse works during speaking; `pnpm build` clean
-
-### Agent Routing Guide addition
-| Phase 15 — Rive Animation | `/frontend-agent` |
+### What to build (Phase 15A — frontend-agent only)
+- [ ] Complete rewrite of `frontend/src/components/JarvisOrb.tsx` (~800 lines) — all 7 layers, cascade activation system, symbol sprites built imperatively via `THREE.Group + THREE.Sprite + THREE.CanvasTexture`, state-driven `params` lerp. Full spec in `C:\Users\User\.claude\plans\i-want-you-to-fluttering-penguin.md`.
+- [ ] Verify (debugger-agent): idle shows gentle neuron activations + floating symbols; thinking shows rapid cascades + vivid red pathways; speaking pulse reacts to audioLevel; `pnpm build` clean; no backend regressions.
 
 ---
 
@@ -281,7 +284,7 @@ Dark theme `#080810` (updated 2026-06-04), electric blue/cyan accents `#00D4FF`,
 | Phase 12 (12A–12E) — Memory System | `/backend-agent` |
 | Phase 13 — Agent Direct Interaction | `/frontend-agent` (UI) + `/backend-agent` (API endpoint) |
 | Phase 14 — Neural Link Animation | `/frontend-agent` |
-| Phase 15 — Rive Animation Integration | `/frontend-agent` |
+| Phase 15 — Neural Intelligence Orb | `/frontend-agent` |
 
 ---
 
