@@ -36,7 +36,9 @@ from backend.integrations.gmail_client import GmailClient
 from backend.integrations.slack_client import SlackClient
 from backend.logging_config import configure_logging, get_logger
 from backend.memory.database import init_db, rename_agent
+from backend.memory.manager import MemoryManager
 from backend.memory.vector_store import VectorStore
+from backend.memory.database import DEFAULT_DB_PATH
 from backend.setup_wizard import router as setup_router
 from backend.tools.wiring import build_tool_registry
 from backend.voice.pipeline import VoicePipeline
@@ -168,11 +170,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Expose on app state so routes/agents share one instance.
     app.state.vector_store = vector_store
 
+    # Memory coordinator (Phase 12): the single interface to the three memory
+    # layers — episodic (SQLite conversations), semantic (FAISS facts), and the
+    # per-turn working memory the pipeline/agents own. Constructed once over the
+    # shared vector store so every consumer reads/writes the same memory. Wiring
+    # into the voice pipeline (12B) and agents (12C) follows; here it is built
+    # and shared.
+    memory_manager = MemoryManager(db_path=DEFAULT_DB_PATH, vector_store=vector_store)
+    app.state.memory_manager = memory_manager
+    log.info("Memory manager ready")
+
     # Voice pipeline (Phase 3): wake -> listen -> STT -> Claude -> TTS -> play.
     # OpenWakeWord needs no API key, so the pipeline always starts. The detector
     # disables itself gracefully if the openwakeword library is not installed.
-    # Start is non-blocking — detection runs in its own background task.
-    voice_pipeline = VoicePipeline(hub=hub)
+    # Start is non-blocking — detection runs in its own background task. The
+    # memory manager is handed in for Phase 12B (stored now, used then).
+    voice_pipeline = VoicePipeline(hub=hub, memory_manager=memory_manager)
     await voice_pipeline.start()
     app.state.voice_pipeline = voice_pipeline
     log.info("Voice pipeline started")
@@ -181,7 +194,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # (Ben, Kado, Sentinel, Vega, Quill). Each runs as its own asyncio task and
     # upserts its row into the agents table on start, so the roster persists
     # across restarts. The runtime shares the singleton hub for status fan-out.
-    agent_runtime = AgentRuntime(hub=hub)
+    agent_runtime = AgentRuntime(
+        hub=hub, vector_store=vector_store, memory_manager=memory_manager
+    )
     await agent_runtime.start()
     app.state.agents = agent_runtime.agents
     app.state.agent_runtime = agent_runtime

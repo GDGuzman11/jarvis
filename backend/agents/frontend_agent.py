@@ -52,10 +52,20 @@ class FrontendAgent(BaseAgent):
         )
 
     async def handle_task(self, task: dict[str, Any]) -> str:
-        """Produce frontend guidance for ``task`` using the Ben persona."""
+        """Produce frontend guidance for ``task`` using the Ben persona.
+
+        Records the task outcome to ``agent_performance`` (Phase 12C) so the
+        agent's success/failure history accrues as self-improvement memory.
+        """
         description = task.get("description", "").strip()
         system_prompt = build_system_prompt(context=_EXPERTISE)
-        return await self.reason(description, system_prompt)
+        try:
+            result = await self.reason(description, system_prompt)
+        except Exception:
+            self._record_performance(task, "failed")
+            raise
+        self._record_performance(task, "success")
+        return result
 
 
 __all__ = ["FrontendAgent", "AGENT_ID", "AGENT_NAME", "AGENT_ROLE", "DEFAULT_TOOLS"]

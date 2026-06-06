@@ -30,6 +30,8 @@ from backend.agents.marketing_agent import MarketingAgent
 from backend.agents.production_lead import ProductionLead
 from backend.agents.security_agent import SecurityAgent
 from backend.logging_config import get_logger
+from backend.memory.manager import MemoryManager
+from backend.memory.vector_store import VectorStore
 from backend.websocket_hub import ConnectionHub
 
 log = get_logger(__name__)
@@ -46,6 +48,13 @@ class AgentRuntime:
     db_path:
         Optional SQLite path override, threaded through to every agent (tests
         point this at a temp database).
+    vector_store:
+        Shared FAISS semantic memory (Phase 12), passed to every agent. ``None``
+        leaves agents without semantic memory (the default for tests that don't
+        exercise it).
+    memory_manager:
+        Shared :class:`MemoryManager` (Phase 12), passed to every agent so they
+        all read/write the same coordinated memory.
 
     Attributes
     ----------
@@ -63,12 +72,18 @@ class AgentRuntime:
         *,
         hub: ConnectionHub | None = None,
         db_path: Any | None = None,
+        vector_store: VectorStore | None = None,
+        memory_manager: MemoryManager | None = None,
     ) -> None:
         common: dict[str, Any] = {}
         if hub is not None:
             common["hub"] = hub
         if db_path is not None:
             common["db_path"] = db_path
+        if vector_store is not None:
+            common["vector_store"] = vector_store
+        if memory_manager is not None:
+            common["memory_manager"] = memory_manager
 
         # Build the five specialists.
         self.specialists: dict[str, BaseAgent] = {

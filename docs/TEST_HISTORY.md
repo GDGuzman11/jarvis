@@ -4,11 +4,54 @@
 
 ---
 
-## Current State: 96/96 backend tests passing · frontend pnpm build clean
+## Current State: 109/110 backend tests passing (1 pre-existing secret-scan failure, unrelated to Phase 12B) · frontend pnpm build clean
 
-- **Tests Passed**: **96 backend** (`pytest backend/ -v` — all green, 37s) + **frontend `pnpm build` clean** ("built in 3.11s", 467 modules transformed, dist/ generated, 0 TS errors)
-- **Tests Failed**: 0
+- **Tests Passed**: **109 backend** (`pytest backend/` — 35s; 102 pre-existing + 7 new Phase 12B) + **frontend `pnpm build` clean** (last verified Phase 11C)
+- **Tests Failed**: **1 pre-existing** — `test_no_secrets_committed_in_source_files` (a Google OAuth client id committed in `get_gmail_token.py:9` in a prior session). NOT a Phase 12B regression. Handed to security-agent.
 - **Deferred**: 6 Phase 9 items (4 UI + 2 true-E2E) — require native Tauri app and/or a microphone + live API keys. No Vitest harness yet; frontend verified via `pnpm build` + grep.
+
+---
+
+## Phase 12B — Voice Pipeline Memory (2026-06-05, 7/7 targeted PASS · suite 109 passed / 1 pre-existing fail)
+*(`backend/voice/test_phase12b_verify.py` — mocks only: FakeMemoryManager + _FakeClaude + FakeDetector + RecordingHub; no key, no network, no audio, no DB/FAISS)*
+
+Verifies the Phase 12B change: `_stream_and_speak` / `process_text` now recall memory **before** the Claude call and store + consolidate **after** TTS completes; an interrupted turn must NOT persist a partial reply; persona `build_system_prompt` accepts the memory manager's pre-formatted multi-section context without a duplicate `# Current context` header.
+
+- [x] **1. Recall before Claude** — `recall` returns one episodic message `{"role":"user","content":"previous message"}`; after `process_text("hello")` the captured `messages` list is **exactly** `[recalled episodic, new user message]` (recalled first, then `{"role":"user","content":"hello"}`, len 2). ✓
+- [x] **2. Store after turn** — `process_text("hello")` with mocked Claude+TTS calls `MemoryManager.store` **exactly twice**, roles `["user","jarvis"]`, with the user text and the full assembled reply text. ✓
+- [x] **3. Consolidate is fire-and-forget** — `consolidate` stubbed with `asyncio.sleep(10)`; `process_text` returns in **< 1s** (measured ~0s) and the consolidate task is confirmed scheduled (started event set) — proving `asyncio.create_task`, not `await`. ✓
+- [x] **4. No-memory fallback** — `memory_manager=None`: `process_text("hello")` completes normally, Claude called with a **single-message** list `[{"role":"user","content":"hello"}]` (no recalled context), reply spoken, ends `idle`, no AttributeError/NoneType errors. ✓
+- [x] **5. Persona — no duplicate header** — `build_system_prompt(context="# Current context\n...")` contains **exactly one** `# Current context` heading and includes the injected fact. ✓
+- [x] **6. Persona — backward compat** — `build_system_prompt(context="some plain text")` wraps the fragment under **exactly one** `# Current context` heading and includes "some plain text". ✓
+- [x] **7. Interrupted turn does not store** — real interrupt path (slow responder + interrupt listener hears "stop", cancels mid-stream): turn ends `idle`, `recall` ran (user message reached Claude) but `store` and `consolidate` were **never called** — no partial reply persisted. ✓
+
+**Test-harness note (test 4, not a product bug):** `process_text`'s `finally` only transitions back to `idle` when `self._running` is true (set by `start()`). The no-memory test calls `pipeline.start()` before `process_text` so the pipeline unwinds to `idle`, mirroring how the live `/api/chat` caller drives it. Initial draft omitted `start()` and observed the turn parked in `speaking`; corrected to start the pipeline. No code change — this is the pipeline's existing, correct contract.
+
+**Regression check:** All 102 previously-passing tests still pass. The 7 new Phase 12B tests bring the suite to 109 passed. The only failure remains the pre-existing secret scan (below) — confirmed independent of this work (it scans `get_gmail_token.py` / `docs/TEST_HISTORY.md`, neither touched by Phase 12B). No Phase 12B regressions.
+
+> Note on counts: the brief anticipated "102/103" but the live baseline was already 102 passing from Phase 12A; adding 7 new Phase 12B tests yields **109 passed / 1 pre-existing fail (110 total)**. The contract held — exactly one failure, the same known secret-scan one, no new failures.
+
+---
+
+## Phase 12A — Memory Infrastructure (2026-06-05, 7/7 targeted PASS · suite 102 passed / 1 pre-existing fail)
+*(`backend/test_phase12a_verify.py` — in-memory/temp-file: no key, no network, no audio; VectorStore mocked so the embedding model never loads)*
+
+- [x] **Schema** — `init_db()` on a temp db creates all 5 new Phase 12 tables: `memory_facts`, `people`, `open_loops`, `decisions`, `agent_performance` (DB now reports 10 tables total).
+- [x] **Evaluator import + preference** — `MemoryEvaluator().score("my name is Gabriel", "Nice to meet you Gabriel")` → **0.75, "preference"** (≥0.75, category contains "preference"). ✓
+- [x] **Evaluator app_work** — `score("we deployed the new backend endpoint", "Done, the endpoint is live at /api/v2/chat")` → **0.90, "app_work"** (≥0.9). Matched verb "deployed" + artifact "endpoint"/"/api/v2/chat". ✓
+- [x] **Evaluator general/low** — `score("what time is it?", "It's 3pm")` → **0.20, "general"** (≤0.3, below the 0.65 promotion threshold). ✓
+- [x] **MemoryManager instantiation** — constructs with a mocked VectorStore + temp db_path; default `MemoryEvaluator` created when none injected. No error. ✓
+- [x] **RecallResult on empty DB** — `recall("anything")` returns a `RecallResult` with `episodic_messages == []` and `semantic_facts == []`. **DEVIATION FROM BRIEF (see below):** `formatted_context == ""` on a cold/empty recall, NOT the date header. Verified separately that `format_context()` DOES emit `# Current context` + `Date:` once there is real content to inject. ✓
+- [x] **save_memory_fact** — `save_memory_fact(source='voice', category='preference', content='User prefers short answers', importance=0.75, agent_id=None)` → returns **int id > 0**; round-trips back via `get_memory_facts` with content/category/importance intact. ✓
+
+**Targeted-test deviation (test 6, intentional — not a bug):** The brief expected `formatted_context` to be a non-empty string ("at minimum the date header") on an empty DB. The actual behavior of `MemoryManager.format_context` is to return `""` when only the date header would be present — a deliberate prompt-caching optimization so the stable cached prefix of the system prompt stays byte-identical on a cold first turn (documented in `manager.py` docstring + the `if len(sections) == 1: return ""` guard at the end of `format_context`). The test was written to assert this real, intended contract (empty context on cold recall) AND to confirm the date header appears as soon as any fact/turn is present. No code change made — this is correct behavior.
+
+**Regression check:** All 95 previously-passing tests (Phases 2–11C) still pass. The 7 new Phase 12A tests bring the suite to 102 passed. The only failure is the pre-existing secret scan (below). No Phase 12A regressions.
+
+**Pre-existing secret in `get_gmail_token.py` (investigated, NOT Phase 12A):** Line 9 hardcodes a path containing a real Google OAuth **client id** — `1057050494684-9nhus4frc8k62tejsofqug6qo3mipdha.apps.googleusercontent.com` — as part of the `client_secret_*.json` filename passed to `from_client_secrets_file(...)`. The secret scanner's `google_oauth` pattern matches it. Findings for security-agent:
+  - It is the OAuth **client id only** — a public OAuth identifier (it appears in OAuth consent URLs by design), NOT the client *secret* and NOT the refresh token. Lower severity than a leaked secret, but the scanner correctly flags it and it should not be committed.
+  - It is a literal string inside a Windows path to a `client_secret_*.json` file on the user's Desktop (`C:\Users\User\Desktop\Jarvis\...`); the actual secret JSON file is NOT in the repo.
+  - `get_gmail_token.py` is a one-shot manual helper script (run once to mint a refresh token), not imported by the app. Suggested fixes: parameterize the path via `sys.argv`/env var, or move the script out of the repo / add it to `.gitignore`. Then scrub it from git history if the client id is considered sensitive.
 
 ---
 

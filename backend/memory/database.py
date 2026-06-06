@@ -41,7 +41,8 @@ _SCHEMA: tuple[str, ...] = (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         role        TEXT    NOT NULL CHECK (role IN ('user', 'jarvis')),
         channel     TEXT    NOT NULL DEFAULT 'voice'
-                            CHECK (channel IN ('voice', 'text')),
+                            CHECK (channel IN ('voice', 'text')
+                                   OR channel LIKE 'agent:%'),
         content     TEXT    NOT NULL,
         created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
     )
@@ -95,6 +96,72 @@ _SCHEMA: tuple[str, ...] = (
         created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
     )
     """,
+    # --- Phase 12 memory tables (Layer 2/3 structured stores) ---------------
+    # memory_facts: distilled, high-value semantic facts (NOT raw transcripts).
+    # Each high-scoring exchange becomes one compact declarative fact here; the
+    # matching text is also added to the FAISS vector store so the two stay in
+    # sync (see backend.memory.manager).
+    """
+    CREATE TABLE IF NOT EXISTS memory_facts (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        source           TEXT    NOT NULL DEFAULT 'voice',
+        category         TEXT    NOT NULL DEFAULT 'general',
+        content          TEXT    NOT NULL,
+        importance       REAL    NOT NULL DEFAULT 0.5,
+        agent_id         TEXT    REFERENCES agents(id) ON DELETE SET NULL,
+        created_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+        last_recalled_at TEXT
+    )
+    """,
+    # people: contact profiles built from Gmail/Slack events and conversation.
+    """
+    CREATE TABLE IF NOT EXISTS people (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        name             TEXT    NOT NULL,
+        email            TEXT,
+        slack_user_id    TEXT,
+        role             TEXT,
+        notes            TEXT,
+        last_contact_at  TEXT,
+        created_at       TEXT    NOT NULL DEFAULT (datetime('now'))
+    )
+    """,
+    # open_loops: promises / reminders / follow-ups Jarvis must surface later.
+    """
+    CREATE TABLE IF NOT EXISTS open_loops (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        description      TEXT    NOT NULL,
+        source           TEXT    NOT NULL DEFAULT 'voice',
+        status           TEXT    NOT NULL DEFAULT 'open'
+                                 CHECK (status IN ('open', 'resolved', 'dismissed')),
+        due_at           TEXT,
+        resolved_at      TEXT,
+        created_at       TEXT    NOT NULL DEFAULT (datetime('now'))
+    )
+    """,
+    # decisions: the WHY behind choices — full reasoning + rejected alternatives.
+    """
+    CREATE TABLE IF NOT EXISTS decisions (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        title            TEXT    NOT NULL,
+        reasoning        TEXT    NOT NULL,
+        alternatives     TEXT,
+        agent_id         TEXT    REFERENCES agents(id) ON DELETE SET NULL,
+        created_at       TEXT    NOT NULL DEFAULT (datetime('now'))
+    )
+    """,
+    # agent_performance: per-agent task outcomes for self-improvement memory.
+    """
+    CREATE TABLE IF NOT EXISTS agent_performance (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id         TEXT    NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+        task_type        TEXT    NOT NULL,
+        outcome          TEXT    NOT NULL,
+        correction_count INTEGER NOT NULL DEFAULT 0,
+        notes            TEXT,
+        created_at       TEXT    NOT NULL DEFAULT (datetime('now'))
+    )
+    """,
 )
 
 # Helpful indexes for the common access patterns (queue polling, audit reads).
@@ -105,6 +172,14 @@ _INDEXES: tuple[str, ...] = (
     "ON audit_log (agent_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_conversations_created "
     "ON conversations (created_at)",
+    # Phase 12 memory access patterns: recall by category, status, and contact.
+    "CREATE INDEX IF NOT EXISTS idx_memory_facts_category "
+    "ON memory_facts (category, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_open_loops_status "
+    "ON open_loops (status, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_people_email ON people (email)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_performance_agent "
+    "ON agent_performance (agent_id, created_at)",
 )
 
 
@@ -138,9 +213,65 @@ async def init_db(db_path: Path | str = DEFAULT_DB_PATH) -> None:
         for index in _INDEXES:
             await conn.execute(index)
         await conn.commit()
+        await _migrate_conversations_channel(conn)
     finally:
         await conn.close()
     logger.info("Database schema ready (%d tables).", len(_SCHEMA))
+
+
+async def _migrate_conversations_channel(conn: aiosqlite.Connection) -> None:
+    """Relax the ``conversations.channel`` CHECK to permit ``agent:%`` channels.
+
+    Phase 12C persists each agent's context to ``conversations`` under a
+    ``channel = 'agent:<id>'`` value. Databases created before that change carry
+    the old ``CHECK (channel IN ('voice','text'))`` constraint, which would
+    reject agent turns. ``CREATE TABLE IF NOT EXISTS`` never alters an existing
+    table, so this rebuilds the table in place only when the stale constraint is
+    detected. Idempotent and a no-op on a fresh DB (which already has the new
+    constraint).
+    """
+    cursor = await conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='conversations'"
+    )
+    row = await cursor.fetchone()
+    if row is None:
+        return
+    ddl = row[0] or ""
+    # Already migrated (or freshly created with the new constraint).
+    if "agent:%" in ddl:
+        return
+
+    logger.info("Migrating conversations.channel CHECK to allow agent channels")
+    await conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        await conn.execute(
+            """
+            CREATE TABLE conversations_new (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                role        TEXT    NOT NULL CHECK (role IN ('user', 'jarvis')),
+                channel     TEXT    NOT NULL DEFAULT 'voice'
+                                    CHECK (channel IN ('voice', 'text')
+                                           OR channel LIKE 'agent:%'),
+                content     TEXT    NOT NULL,
+                created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+            )
+            """
+        )
+        await conn.execute(
+            "INSERT INTO conversations_new (id, role, channel, content, created_at) "
+            "SELECT id, role, channel, content, created_at FROM conversations"
+        )
+        await conn.execute("DROP TABLE conversations")
+        await conn.execute(
+            "ALTER TABLE conversations_new RENAME TO conversations"
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_conversations_created "
+            "ON conversations (created_at)"
+        )
+        await conn.commit()
+    finally:
+        await conn.execute("PRAGMA foreign_keys = ON")
 
 
 # --- CRUD: conversations ----------------------------------------------------
@@ -227,20 +358,31 @@ async def save_conversation(
 async def get_recent_conversations(
     limit: int = 20,
     *,
+    channel: str | None = None,
     db_path: Path | str = DEFAULT_DB_PATH,
 ) -> list[dict]:
     """Return the most recent conversation turns in chronological order.
 
     The newest ``limit`` rows are selected, then returned oldest-first so the
-    result can be fed directly to the model as conversation context.
+    result can be fed directly to the model as conversation context. When
+    ``channel`` is supplied, only turns on that channel are returned — this lets
+    an agent restore *its own* context (``channel='agent:<id>'``) without pulling
+    in unrelated voice/text turns.
     """
     conn = await connect(db_path)
     try:
-        cursor = await conn.execute(
-            "SELECT id, role, channel, content, created_at "
-            "FROM conversations ORDER BY id DESC LIMIT ?",
-            (limit,),
-        )
+        if channel is None:
+            cursor = await conn.execute(
+                "SELECT id, role, channel, content, created_at "
+                "FROM conversations ORDER BY id DESC LIMIT ?",
+                (limit,),
+            )
+        else:
+            cursor = await conn.execute(
+                "SELECT id, role, channel, content, created_at "
+                "FROM conversations WHERE channel = ? ORDER BY id DESC LIMIT ?",
+                (channel, limit),
+            )
         rows = await cursor.fetchall()
     finally:
         await conn.close()
@@ -483,3 +625,258 @@ async def get_agent_tasks(
     finally:
         await conn.close()
     return [dict(row) for row in rows]
+
+
+# --- Phase 12: memory_facts (distilled semantic facts) ----------------------
+
+
+async def save_memory_fact(
+    source: str,
+    category: str,
+    content: str,
+    importance: float = 0.5,
+    agent_id: str | None = None,
+    *,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> int:
+    """Persist a single distilled memory fact and return its row id.
+
+    ``content`` is a compact declarative fact (e.g. "User prefers dark mode."),
+    never a raw transcript. ``importance`` is the evaluator's 0.0–1.0 score.
+    """
+    conn = await connect(db_path)
+    try:
+        cursor = await conn.execute(
+            "INSERT INTO memory_facts (source, category, content, importance, "
+            "agent_id) VALUES (?, ?, ?, ?, ?)",
+            (source, category, content, float(importance), agent_id),
+        )
+        row_id = cursor.lastrowid
+        await conn.commit()
+    finally:
+        await conn.close()
+    assert row_id is not None
+    return row_id
+
+
+async def get_memory_facts(
+    category: str | None = None,
+    limit: int = 20,
+    *,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> list[dict]:
+    """Return the most recent memory facts, optionally filtered by ``category``.
+
+    Newest first. When ``category`` is ``None`` all categories are returned.
+    """
+    conn = await connect(db_path)
+    try:
+        if category is None:
+            cursor = await conn.execute(
+                "SELECT id, source, category, content, importance, agent_id, "
+                "created_at, last_recalled_at FROM memory_facts "
+                "ORDER BY id DESC LIMIT ?",
+                (limit,),
+            )
+        else:
+            cursor = await conn.execute(
+                "SELECT id, source, category, content, importance, agent_id, "
+                "created_at, last_recalled_at FROM memory_facts "
+                "WHERE category = ? ORDER BY id DESC LIMIT ?",
+                (category, limit),
+            )
+        rows = await cursor.fetchall()
+    finally:
+        await conn.close()
+    return [dict(row) for row in rows]
+
+
+# --- Phase 12: people (contact profiles) ------------------------------------
+
+
+async def save_person(
+    name: str,
+    email: str | None = None,
+    slack_user_id: str | None = None,
+    role: str | None = None,
+    notes: str | None = None,
+    last_contact_at: str | None = None,
+    *,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> int:
+    """Insert or update a person profile, keyed by ``email`` when provided.
+
+    When a row with the same ``email`` already exists it is updated in place
+    (non-null arguments win; omitted fields keep their stored value) and its id
+    is returned. Otherwise a new row is inserted. With no ``email`` a new row is
+    always inserted (we cannot dedupe an anonymous contact).
+    """
+    conn = await connect(db_path)
+    try:
+        existing = None
+        if email:
+            cursor = await conn.execute(
+                "SELECT id FROM people WHERE email = ?", (email,)
+            )
+            existing = await cursor.fetchone()
+
+        if existing is not None:
+            await conn.execute(
+                """
+                UPDATE people SET
+                    name            = COALESCE(?, name),
+                    slack_user_id   = COALESCE(?, slack_user_id),
+                    role            = COALESCE(?, role),
+                    notes           = COALESCE(?, notes),
+                    last_contact_at = COALESCE(?, last_contact_at)
+                WHERE id = ?
+                """,
+                (name, slack_user_id, role, notes, last_contact_at, existing["id"]),
+            )
+            row_id = int(existing["id"])
+        else:
+            cursor = await conn.execute(
+                "INSERT INTO people (name, email, slack_user_id, role, notes, "
+                "last_contact_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (name, email, slack_user_id, role, notes, last_contact_at),
+            )
+            row_id = cursor.lastrowid
+        await conn.commit()
+    finally:
+        await conn.close()
+    assert row_id is not None
+    return int(row_id)
+
+
+async def get_person_by_email(
+    email: str,
+    *,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> dict | None:
+    """Return a single person profile by ``email``, or ``None`` if not found."""
+    conn = await connect(db_path)
+    try:
+        cursor = await conn.execute(
+            "SELECT id, name, email, slack_user_id, role, notes, "
+            "last_contact_at, created_at FROM people WHERE email = ?",
+            (email,),
+        )
+        row = await cursor.fetchone()
+    finally:
+        await conn.close()
+    return dict(row) if row is not None else None
+
+
+# --- Phase 12: open_loops (promises / reminders / follow-ups) ---------------
+
+
+async def save_open_loop(
+    description: str,
+    source: str = "voice",
+    due_at: str | None = None,
+    *,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> int:
+    """Create an open loop (a tracked promise/reminder) and return its row id.
+
+    New loops start in the ``open`` state. ``due_at`` is an optional ISO/SQLite
+    datetime string used to surface overdue items at session start.
+    """
+    conn = await connect(db_path)
+    try:
+        cursor = await conn.execute(
+            "INSERT INTO open_loops (description, source, due_at) VALUES (?, ?, ?)",
+            (description, source, due_at),
+        )
+        row_id = cursor.lastrowid
+        await conn.commit()
+    finally:
+        await conn.close()
+    assert row_id is not None
+    return row_id
+
+
+async def get_open_loops(
+    status: str = "open",
+    *,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> list[dict]:
+    """Return open loops with the given ``status`` (default ``'open'``).
+
+    Ordered oldest-first so the most stale promises surface first.
+    """
+    conn = await connect(db_path)
+    try:
+        cursor = await conn.execute(
+            "SELECT id, description, source, status, due_at, resolved_at, "
+            "created_at FROM open_loops WHERE status = ? ORDER BY id ASC",
+            (status,),
+        )
+        rows = await cursor.fetchall()
+    finally:
+        await conn.close()
+    return [dict(row) for row in rows]
+
+
+# --- Phase 12: decisions (the WHY behind choices) ---------------------------
+
+
+async def save_decision(
+    title: str,
+    reasoning: str,
+    alternatives: str | None = None,
+    agent_id: str | None = None,
+    *,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> int:
+    """Persist a decision record (title + reasoning) and return its row id.
+
+    The ``reasoning`` (the WHY) is the valuable part — it lets future reasoning
+    avoid relitigating settled choices. ``alternatives`` records what was
+    considered and rejected.
+    """
+    conn = await connect(db_path)
+    try:
+        cursor = await conn.execute(
+            "INSERT INTO decisions (title, reasoning, alternatives, agent_id) "
+            "VALUES (?, ?, ?, ?)",
+            (title, reasoning, alternatives, agent_id),
+        )
+        row_id = cursor.lastrowid
+        await conn.commit()
+    finally:
+        await conn.close()
+    assert row_id is not None
+    return row_id
+
+
+# --- Phase 12: agent_performance (per-agent task outcomes) ------------------
+
+
+async def save_agent_performance(
+    agent_id: str,
+    task_type: str,
+    outcome: str,
+    correction_count: int = 0,
+    notes: str | None = None,
+    *,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> int:
+    """Record one agent task outcome and return its row id.
+
+    ``outcome`` is typically ``'success' | 'corrected' | 'failed'``;
+    ``correction_count`` is how many rounds of correction the task needed.
+    """
+    conn = await connect(db_path)
+    try:
+        cursor = await conn.execute(
+            "INSERT INTO agent_performance (agent_id, task_type, outcome, "
+            "correction_count, notes) VALUES (?, ?, ?, ?, ?)",
+            (agent_id, task_type, outcome, int(correction_count), notes),
+        )
+        row_id = cursor.lastrowid
+        await conn.commit()
+    finally:
+        await conn.close()
+    assert row_id is not None
+    return row_id

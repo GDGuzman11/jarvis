@@ -30,6 +30,7 @@ out to the right specialist.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any
 
@@ -249,6 +250,10 @@ class ProductionLead(BaseAgent):
         )
         await self._log_audit("task.delegate", target=f"{target}:task:{task_id}")
 
+        # Record the routing decision (the WHY) so future reasoning can see how
+        # work was distributed. Fire-and-forget: it must not slow the hand-off.
+        self._record_delegation_decision(task_title, target)
+
         specialist = self._agents.get(target)
         if specialist is None:
             log.warning("route_target_unavailable", target=target, task_id=task_id)
@@ -263,6 +268,43 @@ class ProductionLead(BaseAgent):
             }
         )
         return task_id, True
+
+    def _record_delegation_decision(self, task_summary: str, target: str) -> None:
+        """Persist a ``decisions`` row capturing a routing hand-off (Phase 12C).
+
+        Gated on a wired-in :class:`MemoryManager` so the test/no-memory path is
+        unchanged. Fire-and-forget via :func:`asyncio.create_task` so it never
+        blocks delegation; failures are contained in the coroutine itself.
+        """
+        if self.memory_manager is None:
+            return
+        target_name = self._agent_name(target)
+        asyncio.create_task(
+            self._save_decision_async(
+                title=f"Delegated: {task_summary[:80]}",
+                reasoning=f"Routed to {target_name} ({target}) via classify().",
+                alternatives=None,
+            )
+        )
+
+    async def _save_decision_async(
+        self, *, title: str, reasoning: str, alternatives: str | None
+    ) -> None:
+        """Best-effort wrapper around :func:`database.save_decision`.
+
+        Keeps the routing path resilient: a DB error while recording the
+        decision is logged and swallowed rather than surfacing into delegation.
+        """
+        try:
+            await database.save_decision(
+                title,
+                reasoning,
+                alternatives,
+                agent_id=self.agent_id,
+                **self._db_kwargs(),
+            )
+        except Exception:  # noqa: BLE001 — decision logging must not break routing
+            log.warning("route_decision_log_failed", exc_info=True)
 
     # --- Helpers ------------------------------------------------------------
 

@@ -85,6 +85,17 @@ def build_system_prompt(context: str | None = None) -> str:
     under a clear ``# Current context`` heading, so the cached prefix is never
     disturbed while Jarvis can still respond to the moment.
 
+    The injected ``context`` may take two shapes, and both are handled so the
+    final prompt never carries a duplicate heading:
+
+    * A bare fragment (e.g. ``"It is 21:14."``) — wrapped under a fresh
+      ``# Current context`` heading.
+    * A pre-formatted multi-section block that already opens with its own
+      ``# Current context`` header — as produced by
+      :meth:`backend.memory.manager.MemoryManager.format_context`, which carries
+      ``Date:``, ``## What I remember about you`` and ``## Recent conversation``
+      subsections. This is appended verbatim, with no second header added.
+
     Parameters
     ----------
     context:
@@ -101,7 +112,13 @@ def build_system_prompt(context: str | None = None) -> str:
     if context is None or not context.strip():
         return JARVIS_SYSTEM_PROMPT
 
-    return f"{JARVIS_SYSTEM_PROMPT}\n\n# Current context\n{context.strip()}"
+    context = context.strip()
+    # The memory manager's format_context already emits its own
+    # "# Current context" header; don't add a second one in that case.
+    if context.startswith("# Current context"):
+        return f"{JARVIS_SYSTEM_PROMPT}\n\n{context}"
+
+    return f"{JARVIS_SYSTEM_PROMPT}\n\n# Current context\n{context}"
 
 
 __all__ = ["JARVIS_SYSTEM_PROMPT", "build_system_prompt"]

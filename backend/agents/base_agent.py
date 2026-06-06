@@ -52,9 +52,12 @@ from typing import Any
 
 from backend.ai.claude_client import ClaudeAPIError, ClaudeClient
 from backend.ai.ollama_client import OllamaClient
+from backend.ai.persona import build_system_prompt
 from backend.events import AgentStatus, AgentUpdate
 from backend.logging_config import get_logger
 from backend.memory import database
+from backend.memory.manager import MemoryManager
+from backend.memory.vector_store import VectorStore
 from backend.websocket_hub import ConnectionHub
 from backend.websocket_hub import hub as default_hub
 
@@ -64,6 +67,11 @@ log = get_logger(__name__)
 # Claude context. Bounded so a long-running agent's prompt never grows without
 # limit (and the cached system-prompt prefix keeps paying off).
 DEFAULT_CONTEXT_TURNS: int = 20
+
+# How many of the most recent persisted messages an agent reloads from the
+# ``conversations`` table on startup, so its rolling context survives a restart
+# (Phase 12C — context restore). Half a turn each, so 12 messages ≈ 6 exchanges.
+RESTORE_CONTEXT_MESSAGES: int = 12
 
 
 class BaseAgent(abc.ABC):
@@ -89,6 +97,13 @@ class BaseAgent(abc.ABC):
         touched until first use), injectable for tests.
     db_path:
         Override the SQLite path (tests point this at a temp file).
+    vector_store:
+        Shared FAISS semantic memory (Phase 12). Carried for the upcoming memory
+        integration; accepted and stored here, used in Phase 12C.
+    memory_manager:
+        Shared :class:`MemoryManager` coordinating episodic + semantic memory
+        (Phase 12). Accepted and stored here; recall/store wiring lands in
+        Phase 12C. No behaviour change yet.
     """
 
     def __init__(
@@ -102,6 +117,8 @@ class BaseAgent(abc.ABC):
         claude: ClaudeClient | None = None,
         ollama: OllamaClient | None = None,
         db_path: Any | None = None,
+        vector_store: VectorStore | None = None,
+        memory_manager: MemoryManager | None = None,
     ) -> None:
         self.agent_id = agent_id
         self.name = name
@@ -112,6 +129,10 @@ class BaseAgent(abc.ABC):
         self._claude = claude or ClaudeClient()
         self._ollama = ollama or OllamaClient()
         self._db_path = db_path
+
+        # Phase 12 memory components. Stored now, wired into reasoning in 12C.
+        self.vector_store = vector_store
+        self.memory_manager = memory_manager
 
         # The per-agent inbound work queue. Each item is a task ``dict`` (see
         # :meth:`enqueue_task`). Drained one at a time by the run loop.
@@ -168,8 +189,49 @@ class BaseAgent(abc.ABC):
             return
         # Ensure the agent's row exists / is current before we start serving.
         await self._set_status("idle", task_label=None)
+        # Restore this agent's rolling context from the conversations table so it
+        # survives a backend restart (Phase 12C). No-op on a cold/empty DB.
+        await self._restore_context()
         self._task = asyncio.create_task(self._run(), name=f"agent:{self.agent_id}")
         log.info("agent_started", agent_id=self.agent_id, name=self.name)
+
+    async def _restore_context(self) -> None:
+        """Reload the agent's last persisted turns into the rolling context.
+
+        Loads up to :data:`RESTORE_CONTEXT_MESSAGES` of *this agent's own*
+        conversation turns (``channel = 'agent:<id>'``), oldest-first, and seeds
+        ``self._context`` with them in Anthropic message shape. On a fresh
+        install (no rows) ``self._context`` stays the empty list it started as,
+        exactly as before — graceful first-boot behaviour. Best-effort: a read
+        failure leaves the context empty rather than blocking startup.
+        """
+        try:
+            rows = await database.get_recent_conversations(
+                limit=RESTORE_CONTEXT_MESSAGES,
+                channel=self._channel,
+                **self._db_kwargs(),
+            )
+        except Exception:  # noqa: BLE001 — never block startup on a read error
+            log.warning(
+                "agent_context_restore_failed",
+                agent_id=self.agent_id,
+                exc_info=True,
+            )
+            return
+        if not rows:
+            return
+        self._context = [
+            {
+                "role": "assistant" if row["role"] == "jarvis" else "user",
+                "content": row["content"],
+            }
+            for row in rows
+        ]
+        log.info(
+            "agent_context_restored",
+            agent_id=self.agent_id,
+            messages=len(self._context),
+        )
 
     async def stop(self) -> None:
         """Cancel the run loop and mark the agent ``offline``.
@@ -276,7 +338,7 @@ class BaseAgent(abc.ABC):
 
     # --- Reasoning (Claude with Ollama fallback) ----------------------------
 
-    async def reason(self, prompt: str, system_prompt: str) -> str:
+    async def reason(self, prompt: str, system_prompt: str | None = None) -> str:
         """Reason over ``prompt`` and return the full response text.
 
         Streams from Claude (tokens fan out to the Reasoning window via the
@@ -285,30 +347,102 @@ class BaseAgent(abc.ABC):
         the rest of the backend does. The exchange is appended to this agent's
         rolling context so successive tasks build on one another.
 
+        Memory integration (Phase 12C)
+        ------------------------------
+        When a :class:`MemoryManager` is wired in, the agent recalls shared
+        memory *before* the Claude call — a few recent episodic turns plus the
+        most semantically-relevant facts — and injects the recalled facts into
+        the system prompt's ``# Current context`` block. After the response it
+        stores both sides to episodic memory and fires off (non-blocking)
+        consolidation so important exchanges promote to semantic memory. Without
+        a memory manager the behaviour is unchanged: the agent's in-RAM rolling
+        context is the only history and the caller's ``system_prompt`` is used
+        verbatim.
+
         Returns an empty string only if both Claude and Ollama produce nothing
         (e.g. Ollama is also cold) — never raises for a model failure.
         """
-        messages = self._context + [{"role": "user", "content": prompt}]
+        if self.memory_manager is not None:
+            recalled = await self.memory_manager.recall(
+                query=prompt,
+                n_recent=6,  # fewer than voice — agents have longer task context
+                n_semantic=3,
+            )
+            messages = (
+                recalled.episodic_messages
+                + self._context
+                + [{"role": "user", "content": prompt}]
+            )
+            base_context = recalled.formatted_context
+            if system_prompt and base_context:
+                effective_system = f"{system_prompt}\n\n{base_context}"
+            elif system_prompt:
+                effective_system = system_prompt
+            else:
+                effective_system = build_system_prompt(context=base_context)
+        else:
+            messages = self._context + [{"role": "user", "content": prompt}]
+            effective_system = system_prompt or build_system_prompt()
 
         chunks: list[str] = []
         try:
-            async for token in self._claude.stream_response(messages, system_prompt):
+            async for token in self._claude.stream_response(
+                messages, effective_system
+            ):
                 chunks.append(token)
         except ClaudeAPIError:
             log.warning(
                 "agent_claude_unavailable_fallback_ollama", agent_id=self.agent_id
             )
             chunks.clear()
-            async for token in self._ollama.stream_response(messages, system_prompt):
+            async for token in self._ollama.stream_response(
+                messages, effective_system
+            ):
                 chunks.append(token)
 
         reply = "".join(chunks).strip()
         # Record both sides so the agent's context carries forward, then trim.
         self._remember(prompt, reply)
+
+        # Promote the exchange into shared memory (Layer 2 episodic write happens
+        # via _remember's checkpoint; here we additionally distil to Layer 3).
+        if self.memory_manager is not None:
+            try:
+                await self.memory_manager.store(
+                    prompt, role="user", channel=self._channel
+                )
+                if reply:
+                    await self.memory_manager.store(
+                        reply, role="jarvis", channel=self._channel
+                    )
+                    asyncio.create_task(
+                        self.memory_manager.consolidate(
+                            prompt,
+                            reply,
+                            source="agent",
+                            agent_id=self.agent_id,
+                        )
+                    )
+            except Exception:  # noqa: BLE001 — memory must never break a task
+                log.warning(
+                    "agent_memory_store_failed", agent_id=self.agent_id, exc_info=True
+                )
         return reply
 
     def _remember(self, user_text: str, assistant_text: str) -> None:
-        """Append a user/assistant exchange to context and trim to the window."""
+        """Append a user/assistant exchange to context and persist a checkpoint.
+
+        The in-RAM rolling window (``self._context``) is updated and trimmed so
+        successive tasks build on one another. The exchange is *also* written to
+        the ``conversations`` table under this agent's ``agent:<id>`` channel so
+        the context survives a backend restart (Phase 12C — context checkpoint).
+
+        When a :class:`MemoryManager` is wired in, the episodic write is its
+        responsibility (it happens in :meth:`reason` via ``store``), so the
+        checkpoint here is skipped to avoid a duplicate ``conversations`` row.
+        Without a memory manager this is the only durable record, so it always
+        writes. The DB write is fire-and-forget — it never blocks the task loop.
+        """
         self._context.append({"role": "user", "content": user_text})
         if assistant_text:
             self._context.append({"role": "assistant", "content": assistant_text})
@@ -316,6 +450,50 @@ class BaseAgent(abc.ABC):
         max_messages = DEFAULT_CONTEXT_TURNS * 2
         if len(self._context) > max_messages:
             self._context = self._context[-max_messages:]
+
+        # Persist a checkpoint to the conversations table so the agent's context
+        # survives a restart. Skipped when a memory manager already owns the
+        # episodic write (avoids duplicating the row).
+        if self.memory_manager is None:
+            asyncio.create_task(
+                self._checkpoint_context(user_text, assistant_text)
+            )
+
+    async def _checkpoint_context(
+        self, user_text: str, assistant_text: str
+    ) -> None:
+        """Write a user/assistant exchange to ``conversations`` for restart.
+
+        Both turns are stored under ``channel = 'agent:<id>'`` so an agent can
+        later restore *only its own* history. Best-effort: a DB hiccup must never
+        take down the agent's run loop.
+        """
+        try:
+            if user_text and user_text.strip():
+                await database.save_conversation(
+                    "user",
+                    user_text,
+                    channel=self._channel,
+                    **self._db_kwargs(),
+                )
+            if assistant_text and assistant_text.strip():
+                await database.save_conversation(
+                    "jarvis",
+                    assistant_text,
+                    channel=self._channel,
+                    **self._db_kwargs(),
+                )
+        except Exception:  # noqa: BLE001 — checkpoint must never break the loop
+            log.warning(
+                "agent_context_checkpoint_failed",
+                agent_id=self.agent_id,
+                exc_info=True,
+            )
+
+    @property
+    def _channel(self) -> str:
+        """The ``conversations.channel`` value identifying this agent's turns."""
+        return f"agent:{self.agent_id}"
 
     # --- Status transitions (broadcast + persist + audit) -------------------
 
@@ -350,15 +528,121 @@ class BaseAgent(abc.ABC):
         )
 
     async def _log_audit(self, action: str, *, target: str | None = None) -> None:
-        """Write a metadata-only audit record for this agent (Security Rule 6)."""
+        """Write a metadata-only audit record for this agent (Security Rule 6).
+
+        Phase 12C also hooks the audit stream into semantic memory: every logged
+        agent action is, by definition, a high-value event (Phase 12 Rule 2), so
+        when a :class:`MemoryManager` is wired in the same metadata is promoted to
+        a ``memory_facts`` row (importance 1.0) and mirrored into FAISS. The
+        promotion is fire-and-forget so it never adds latency to the action, and
+        it carries only metadata (action verb + target) — never message content,
+        preserving Security Rule 6.
+        """
         await database.log_audit(
             self.agent_id, action, target=target, **self._db_kwargs()
         )
+        if self.memory_manager is not None:
+            fact = self._audit_fact(action, target)
+            asyncio.create_task(
+                self.memory_manager.store_fact(
+                    fact,
+                    source="agent",
+                    category="agent_outcome",
+                    importance=1.0,
+                    agent_id=self.agent_id,
+                )
+            )
+
+    def _audit_fact(self, action: str, target: str | None) -> str:
+        """Render an audit action into a compact declarative fact (metadata only).
+
+        e.g. ``"Atlas (production_lead) performed task.delegate on
+        backend:task:7."`` — no message content, just the who/what/where.
+        """
+        where = f" on {target}" if target else ""
+        return f"{self.name} ({self.agent_id}) performed {action}{where}."
 
     @staticmethod
     def _task_target(task_id: int | None) -> str | None:
         """Format a ``tasks`` row id as an audit ``target`` string."""
         return f"task:{task_id}" if task_id is not None else None
 
+    # --- Self-improvement memory (agent_performance) ------------------------
 
-__all__ = ["BaseAgent", "DEFAULT_CONTEXT_TURNS"]
+    def _record_performance(
+        self,
+        task: dict[str, Any],
+        outcome: str,
+        *,
+        correction_count: int = 0,
+    ) -> None:
+        """Write an ``agent_performance`` row for a finished specialist task.
+
+        Called by specialists from their ``handle_task`` once they know whether
+        the task succeeded or failed. Gated on a wired-in :class:`MemoryManager`
+        so the no-memory test path is unchanged, and fire-and-forget so it never
+        slows the task loop. ``task_type`` is derived from the task content;
+        ``notes`` carries a short, non-sensitive summary.
+        """
+        if self.memory_manager is None:
+            return
+        description = (task.get("description") or task.get("title") or "").strip()
+        task_type = self._derive_task_type(description)
+        notes = description[:200] or None
+        asyncio.create_task(
+            self._save_performance_async(
+                task_type=task_type,
+                outcome=outcome,
+                correction_count=correction_count,
+                notes=notes,
+            )
+        )
+
+    async def _save_performance_async(
+        self,
+        *,
+        task_type: str,
+        outcome: str,
+        correction_count: int,
+        notes: str | None,
+    ) -> None:
+        """Best-effort wrapper around :func:`database.save_agent_performance`."""
+        try:
+            await database.save_agent_performance(
+                self.agent_id,
+                task_type,
+                outcome,
+                correction_count=correction_count,
+                notes=notes,
+                **self._db_kwargs(),
+            )
+        except Exception:  # noqa: BLE001 — performance logging must not break a task
+            log.warning(
+                "agent_performance_log_failed",
+                agent_id=self.agent_id,
+                exc_info=True,
+            )
+
+    @staticmethod
+    def _derive_task_type(description: str) -> str:
+        """Classify a task into a coarse ``task_type`` bucket from its content.
+
+        A cheap keyword heuristic — enough to group outcomes for later analysis
+        without an API call. Defaults to ``"general"`` when nothing matches.
+        """
+        text = description.lower()
+        buckets: tuple[tuple[str, tuple[str, ...]], ...] = (
+            ("bugfix", ("bug", "fix", "error", "crash", "regression", "broken")),
+            ("feature", ("add", "build", "implement", "create", "feature", "new")),
+            ("refactor", ("refactor", "clean", "optimis", "optimiz", "performance")),
+            ("docs", ("document", "docs", "readme", "write-up", "comment")),
+            ("review", ("review", "audit", "scan", "verify", "test")),
+            ("design", ("design", "ui", "ux", "style", "layout", "component")),
+        )
+        for name, keywords in buckets:
+            if any(kw in text for kw in keywords):
+                return name
+        return "general"
+
+
+__all__ = ["BaseAgent", "DEFAULT_CONTEXT_TURNS", "RESTORE_CONTEXT_MESSAGES"]

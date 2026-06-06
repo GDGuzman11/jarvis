@@ -55,8 +55,12 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from backend.memory.manager import MemoryManager
 
 from backend.ai.claude_client import ClaudeAPIError, ClaudeClient
 from backend.ai.ollama_client import OllamaClient
@@ -194,11 +198,16 @@ class VoicePipeline:
         claude: ClaudeClient | None = None,
         ollama: OllamaClient | None = None,
         detector: WakeWordDetector | None = None,
+        memory_manager: "MemoryManager | None" = None,
     ) -> None:
         self._hub = hub or default_hub
         self._claude = claude or ClaudeClient()
         self._ollama = ollama or OllamaClient()
         self._detector = detector or WakeWordDetector()
+
+        # Phase 12 memory coordinator. Stored now; recall/store/consolidate
+        # wiring around each turn lands in Phase 12B. No behaviour change yet.
+        self._memory_manager = memory_manager
 
         # The capture loop is shared between the wake-word detector and the
         # interrupt listener so they read one microphone stream, not two.
@@ -393,7 +402,7 @@ class VoicePipeline:
         self._busy = True
         try:
             await self._set_state("thinking")
-            await self._stream_and_speak(text)
+            await self._stream_and_speak(text, channel="text")
         except Exception:  # noqa: BLE001
             log.error("text_turn_error", exc_info=True)
         finally:
@@ -446,21 +455,52 @@ class VoicePipeline:
             if exc is not None and not isinstance(exc, asyncio.CancelledError):
                 raise exc
 
-    async def _stream_and_speak(self, transcript: str) -> None:
+    async def _stream_and_speak(self, transcript: str, *, channel: str = "voice") -> None:
         """Stream a Claude reply, speaking it sentence-by-sentence as it arrives.
 
         Tokens are buffered into speakable chunks (see
         :func:`_split_speakable_chunks`); each completed chunk is synthesised and
         played before generation finishes, so audio starts early. Transitions to
         ``speaking`` on the first chunk that is actually spoken.
+
+        Memory (Phase 12B)
+        ------------------
+        When a :class:`~backend.memory.manager.MemoryManager` is wired in, the
+        turn is bracketed with memory operations:
+
+        * **Before** the Claude call, :meth:`MemoryManager.recall` blends recent
+          episodic turns (prepended to ``messages``) and semantically-similar
+          facts (injected into the system prompt's ``# Current context`` block).
+        * **After** the reply is fully spoken, both sides of the exchange are
+          written to episodic memory and an importance-scored consolidation is
+          kicked off as a fire-and-forget task — never awaited, so it adds zero
+          latency to the spoken response.
+
+        When no manager is present the pipeline falls back to its original
+        stateless behaviour: a single user message and the base system prompt.
         """
-        messages = [{"role": "user", "content": transcript}]
-        system_prompt = build_system_prompt()
+        # --- Recall (Layer 2 + Layer 3) before reasoning --------------------
+        if self._memory_manager is not None:
+            recalled = await self._memory_manager.recall(
+                query=transcript,
+                n_recent=10,
+                n_semantic=3,
+            )
+            messages = recalled.episodic_messages + [
+                {"role": "user", "content": transcript}
+            ]
+            system_prompt = build_system_prompt(context=recalled.formatted_context)
+        else:
+            messages = [{"role": "user", "content": transcript}]
+            system_prompt = build_system_prompt()
 
         buffer = ""
         spoke_anything = False
+        # Accumulate the full reply so we can persist it once the turn completes.
+        response_parts: list[str] = []
 
         async for token in self._iter_reply(messages, system_prompt):
+            response_parts.append(token)
             buffer += token
             chunks, buffer = _split_speakable_chunks(buffer)
             for chunk in chunks:
@@ -476,6 +516,21 @@ class VoicePipeline:
                 await self._set_state("speaking")
                 spoke_anything = True
             await self._speak_chunk(tail)
+
+        # --- Persist the exchange after the reply is spoken -----------------
+        if self._memory_manager is not None:
+            response_text = "".join(response_parts).strip()
+            # Always write both sides to episodic memory (the raw diary).
+            await self._memory_manager.store(transcript, role="user", channel=channel)
+            if response_text:
+                await self._memory_manager.store(
+                    response_text, role="jarvis", channel=channel
+                )
+                # Consolidate (score + distil) off the hot path — fire-and-forget
+                # so it never delays the next turn or the spoken response.
+                asyncio.create_task(
+                    self._memory_manager.consolidate(transcript, response_text)
+                )
 
     async def _iter_reply(
         self, messages: list[dict[str, object]], system_prompt: str
