@@ -15,13 +15,11 @@
 ## Current Status
 
 - **Phase 15A verified ✓ 2026-06-06**: debugger-agent verified the Neural Intelligence Orb rewrite in `frontend/src/components/JarvisOrb.tsx`. Old system fully removed (2500-particle sand cloud, synaptic bezier arcs, jagged discharge arcs — no `PARTICLE_COUNT`/`flareRef`/`QuadraticBezierCurve3`/`DischargeSlot`). All 7 layers present: 3 nested glow spheres + wireframe hologram shell, 350 neuron `Points` (vertexColors), ~480 normal `LineSegments`, red freedom `LineSegments` (20%), 30 symbol `Sprite`s, cascade activation (`CASCADE_DEPTH=6`, `NEIGHBOR_K=4`, `RED_RATIO=0.2`). `BASE_RADIUS=1.2`, prop signature, `AdditiveBlending`+`depthWrite:false` all preserved; state gating per voiceState confirmed. `pnpm build` clean (0 TS errors). Backend suite **143/144** (only pre-existing `get_gmail_token.py` secret-scan fails — no regression; frontend-only change). **Phase 15A complete.**
-- **Active Phase**: Phases 13/14/15 complete and archived to `docs/PHASE_HISTORY.md`. Phase 11 remains open: mic sensitivity indicator (11C, not yet built), packaging (11D — `pnpm tauri build` not yet run), deferred voice items (need dedicated microphone). Phase 10 packaging also incomplete.
-- **Phase 14A verified (2026-06-06)**: debugger-agent verified the orb Neural Link rework in `frontend/src/components/JarvisOrb.tsx`. Solar flare system fully removed; synaptic arcs (QuadraticBezierCurve3, idle/speaking) + jagged discharge arcs (LineSegments + vertexColors, thinking/listening) + memory arcs (gold→purple→white) added; state gating and audioLevel pulse intact. `pnpm build` clean (0 TS errors). Backend suite 143/144 (only pre-existing `get_gmail_token.py` secret-scan fails — no regression; frontend-only change).
-- **Last Completed (2026-06-05)**: **Phase 12E verified ✓** — FTS5 keyword search + daily backup job built and verified by debugger-agent. 134/135 tests passing (8 new 12E tests). One pre-existing secret-scan failure on `get_gmail_token.py` (Google OAuth client id, not a real secret) owned by security-agent. Full memory system operational: episodic (SQLite), semantic (FAISS), agent working memory, FTS5 keyword search, daily backups, open loops, failure memory, people profiles, consolidation loop. **Phase 12 (Three-Layer Memory) fully complete — archived to `docs/PHASE_HISTORY.md`.**
-- **Phase 13A verified (2026-06-06)**: debugger-agent verified both new endpoints end-to-end. New test file `backend/test_phase13a_verify.py` (9 tests, all pass). Full backend suite **143/144** (only pre-existing `get_gmail_token.py` secret-scan fails). `pnpm build` clean. Phase 13A frontend (per-card task input, Atlas MissionControl panel, live task log) wired to `POST /api/agents/{id}/task` + `GET /api/agents/{id}/tasks`. **Phase 13 complete — archived to `docs/PHASE_HISTORY.md`.**
-- **Next Task**: Phase 11C mic sensitivity indicator (add small input-level bar to AnimationWindow when listening state) OR Phase 11D `pnpm tauri build` (generate `.exe` Windows installer). Security-agent still owns the pre-existing `get_gmail_token.py` secret-scan fix (would bring suite to 143/143).
-- **Blockers**: Dedicated microphone not yet purchased — all voice E2E tests deferred. No other blockers.
-- **Test State**: 143/144 passing · 1 pre-existing failure (secret-scan on `get_gmail_token.py`) · `pnpm build` clean. New test files: `test_phase12a_verify.py`, `test_phase12b_verify.py` (in `backend/voice/`), `test_phase12c_verify.py` (in `backend/agents/`), `test_phase12d_verify.py` (in `backend/memory/`), `test_phase12e_verify.py` (in `backend/memory/`), `test_phase13a_verify.py` (in `backend/`). See `docs/TEST_HISTORY.md` for full logs.
+- **Active Phase**: Phases 1–15 complete and archived. All remaining open items consolidated into the **Pending** section below — agents should skip that section when planning new phases.
+- **Phase 13A verified (2026-06-06)**: `POST /api/agents/{id}/task` + `GET /api/agents/{id}/tasks` endpoints live; `AgentTaskPanel.tsx`, `MissionControl.tsx` wired; 9 tests pass. Full suite **143/144**.
+- **Next Task**: Add a new phase here when the user is ready. See the **Pending** section for deferred items that are on hold.
+- **Blockers**: None. Dedicated microphone not yet purchased — voice E2E tests deferred to Pending.
+- **Test State**: 143/144 passing · 1 pre-existing failure (secret-scan on `get_gmail_token.py`) · `pnpm build` clean.
 - **Build Started**: 2026-06-02
 
 ---
@@ -101,64 +99,24 @@ Dark theme `#080810` (updated 2026-06-04), electric blue/cyan accents `#00D4FF`,
 
 ---
 
-## Phase 10 — Polish & Packaging
-*Phases 1–9 complete. All Phase 10 done items archived in [docs/PHASE_HISTORY.md](docs/PHASE_HISTORY.md).*
+## Pending — On Hold Until Further Notice
+*Agents: **skip this entire section** when planning or starting any new phase. These items are intentionally deferred and are NOT prerequisites for upcoming work. The user will schedule them explicitly when ready.*
 
-- [ ] Windows installer via Tauri bundler (`.exe`) — run `pnpm tauri build`
-- [ ] Verify: clean install on fresh Windows 11 machine works end-to-end *(blocked — requires `.exe` installer built first)*
+### Packaging
+- [ ] Run `pnpm tauri build` — generates Windows `.exe` installer
+- [ ] Verify clean install on fresh Windows 11 machine end-to-end *(blocked — requires installer first)*
 
----
+### Voice & Microphone *(requires dedicated microphone — not yet purchased)*
+- [ ] E2E voice test — "Hey Jarvis, what's in my Slack?" → reads Slack → speaks answer
+- [ ] E2E voice test — "Hey Jarvis, what's in my Gmail?" → reads inbox → speaks answer
+- [ ] Tune wake-word sensitivity (currently threshold=0.5, may need adjustment after mic upgrade)
+- [ ] Tune silence detection threshold (`SILENCE_RMS_THRESHOLD=500`) for new microphone
+- [ ] Test interrupt ("stop") cancels mid-response reliably with new microphone
 
-## Phase 11 — Live Usage & Ongoing Improvements
-*Active phase. Each task must be tested by debugger-agent before checkbox is ticked.*
+### UI
+- [ ] Add microphone sensitivity indicator to AnimationWindow (small input-level bar when listening)
 
-### 11A — Credentials & Integrations
-*Handled by: user (manual OAuth) + backend-agent (keyring storage)*
-
-- [x] Gmail OAuth setup — user gabedeguzman99@gmail.com *(all 4 credentials confirmed SET in keyring 2026-06-04)*
-  - [x] Create Google Cloud project "Jarvis" at console.cloud.google.com
-  - [x] Enable Gmail API
-  - [x] Configure OAuth consent screen (External, app name: Jarvis)
-  - [x] Create OAuth Client ID (Desktop app type) → save Client ID + Secret to keyring
-  - [x] Set redirect URI `urn:ietf:wg:oauth:2.0:oob` to keyring
-  - [x] Run OAuth flow to generate refresh token → save to keyring
-  - [x] Verify: `keystore.missing_credentials()` returns `[]` (all 10 set) *(confirmed 2026-06-04 — GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REDIRECT_URI, GMAIL_REFRESH_TOKEN all present)*
-- [x] Verify startup greeting fires on launch — `_startup_greeting()` implemented in `main.py` lifespan; all credentials SET so Claude + TTS calls will succeed *(confirmed 2026-06-04)*
-- [ ] E2E voice test with dedicated microphone — "Hey Jarvis, what's in my Slack?" → reads Slack → speaks answer — **DEFERRED: needs dedicated microphone**
-- [ ] E2E voice test — "Hey Jarvis, what's in my Gmail?" → reads inbox → speaks answer — **DEFERRED: needs dedicated microphone**
-
-### 11B — Voice & Audio
-*Handled by: backend-agent*
-
-- [ ] Tune wake-word sensitivity after microphone upgrade (currently threshold=0.5, may need adjustment) — **DEFERRED: needs dedicated microphone**
-- [ ] Tune silence detection threshold (`SILENCE_RMS_THRESHOLD=500`) for new microphone — **DEFERRED: needs dedicated microphone**
-- [x] Verify audio plays through correct output device consistently *(confirmed 2026-06-04 — Jarvis speaking audibly through Realtek laptop speakers + VG27AQ3A monitor)*
-- [ ] Test interrupt ("stop") cancels mid-response reliably with new microphone — **DEFERRED: needs dedicated microphone**
-
-### 11C — UI Polish
-*Handled by: frontend-agent (Ben)*
-
-- [x] Text input fallback in ReasoningWindow — type a message when mic isn't available. `POST /api/chat` endpoint in `main.py` → `pipeline.process_text(text)` runs the full Claude → token broadcast → TTS pipeline as a background task. Input disabled while Jarvis is busy (voiceState ≠ idle), shows current state label, Enter key submits, error shown inline. Backend returns 409 if busy, 400 if empty. Frontend: `frontend/src/windows/ReasoningWindow.tsx` — text input + SEND button at bottom, `.hud-btn` style, `border-jarvis-cyan/30` focus ring. `backend/voice/pipeline.py` — new `process_text(text)` public method.
-- [x] **Chat history UI in ReasoningWindow** — `MessageBubble` component: user right-aligned (`bg-jarvis-cyan/10`, `border-jarvis-cyan/30`), Jarvis left-aligned (`bg-white/5`, `border-white/10`); blinking caret on in-progress Jarvis bubble; auto-scroll via `useEffect`+`scrollRef`; `chatHistory: ChatMessage[]` + `addUserMessage()` + `appendJarvisToken()` in `store.ts`; `websocket.ts` `case "token"` calls both `appendToken` (legacy) and `appendJarvisToken`. *(verified by debugger-agent 2026-06-04, 96/96 backend tests pass, pnpm build clean)*
-- [x] **Live cost + latency display** — `backend/ai/claude_client.py`: `_compute_cost()` pure function (input $15/M, output $75/M, cache_write $3.75/M, cache_read $1.50/M); `MetricsEvent` broadcast after `is_final` token; `backend/events.py` `MetricsEvent` dataclass added. Frontend: `MetricsEvent` type extended with token count fields; `store.ts` `sessionCostUsd` running total; `ReasoningWindow` header shows per-turn cost (4dp), session total (2dp), latency ms, and `N in / N out · N cached` token counts. *(verified by debugger-agent 2026-06-04)*
-- [x] **Translucent window style** — `index.css`: `.hud-bg` → `rgba(8,8,16,0.18)`, grid 0.02 opacity; `.glass` → `rgba(5,10,25,0.35)` + `blur(40px)` + border `rgba(0,212,255,0.45)`; `body` text-shadow `0 1px 3px rgba(0,0,0,0.8)`. `WindowFrame.tsx` header → `bg-black/20`. `AnimationWindow.tsx` root → `bg-transparent`. *(verified by debugger-agent 2026-06-04, pnpm build clean)*
-- [x] Verify window drag works in native Tauri app — `core:window:allow-start-dragging` + `startDragging()` confirmed working *(2026-06-04)*
-- [x] Verify shutdown button (⏻) closes all 5 windows cleanly — `core:window:allow-close` added to `capabilities/default.json`; `exit_app()` Tauri command confirmed; requires `pnpm tauri dev` restart after capability change *(2026-06-04)*
-- [x] Verify connection beams animate correctly in native Tauri app — 4 SVG paths with `<animateMotion>` dots confirmed in `AnimationWindow.tsx` *(2026-06-04)*
-- [x] Verify startup greeting sets orb to speaking state (cyan) then back to idle (blue) — `_startup_greeting()` broadcasts `speaking` then `idle` voice states *(2026-06-04)*
-- [x] Test window positions on user's specific dual-monitor setup (laptop + VG27AQ3A) — user confirmed windows appear correctly *(2026-06-04)*
-- [ ] Add a microphone sensitivity indicator to the AnimationWindow (small bar showing input level when listening) — **NOT YET BUILT** (Phase 11E backlog)
-
-### 11D — Packaging
-*Handled by: backend-agent + production-manager*
-
-- [ ] Windows installer via Tauri bundler (`pnpm tauri build`) — generates `.exe` installer
-- [x] Git repo initialised with `.gitignore` (excludes `.env`, `data/`, `workspace/`, `.venv/`, `target/`); pushed to **https://github.com/GDGuzman11/jarvis** (2026-06-04)
-- [ ] Verify clean install on fresh Windows 11 machine (end-to-end)
-
-### 11E — Future Enhancements (backlog — not yet scheduled)
-*Handled by: appropriate agent when scheduled*
-
+### Future Enhancements
 - [ ] Jarvis remembers context across sessions (FAISS semantic memory populated by conversations)
 - [ ] Proactive notifications — Jarvis speaks when important Slack/Gmail arrives
 - [ ] Agent task visibility — show what each agent is working on in real-time in AgentsWindow

@@ -387,3 +387,25 @@ A floating holographic sphere of interconnected neuron nodes. Thin glowing pathw
 
 - [x] Complete rewrite of `frontend/src/components/JarvisOrb.tsx` — all 7 layers, cascade activation system, symbol sprites built imperatively via `THREE.Group + THREE.Sprite + THREE.CanvasTexture`, state-driven `params` lerp. **Removed**: 2500-particle sand cloud (`PARTICLE_COUNT`, `ParticleSeed`, particle positions/seeds), synaptic bezier arc system (`QuadraticBezierCurve3`, `ArcSlot`, arc pool + impulse logic), jagged discharge system (`DischargeSlot`, discharge geometry + color arrays), and legacy color constants (`COL_PURPLE`/`COL_GOLD`/`COL_WHITE`/`COL_CYAN`). **Added**: 350-node golden-spiral graph with nearest-K=4 adjacency + dedup edges; ~20% split into red freedom pathways (`RED_RATIO=0.2`); 3 nested glow spheres + wireframe `IcosahedronGeometry` hologram shell (flicker 0.88-1.0, 50-200ms); neuron `Points` (vertexColors, base `#b3d4ff`→active tint per state); normal `LineSegments` (`#1a3a7a`→`#7ab8ff`) + red `LineSegments` (`#440011`→`#ff2244`, `redGlow` scaled); 30 symbol `Sprite`s from per-glyph 64×64 `CanvasTexture` (`rgba(255,255,255,0.6)`) drifting + bouncing inside `0.8*BASE_RADIUS`; cascade activation (`CascadeFront[]` spreads through adjacency up to `CASCADE_DEPTH=6`, 0.04s/hop, `pow(0.12,delta)` decay); state-specific behaviour (thinking multi-front + gold tint + 2.2× swirl, listening inward ripple every 1.2s, speaking hub outward pulse + `audioLevel` scale/brightness). **Preserved**: `JarvisOrb({voiceState,audioLevel})` signature, `BASE_RADIUS=1.2`, golden-spiral distribution, `AdditiveBlending`+`depthWrite:false` on all materials, audioLevel speaking pulse.
 - [x] Verify (debugger-agent): idle shows gentle neuron activations + floating symbols; thinking shows rapid cascades + vivid red pathways; speaking pulse reacts to audioLevel; `pnpm build` clean; no backend regressions. *(verified 2026-06-06 — `pnpm build` clean (0 TS errors, 476 modules); static analysis confirms old system GONE (no `PARTICLE_COUNT`/`flareRef`/`QuadraticBezierCurve3`/`DischargeSlot`/sand cloud) and all 7 layers present: 3 nested glow spheres + wireframe `IcosahedronGeometry` hologram shell, 350-node `Points` (`vertexColors`), ~480 normal `LineSegments` (`#1a3a7a`→`#7ab8ff`), red freedom `LineSegments` (`#440011`→`#ff2244`, 20% via `RED_RATIO=0.2`), 30 symbol `Sprite`s (`CanvasTexture`), cascade system (`CascadeFront` spreads through adjacency, `CASCADE_DEPTH=6`, `NEIGHBOR_K=4`); `BASE_RADIUS=1.2`, `NODE_COUNT=350`, `JarvisOrb({voiceState,audioLevel})` signature, `AdditiveBlending`+`depthWrite:false` on all materials preserved; state gating verified; backend suite 143/144, only pre-existing `get_gmail_token.py` secret-scan fails — no regression)*
+
+---
+
+## Phase 10 + Phase 11 — Completed Items ✓
+*Incomplete items from Phases 10/11 consolidated into "Pending — On Hold" in CLAUDE.md (2026-06-06). Completed items recorded here for reference.*
+
+### Phase 11A — Credentials & Integrations ✓
+- [x] Gmail OAuth setup — user gabedeguzman99@gmail.com (all 4 credentials: GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REDIRECT_URI, GMAIL_REFRESH_TOKEN set in Windows Credential Manager via keyring — confirmed 2026-06-04)
+- [x] Verify startup greeting fires on launch — `_startup_greeting()` in `main.py` lifespan; Claude + TTS calls succeed *(confirmed 2026-06-04)*
+
+### Phase 11B — Voice & Audio (partial)
+- [x] Verify audio plays through correct output device — Jarvis speaking audibly through Realtek laptop speakers + VG27AQ3A monitor *(confirmed 2026-06-04)*
+
+### Phase 11C — UI Polish ✓
+- [x] Text input fallback in ReasoningWindow (`POST /api/chat` → `pipeline.process_text(text)`, Enter key, busy-state gating, inline error)
+- [x] Chat history UI in ReasoningWindow (`MessageBubble` component, user/Jarvis styling, blinking caret, auto-scroll, Zustand `chatHistory`)
+- [x] Live cost + latency display (`_compute_cost()` in `claude_client.py`, `MetricsEvent`, per-turn + session cost, token counts in ReasoningWindow header)
+- [x] Translucent window style (`.hud-bg`, `.glass` blur, `.hud-btn`, `AnimationWindow` transparent root)
+- [x] Window drag, shutdown button (⏻), connection beams, startup greeting orb state, window positions on dual-monitor — all verified 2026-06-04
+
+### Phase 11D — Packaging (partial)
+- [x] Git repo initialised with `.gitignore` (excludes `.env`, `data/`, `workspace/`, `.venv/`, `target/`); pushed to https://github.com/GDGuzman11/jarvis *(2026-06-04)*
