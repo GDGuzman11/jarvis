@@ -34,6 +34,17 @@ or tool_permissions — the frontend forward-declares these (`comms`,
 (no command handling). When backend adds those, confirm field names match
 `frontend/src/lib/types.ts` before assuming the UI is wired.
 
+CONFIRMED (Phase 13A, 2026-06-06): the REST agent-task endpoints
+`POST /api/agents/{slug}/task` (body `{goal}`) and `GET /api/agents/{slug}/tasks`
+are keyed on PUBLIC DISPLAY SLUGS (atlas/ben/kado/sentinel/vega/quill), NOT the
+internal agent_ids the WS store uses (production_lead/frontend/backend/security/
+marketing/content). Frontend converts via `AGENT_ID_TO_SLUG` in
+`frontend/src/lib/api.ts` (mirrors backend `_PUBLIC_TO_AGENT_ID` in
+`backend/main.py`). Map off the stable internal id — the display NAME is
+user-editable via rename. `/api/agents/{id}/rename`, by contrast, takes the
+internal id directly. POST returns {task_id, agent_id, status:"queued"};
+404 unknown slug, 400 empty goal.
+
 CONFIRMED (Phase 11C, 2026-06-04): `metrics` is now live from the backend.
 Shape: { type:"metrics", cost_usd, latency_ms, model, input_tokens,
 output_tokens, cache_read_tokens, cache_write_tokens } (+ timestamp). The

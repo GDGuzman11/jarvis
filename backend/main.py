@@ -37,7 +37,12 @@ from backend.events import AgentUpdate
 from backend.integrations.gmail_client import GmailClient
 from backend.integrations.slack_client import SlackClient
 from backend.logging_config import configure_logging, get_logger
-from backend.memory.database import init_db, rename_agent
+from backend.memory.database import (
+    create_task,
+    get_agent_tasks,
+    init_db,
+    rename_agent,
+)
 from backend.memory.manager import MemoryManager
 from backend.memory.vector_store import DEFAULT_INDEX_PATH, VectorStore
 from backend.memory.database import DEFAULT_DB_PATH
@@ -570,6 +575,122 @@ async def rename_agent_endpoint(
 
     log.info("agent_renamed", agent_id=agent_id, name=new_name)
     return {"agent_id": agent_id, "name": new_name}
+
+
+# --- Direct agent task submission (Phase 13A) -------------------------------
+#
+# The AgentsWindow shows agents by their display name (Atlas, Ben, Kado, ...),
+# so these endpoints accept those friendly slugs in the URL and map them to the
+# internal ``agent_id`` keys used everywhere else (``production_lead``,
+# ``frontend``, ``backend``, ...). Keeping the public API keyed on display
+# slugs means the frontend never has to know the internal ids.
+_PUBLIC_TO_AGENT_ID: dict[str, str] = {
+    "atlas": "production_lead",
+    "ben": "frontend",
+    "kado": "backend",
+    "sentinel": "security",
+    "vega": "marketing",
+    "quill": "content",
+}
+
+# Upper bound on a submitted goal (Security Rule 3: cap input before it reaches
+# Claude). Mirrors the 2000-char voice-input cap.
+MAX_GOAL_LEN: int = 2000
+
+# How many recent tasks the task-log endpoint returns per agent.
+AGENT_TASK_LOG_LIMIT: int = 5
+
+
+def _sanitize_goal(raw: str) -> str:
+    """Strip control characters and cap length (Security Rule 3).
+
+    Removes ASCII control chars (except none — goals are single-purpose text),
+    collapses surrounding whitespace, and truncates to :data:`MAX_GOAL_LEN`.
+    Returns the cleaned string, which may be empty (the caller rejects empty).
+    """
+    cleaned = "".join(ch for ch in raw if ch >= " " or ch == "\n")
+    return cleaned.strip()[:MAX_GOAL_LEN]
+
+
+@app.post("/api/agents/{agent_id}/task", tags=["agents"])
+async def submit_agent_task_endpoint(
+    agent_id: str,
+    goal: str = Body(..., embed=True),
+) -> dict[str, Any]:
+    """Queue a task directly on a single agent, bypassing the Production Lead.
+
+    ``agent_id`` is a display slug (``atlas``, ``ben``, ``kado``, ``sentinel``,
+    ``vega``, ``quill``). The goal is sanitized (Security Rule 3) then written to
+    the ``tasks`` table and enqueued straight onto the target agent's live queue,
+    so it is targeted directly rather than routed by Atlas. Targeting ``atlas``
+    enqueues onto the Production Lead, which then classifies and delegates.
+
+    Returns ``{"task_id", "agent_id", "status": "queued"}``. Responds ``404``
+    for an unknown agent slug and ``400`` for an empty/missing goal.
+    """
+    internal_id = _PUBLIC_TO_AGENT_ID.get(agent_id.lower())
+    if internal_id is None:
+        raise HTTPException(status_code=404, detail=f"unknown agent {agent_id!r}")
+
+    clean_goal = _sanitize_goal(goal)
+    if not clean_goal:
+        raise HTTPException(status_code=400, detail="goal must not be empty")
+
+    agents = getattr(app.state, "agents", {})
+    agent = agents.get(internal_id)
+    if agent is None:
+        # The slug is valid but the runtime is not up (e.g. mid-teardown).
+        raise HTTPException(status_code=404, detail=f"unknown agent {agent_id!r}")
+
+    # Durable record first: a ``tasks`` row with no creator agent (the user is
+    # not an agent row) assigned directly to the target. Then enqueue live so the
+    # agent starts immediately — mirrors ProductionLead._delegate's plumbing
+    # without routing through Atlas.
+    title = clean_goal.splitlines()[0][:120]
+    task_id = await create_task(None, internal_id, title, description=clean_goal)
+
+    agent.enqueue_task(
+        {
+            "task_id": task_id,
+            "title": title,
+            "description": clean_goal,
+            "created_by": "user",
+        }
+    )
+
+    log.info(
+        "agent_task_submitted_direct",
+        agent_id=internal_id,
+        task_id=task_id,
+        chars=len(clean_goal),
+    )
+    return {"task_id": task_id, "agent_id": agent_id, "status": "queued"}
+
+
+@app.get("/api/agents/{agent_id}/tasks", tags=["agents"])
+async def list_agent_tasks_endpoint(agent_id: str) -> dict[str, Any]:
+    """Return the most recent tasks assigned to a single agent, newest first.
+
+    ``agent_id`` is a display slug (see :func:`submit_agent_task_endpoint`).
+    Returns at most :data:`AGENT_TASK_LOG_LIMIT` tasks as
+    ``[{"task_id", "goal", "status", "created_at"}]``. Responds ``404`` for an
+    unknown agent slug.
+    """
+    internal_id = _PUBLIC_TO_AGENT_ID.get(agent_id.lower())
+    if internal_id is None:
+        raise HTTPException(status_code=404, detail=f"unknown agent {agent_id!r}")
+
+    rows = await get_agent_tasks(internal_id)
+    tasks = [
+        {
+            "task_id": row["id"],
+            "goal": row["description"],
+            "status": row["status"],
+            "created_at": row["created_at"],
+        }
+        for row in rows[:AGENT_TASK_LOG_LIMIT]
+    ]
+    return {"agent_id": agent_id, "tasks": tasks}
 
 
 def _is_allowed_ws_origin(origin: str | None) -> bool:

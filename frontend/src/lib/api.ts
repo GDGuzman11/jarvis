@@ -120,3 +120,75 @@ export async function renameAgent(
     return false;
   }
 }
+
+/**
+ * Maps the store's internal agent_id (e.g. `production_lead`) to the public
+ * display slug the task endpoints expect (e.g. `atlas`). Mirrors the backend
+ * `_PUBLIC_TO_AGENT_ID` table in `backend/main.py`. The agent's display name is
+ * user-editable, so we key off the stable internal id, never the name.
+ */
+export const AGENT_ID_TO_SLUG: Record<string, string> = {
+  production_lead: "atlas",
+  frontend: "ben",
+  backend: "kado",
+  security: "sentinel",
+  marketing: "vega",
+  content: "quill",
+};
+
+/** A single task row as returned by `GET /api/agents/{agent_id}/tasks`. */
+export interface AgentTask {
+  task_id: number | string;
+  goal: string;
+  status: string;
+  created_at: string;
+}
+
+/**
+ * Submit a goal directly to one agent. POSTs to `/api/agents/{slug}/task` with
+ * `{ goal }`. Resolves the new task_id on success, or throws an Error whose
+ * message is the backend `detail` (e.g. "goal must not be empty") so the UI can
+ * surface it inline.
+ */
+export async function submitAgentTask(
+  agentId: string,
+  goal: string,
+): Promise<{ task_id: number | string; status: string }> {
+  const slug = AGENT_ID_TO_SLUG[agentId] ?? agentId;
+  let res: Response;
+  try {
+    res = await fetch(
+      `${API_BASE}/api/agents/${encodeURIComponent(slug)}/task`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ goal }),
+      },
+    );
+  } catch {
+    throw new Error("Backend offline.");
+  }
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { detail?: string };
+    throw new Error(data.detail ?? `Request failed (${res.status}).`);
+  }
+  return (await res.json()) as { task_id: number | string; status: string };
+}
+
+/**
+ * Fetch the most recent tasks for one agent (newest first, max 5). Returns an
+ * empty array on any error so the caller can render an empty log gracefully.
+ */
+export async function fetchAgentTasks(agentId: string): Promise<AgentTask[]> {
+  const slug = AGENT_ID_TO_SLUG[agentId] ?? agentId;
+  try {
+    const res = await fetch(
+      `${API_BASE}/api/agents/${encodeURIComponent(slug)}/tasks`,
+    );
+    if (!res.ok) return [];
+    const data = (await res.json()) as { tasks?: AgentTask[] };
+    return data.tasks ?? [];
+  } catch {
+    return [];
+  }
+}

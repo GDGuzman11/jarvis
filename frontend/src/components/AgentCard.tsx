@@ -10,6 +10,7 @@ import type { AgentState } from "../lib/types";
 import { useStore } from "../lib/store";
 import { renameAgent } from "../lib/api";
 import StatusBadge from "./StatusBadge";
+import AgentTaskPanel from "./AgentTaskPanel";
 
 export function AgentCard({ agent }: { agent: AgentState }) {
   const [expanded, setExpanded] = useState(false);
@@ -120,6 +121,9 @@ export function AgentCard({ agent }: { agent: AgentState }) {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Phase 13A — direct task input + per-agent task log. */}
+      <AgentTaskPanel agentId={agent.agent_id} />
 
       <p className="mt-2 text-right text-[10px] tracking-widest text-jarvis-muted">
         {expanded ? "▲ COLLAPSE" : "▼ EXPAND"}

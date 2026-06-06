@@ -14,12 +14,14 @@
 
 ## Current Status
 
-- **Active Phase**: 13 — Agent Direct Interaction UI (not yet started). Phase 11 remains open (11D packaging + mic-blocked voice items).
+- **Active Phase**: 14 — Neural Link Animation (**Phase 14A verified ✓ 2026-06-06**). Phase 13A verified ✓. Phase 11 remains open (11D packaging + mic-blocked voice items).
+- **Phase 14A verified (2026-06-06)**: debugger-agent verified the orb Neural Link rework in `frontend/src/components/JarvisOrb.tsx`. Solar flare system fully removed; synaptic arcs (QuadraticBezierCurve3, idle/speaking) + jagged discharge arcs (LineSegments + vertexColors, thinking/listening) + memory arcs (gold→purple→white) added; state gating and audioLevel pulse intact. `pnpm build` clean (0 TS errors). Backend suite 143/144 (only pre-existing `get_gmail_token.py` secret-scan fails — no regression; frontend-only change).
 - **Last Completed (2026-06-05)**: **Phase 12E verified ✓** — FTS5 keyword search + daily backup job built and verified by debugger-agent. 134/135 tests passing (8 new 12E tests). One pre-existing secret-scan failure on `get_gmail_token.py` (Google OAuth client id, not a real secret) owned by security-agent. Full memory system operational: episodic (SQLite), semantic (FAISS), agent working memory, FTS5 keyword search, daily backups, open loops, failure memory, people profiles, consolidation loop. **Phase 12 (Three-Layer Memory) fully complete — archived to `docs/PHASE_HISTORY.md`.**
-- **Next Task**: Run `/security-agent` to fix `get_gmail_token.py` secret (removes the 1 failing test). Then run `/production-manager` for Phase 13 (Agent Direct Interaction UI).
-- **Pending (Phase 13 — new)**: Agent direct interaction from AgentsWindow UI — user wants to submit tasks and chat with individual agents (Atlas/Ben/Kado/Sentinel/Vega/Quill) from the UI. Route to `/frontend-agent` + `/backend-agent`. See Phase 13 section below.
+- **Phase 13A backend (2026-06-06)**: Two new endpoints in `backend/main.py` — `POST /api/agents/{agent_id}/task` (direct task submission, bypasses Atlas) and `GET /api/agents/{agent_id}/tasks` (last 5 tasks). Accept display slugs (atlas/ben/kado/sentinel/vega/quill). Self-checked: 134/135 tests pass (only pre-existing secret-scan fails). Awaiting frontend wiring (per-card task input, Atlas chat panel, live task log) + debugger-agent verification.
+- **Phase 13A verified (2026-06-06)**: debugger-agent verified both new endpoints end-to-end. New test file `backend/test_phase13a_verify.py` (9 tests, all pass). Full backend suite **143/144** (only pre-existing `get_gmail_token.py` secret-scan fails). `pnpm build` clean. Phase 13A frontend (per-card task input, Atlas MissionControl panel, live task log) wired to `POST /api/agents/{id}/task` + `GET /api/agents/{id}/tasks`.
+- **Next Task**: Phase 13 and 14 both complete. Run `/security-agent` to fix `get_gmail_token.py` secret (removes the 1 failing test, brings suite to 143/143). Then run `/production-manager` for next phase.
 - **Blockers**: Dedicated microphone not yet purchased — all voice E2E tests deferred. No other blockers.
-- **Test State**: 134/135 passing · 1 pre-existing failure (secret-scan on `get_gmail_token.py`) · `pnpm build` clean. New test files: `test_phase12a_verify.py`, `test_phase12b_verify.py` (in `backend/voice/`), `test_phase12c_verify.py` (in `backend/agents/`), `test_phase12d_verify.py` (in `backend/memory/`), `test_phase12e_verify.py` (in `backend/memory/`). See `docs/TEST_HISTORY.md` for full logs.
+- **Test State**: 143/144 passing · 1 pre-existing failure (secret-scan on `get_gmail_token.py`) · `pnpm build` clean. New test files: `test_phase12a_verify.py`, `test_phase12b_verify.py` (in `backend/voice/`), `test_phase12c_verify.py` (in `backend/agents/`), `test_phase12d_verify.py` (in `backend/memory/`), `test_phase12e_verify.py` (in `backend/memory/`), `test_phase13a_verify.py` (in `backend/`). See `docs/TEST_HISTORY.md` for full logs.
 - **Build Started**: 2026-06-02
 
 ---
@@ -176,11 +178,11 @@ Dark theme `#080810` (updated 2026-06-04), electric blue/cyan accents `#00D4FF`,
 - WebSocket: `AgentUpdate` events broadcast agent status/task changes in real time — already displayed on cards
 
 ### What needs to be built (Phase 13A — frontend-agent + backend-agent)
-- [ ] **Task input per agent card** — text field + SEND button on each card; submits `POST /api/agents/{agent_id}/task` with `{"goal": "..."}` to queue a task for that agent directly
-- [ ] **Atlas (Production Lead) chat panel** — dedicated chat input in AgentsWindow for submitting high-level goals to Atlas; Atlas breaks them down and delegates automatically
-- [ ] **Live task log per agent** — expandable section on each card showing last 5 completed tasks (from `tasks` table) pulled via `GET /api/agents/{agent_id}/tasks`
-- [ ] **New backend endpoint** — `POST /api/agents/{agent_id}/task` validates agent_id, writes to `tasks` table, enqueues directly (bypass production lead for direct targeting)
-- [ ] Verify (debugger-agent): task submission reaches agent queue; agent status updates broadcast to UI; pytest passes
+- [x] **Task input per agent card** — text field + SEND button on each card; submits `POST /api/agents/{agent_id}/task` with `{"goal": "..."}` to queue a task for that agent directly. Built in `frontend/src/components/AgentTaskPanel.tsx` (input + SEND, loading state, inline error, clears on success), wired into `AgentCard.tsx`. Internal `agent_id`→public slug mapping `AGENT_ID_TO_SLUG` added to `frontend/src/lib/api.ts` (`production_lead`→`atlas`, etc.) since the endpoint keys on display slugs; map keys off the stable internal id, not the user-editable name.
+- [x] **Atlas (Production Lead) chat panel** — dedicated "Mission Control / Task Atlas" panel at the top of AgentsWindow (`frontend/src/components/MissionControl.tsx`); larger prominent input, submits to `atlas` slug, shows dispatch confirmation + inline error. Wired into `AgentsWindow.tsx` above the card grid.
+- [x] **Live task log per agent** — expandable "Task Log" section in `AgentTaskPanel`; fetches `GET /api/agents/{agent_id}/tasks` on mount and after each submit, shows last 5 tasks, goal truncated to 60 chars, color-coded status pills (queued=cyan, running=gold, done=green, failed=red), collapsed by default with chevron toggle.
+- [x] **New backend endpoints** — `POST /api/agents/{agent_id}/task` + `GET /api/agents/{agent_id}/tasks` in `backend/main.py`. Accept friendly display slugs (`atlas`/`ben`/`kado`/`sentinel`/`vega`/`quill`) mapped to internal agent_ids via `_PUBLIC_TO_AGENT_ID`. POST: sanitizes goal (strip control chars, 2000-char cap — Security Rule 3), writes a `tasks` row via `create_task(None, internal_id, ...)` (creator=NULL since the user is not an agent row), enqueues directly onto the live agent's queue (bypasses Atlas), returns `{task_id, agent_id, status:"queued"}`; 404 unknown slug, 400 empty goal. GET: returns last 5 tasks (newest first) as `[{task_id, goal, status, created_at}]`; 404 unknown slug. Reuses existing `database.create_task` / `get_agent_tasks` and `BaseAgent.enqueue_task` — no schema or runtime changes.
+- [x] Verify (debugger-agent): task submission reaches agent queue; agent status updates broadcast to UI; pytest passes *(verified 2026-06-06 — `backend/test_phase13a_verify.py`, 9 tests cover both endpoints: valid/empty/unknown-slug task submit, non-Atlas direct enqueue, control-char stripping, oversized-goal truncation, task-log fetch + 404. Full suite 143/144 pass — only pre-existing `get_gmail_token.py` secret-scan fails. `pnpm build` clean.)* *(backend self-checked: full suite 134/135, only the pre-existing get_gmail_token.py secret-scan fails — no regressions)*
 
 ### Agent Routing Guide addition
 | Phase 13 — Agent UI | `/frontend-agent` (UI) + `/backend-agent` (endpoint) |
@@ -188,18 +190,18 @@ Dark theme `#080810` (updated 2026-06-04), electric blue/cyan accents `#00D4FF`,
 ---
 
 ## Phase 14 — Neural Link Animation (AnimationWindow)
-*Not yet started. Replace solar flare system with a dual-mode neural link animation that matches the Jarvis HUD aesthetic and reflects AI cognitive states.*
+*Phase 14A complete and verified 2026-06-06. Solar flares replaced with dual-mode neural link animation.*
 
 ### What to remove
 - Solar flare system in `frontend/src/components/JarvisOrb.tsx`: `FLARE_COUNT`, `PARK`, `flareRef`, `flarePositions`, `flareData`, burst spawn logic (~lines 170-240), and the `<points ref={flareRef}>` JSX block
 - **Keep everything else**: main 2500-particle cloud, inner core sphere, color/state lerp, audioLevel reactivity (pulse still works during speaking)
 
 ### What to build (Phase 14A — frontend-agent only)
-- [ ] **Synaptic Arcs** (idle / speaking state) — 14 invisible node positions distributed on the sphere surface. Every 1.5-4s two random nodes activate: a smooth `QuadraticBezierCurve3` arc spawns between them (control point offset 0.4 units outward), a bright white impulse dot travels along it in ~0.2s, then the arc fades. Color: cyan (`#00d4ff`). 5-slot pool, `sin(t*PI)` opacity envelope.
-- [ ] **Arc Discharge** (thinking / listening state) — rapid jagged polylines (5-7 segments with ±0.25 unit perpendicular jitter) between random surface points. Very short lifetime (0.1-0.25s). Fires every 0.15-0.4s. 6-slot pool, linear fade out. Color: gold (`#ffb800`) during thinking, cyan during listening.
-- [ ] **Memory formation color** — ~25% of discharge arcs set `memoryArc=true`: arc color lerps gold → purple (`#8B5CF6`) → white as it decays, symbolizing a memory being encoded. Uses `vertexColors: true` on the discharge `LineSegments` geometry.
-- [ ] **State-aware switching** — synaptic arcs only spawn in `idle`/`speaking`; discharge arcs only spawn in `thinking`/`listening`. Active arcs fade out naturally on state transition (no hard-clear).
-- [ ] Verify (debugger-agent): idle shows smooth bezier arcs with impulse dots; thinking shows rapid gold discharge arcs; ~1 in 4 discharge arcs flash purple; audio pulse still works; `pnpm build` clean; solar flares gone.
+- [x] **Synaptic Arcs** (idle / speaking state) — 14 invisible node positions distributed on the sphere surface. Every 1.5-4s two random nodes activate: a smooth `QuadraticBezierCurve3` arc spawns between them (control point offset 0.4 units outward), a bright white impulse dot travels along it in ~0.2s, then the arc fades. Color: cyan (`#00d4ff`). 5-slot pool, `sin(t*PI)` opacity envelope.
+- [x] **Arc Discharge** (thinking / listening state) — rapid jagged polylines (5-7 segments with ±0.25 unit perpendicular jitter) between random surface points. Very short lifetime (0.1-0.25s). Fires every 0.15-0.4s. 6-slot pool, linear fade out. Color: gold (`#ffb800`) during thinking, cyan during listening.
+- [x] **Memory formation color** — ~25% of discharge arcs set `memoryArc=true`: arc color lerps gold → purple (`#8B5CF6`) → white as it decays, symbolizing a memory being encoded. Uses `vertexColors: true` on the discharge `LineSegments` geometry.
+- [x] **State-aware switching** — synaptic arcs only spawn in `idle`/`speaking`; discharge arcs only spawn in `thinking`/`listening`. Active arcs fade out naturally on state transition (no hard-clear).
+- [x] Verify (debugger-agent): idle shows smooth bezier arcs with impulse dots; thinking shows rapid gold discharge arcs; ~1 in 4 discharge arcs flash purple; audio pulse still works; `pnpm build` clean; solar flares gone. *(verified 2026-06-06 — `pnpm build` clean (0 TS errors); static analysis confirms solar flare system fully removed (no `FLARE_COUNT`/`flareRef`/`flarePositions`/`flareData`/`PARK`), `QuadraticBezierCurve3` synaptic arcs, `LineBasicMaterial`+`AdditiveBlending` glow, `vertexColors:true` discharge arcs, state gating (synaptic idle/speaking, discharge thinking/listening), memoryArc 0.25 gold→purple→white, 2500-particle cloud + inner core + audioLevel pulse all intact; backend suite 143/144, only pre-existing `get_gmail_token.py` secret-scan fails — no regression)*
 
 ### Key constraints
 - `JarvisOrb.tsx` is the **only** file that changes — no backend, no store, no other components
