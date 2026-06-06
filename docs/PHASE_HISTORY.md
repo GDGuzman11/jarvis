@@ -1,6 +1,7 @@
 # Jarvis — Completed Phase History
 
-> All phases listed here are **complete**. This file is an archive — do not modify.
+> All phases listed here are **complete**. This file is the archiving destination for CLAUDE.md.
+> When a phase section in CLAUDE.md has every checkbox ticked [x], move it here.
 > Active and in-progress work lives in `CLAUDE.md`.
 
 ---
@@ -270,3 +271,54 @@ C:\Users\User\appsbyG\Jarvis\
 ├── data/                            ← Runtime only (gitignored): jarvis.db, faiss_index.bin
 └── OpenJarvis/                      ← Reference project (read-only)
 ```
+
+---
+
+## Phase 12 — Three-Layer Memory System ("The Brain") ✓
+*Handled by: backend-agent. Archived 2026-06-05 — all sub-phases verified complete.*
+
+### 12A — Memory Infrastructure ✓
+*Lay all the plumbing — no behaviour changes yet.*
+
+- [x] Create `backend/memory/manager.py` — `MemoryManager` class (store / recall / consolidate / format_context); `RecallResult` dataclass; FAISS calls run via `asyncio.to_thread` so memory never blocks the event loop
+- [x] Create `backend/memory/evaluator.py` — `MemoryEvaluator` class with full scoring table (agent_outcome 1.0 → general 0.2) + per-category fact extraction; pure keyword matching, no ML
+- [x] Update `backend/memory/database.py` — added 5 new tables (`memory_facts`, `people`, `open_loops`, `decisions`, `agent_performance`) to `_SCHEMA` (all `IF NOT EXISTS`) + indexes + helpers `save_memory_fact`/`get_memory_facts`/`save_person`/`get_person_by_email`/`save_open_loop`/`get_open_loops`/`save_decision`/`save_agent_performance`
+- [x] Update `backend/agents/runtime.py` — accepts + passes `vector_store` and `memory_manager` to agents via `common`
+- [x] Update `backend/agents/base_agent.py` — accepts + stores `vector_store`/`memory_manager` as `self.vector_store`/`self.memory_manager` (no behaviour change)
+- [x] Update `backend/main.py` — constructs `MemoryManager(db_path=DEFAULT_DB_PATH, vector_store=...)` on `app.state.memory_manager`; passed to `AgentRuntime` + `VoicePipeline`
+- [x] Verify (debugger-agent): MemoryManager instantiates at startup; all 5 new tables created cleanly; `pytest backend/` passes *(verified 2026-06-05 — 7/7 targeted tests pass, 102/103 suite)*
+
+### 12B — Voice Pipeline Memory ✓
+*Wire memory in and out of every voice/text turn.*
+
+- [x] Update `backend/voice/pipeline.py` — `_stream_and_speak(transcript, *, channel)` now brackets each turn with memory: `recall(query=transcript, n_recent=10, n_semantic=3)` before the Claude call (prepends `episodic_messages`, injects `formatted_context` into the system prompt), then `store(user)` + `store(jarvis)` + fire-and-forget `asyncio.create_task(consolidate(...))` after TTS completes. `process_text` routes through the same method with `channel="text"`. Interrupt cancellation skips the post-turn store cleanly. When `memory_manager is None`, falls back to the original stateless path — existing pipeline tests still pass
+- [x] Update `backend/ai/persona.py` — `build_system_prompt(context)` now detects a pre-formatted block that already opens with `# Current context` and appends it verbatim with no duplicate header; date/time driven by `datetime.now()` in `format_context` (not hardcoded)
+- [x] Verify (debugger-agent): after 3 turns `conversations` has 6 rows; `memory_facts` ≥1 row when scored ≥0.65; recalled context appears in 4th turn's system prompt; `pytest backend/` passes *(verified 2026-06-05 — 7/7 targeted tests pass; 109/110 suite)*
+
+### 12C — Agent Memory ✓
+*Agents persist context across restarts and write domain-scoped facts.*
+
+- [x] Update `backend/agents/base_agent.py` — full memory integration in `reason()`: `recall(query=prompt, n_recent=6, n_semantic=3)` before Claude call; `store(user)`/`store(jarvis)` + fire-and-forget `consolidate(source="agent")` after. Context checkpoint via `_remember()`; context restore via `_restore_context()` (reloads last 12 turns at startup)
+- [x] Update `backend/agents/production_lead.py` — `_delegate()` writes a `decisions` row via fire-and-forget `_save_decision_async`, gated on `memory_manager` present
+- [x] Update each specialist agent (Kado/Ben/Sentinel/Vega/Quill) — `handle_task` records `agent_performance` on completion, gated on `memory_manager` present
+- [x] Hook `audit_log` writes → semantic memory — `_log_audit()` promotes each logged action to a `memory_facts` row (category `agent_outcome`, importance 1.0) + FAISS via `MemoryManager.store_fact()`; metadata only (Security Rule 6)
+- [x] Verify (debugger-agent): agent context survives backend restart; `audit_log` entries appear in `memory_facts`; `pytest backend/` passes *(verified 2026-06-05 — 8/8 targeted tests pass; 116/117 suite)*
+
+### 12D — Memory Intelligence ✓
+*Evaluator, open loops, people profiles, failure memory.*
+
+- [x] Complete `MemoryEvaluator` — `detect_open_loops()` + `extract_person()` added; `people` profile updates wired into `MemoryManager.consolidate()` (deduped by email via `save_person`)
+- [x] Add `open_loops` detection — scans for remind/follow-up/need-to/make-sure/schedule patterns; `consolidate()` fires `_save_open_loop_async` per match
+- [x] Add session-start open loop surfacing — `_startup_greeting(memory_manager)` appends overdue items (open >12h) via `get_open_loops_async()`
+- [x] Add failure memory extraction — `extract_fact` emits "Failed approach: … Reason: … Date: …" via `_split_failure()`; scores 0.85
+- [x] Add memory consolidation background task — `_consolidation_loop()` runs `MemoryManager.run_consolidation()` every 600s; back-fills missed semantic facts from last 50 conversations, idempotent via content hash
+- [x] Verify (debugger-agent): reminder → `open_loops` row, surfaced next session; failure → `memory_facts` category=failure; `pytest backend/` passes *(verified 2026-06-05 — 10/10 targeted tests pass; 126/127 suite)*
+
+### 12E — Search, Backup, and CLAUDE.md ✓
+*FTS5 keyword search, daily backup job, project state in CLAUDE.md.*
+
+- [x] Add FTS5 virtual tables to `database.py` — `conversations_fts` + `memory_facts_fts` with `porter ascii` tokenizer + AFTER INSERT sync triggers; `search_conversations` + `search_memory_facts` helpers added
+- [x] Add `MemoryManager.search_keyword(query)` — queries FTS5 tables; returns `{"conversations": [...], "memory_facts": [...]}`; degrades gracefully on malformed queries
+- [x] Add daily backup job in `main.py` lifespan — `_backup_loop` zips `jarvis.db` + `faiss_index.bin` + `.meta.json` to `data/backups/jarvis_YYYY-MM-DD.zip` at startup then every 24h; prunes >30 days; cancellable on shutdown
+- [x] Update CLAUDE.md — Phase 12E checklist + Current Status updated
+- [x] Verify (debugger-agent): keyword search returns results; backup file created at startup; `pytest backend/` passes *(verified 2026-06-05 — 8/8 targeted tests pass; 134/135 suite)*

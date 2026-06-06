@@ -2,6 +2,7 @@
 
 > **Step 1 — Every agent MUST read THIS FILE FIRST before starting any task.**
 > **Step 2 — Then read the archive files in `docs/` (listed in the Archive Index below) for full historical context: completed phases, test logs, and security audits.**
+> **Step 3 — When a phase section is fully complete (every checkbox [x]), move it from this file to `docs/PHASE_HISTORY.md`. Keep CLAUDE.md focused on active and upcoming work only.**
 > Update checkboxes immediately after completing each item (`- [ ]` → `- [x]`).
 > After every session, update the **Current Status** section below.
 >
@@ -13,8 +14,8 @@
 
 ## Current Status
 
-- **Active Phase**: 12 — Three-Layer Memory System (started 2026-06-05). Phase 11 remains open (11D packaging + mic-blocked voice items).
-- **Last Completed (2026-06-05)**: **Phase 12E verified ✓** — FTS5 keyword search + daily backup job built and verified by debugger-agent. 134/135 tests passing (8 new 12E tests). One pre-existing secret-scan failure on `get_gmail_token.py` (Google OAuth client id, not a real secret) owned by security-agent. Full memory system operational: episodic (SQLite), semantic (FAISS), agent working memory, FTS5 keyword search, daily backups, open loops, failure memory, people profiles, consolidation loop.
+- **Active Phase**: 13 — Agent Direct Interaction UI (not yet started). Phase 11 remains open (11D packaging + mic-blocked voice items).
+- **Last Completed (2026-06-05)**: **Phase 12E verified ✓** — FTS5 keyword search + daily backup job built and verified by debugger-agent. 134/135 tests passing (8 new 12E tests). One pre-existing secret-scan failure on `get_gmail_token.py` (Google OAuth client id, not a real secret) owned by security-agent. Full memory system operational: episodic (SQLite), semantic (FAISS), agent working memory, FTS5 keyword search, daily backups, open loops, failure memory, people profiles, consolidation loop. **Phase 12 (Three-Layer Memory) fully complete — archived to `docs/PHASE_HISTORY.md`.**
 - **Next Task**: Run `/security-agent` to fix `get_gmail_token.py` secret (removes the 1 failing test). Then run `/production-manager` for Phase 13 (Agent Direct Interaction UI).
 - **Pending (Phase 13 — new)**: Agent direct interaction from AgentsWindow UI — user wants to submit tasks and chat with individual agents (Atlas/Ben/Kado/Sentinel/Vega/Quill) from the UI. Route to `/frontend-agent` + `/backend-agent`. See Phase 13 section below.
 - **Blockers**: Dedicated microphone not yet purchased — all voice E2E tests deferred. No other blockers.
@@ -166,57 +167,6 @@ Dark theme `#080810` (updated 2026-06-04), electric blue/cyan accents `#00D4FF`,
 
 ---
 
-## Phase 12 — Three-Layer Memory System ("The Brain")
-*Active backend initiative. Wires SQLite (episodic), FAISS (semantic), and agent working memory into one tiered architecture so Jarvis remembers across sessions. Full spec in the Phase 12 plan. Each task tested by debugger-agent before its checkbox is ticked.*
-
-### 12A — Memory Infrastructure
-*Handled by: backend-agent. Lay all the plumbing — no behaviour changes yet.*
-
-- [x] Create `backend/memory/manager.py` — `MemoryManager` class (store / recall / consolidate / format_context); `RecallResult` dataclass; FAISS calls run via `asyncio.to_thread` so memory never blocks the event loop
-- [x] Create `backend/memory/evaluator.py` — `MemoryEvaluator` class with full scoring table (agent_outcome 1.0 → general 0.2) + per-category fact extraction; pure keyword matching, no ML
-- [x] Update `backend/memory/database.py` — added 5 new tables (`memory_facts`, `people`, `open_loops`, `decisions`, `agent_performance`) to `_SCHEMA` (all `IF NOT EXISTS`) + indexes + helpers `save_memory_fact`/`get_memory_facts`/`save_person`/`get_person_by_email`/`save_open_loop`/`get_open_loops`/`save_decision`/`save_agent_performance`
-- [x] Update `backend/agents/runtime.py` — accepts + passes `vector_store` and `memory_manager` to agents via `common`
-- [x] Update `backend/agents/base_agent.py` — accepts + stores `vector_store`/`memory_manager` as `self.vector_store`/`self.memory_manager` (no behaviour change)
-- [x] Update `backend/main.py` — constructs `MemoryManager(db_path=DEFAULT_DB_PATH, vector_store=...)` on `app.state.memory_manager`; passed to `AgentRuntime` + `VoicePipeline`
-- [x] Verify (debugger-agent): MemoryManager instantiates at startup; all 5 new tables created cleanly; `pytest backend/` passes *(verified 2026-06-05 — 7/7 targeted tests pass, 102/103 suite, schema + evaluator + recall + DB helpers all confirmed)*
-
-### 12B — Voice Pipeline Memory
-*Handled by: backend-agent. Wire memory in and out of every voice/text turn.*
-
-- [x] Update `backend/voice/pipeline.py` — `_stream_and_speak(transcript, *, channel)` now brackets each turn with memory: `recall(query=transcript, n_recent=10, n_semantic=3)` before the Claude call (prepends `episodic_messages`, injects `formatted_context` into the system prompt), then `store(user)` + `store(jarvis)` + fire-and-forget `asyncio.create_task(consolidate(...))` after TTS completes. `process_text` routes through the same method with `channel="text"`. Interrupt cancellation skips the post-turn store cleanly (no partial/empty reply persisted). When `memory_manager is None`, falls back to the original stateless path (single message + base prompt) — existing pipeline tests still pass
-- [x] Update `backend/ai/persona.py` — `build_system_prompt(context)` now detects a pre-formatted block that already opens with `# Current context` (as emitted by `MemoryManager.format_context`, carrying `Date:` + `## What I remember about you` + `## Recent conversation`) and appends it verbatim with no duplicate header; bare fragments still get a fresh header. Date/time confirmed driven by `datetime.now()` in `format_context` (not hardcoded)
-- [x] Verify (debugger-agent): after 3 turns `conversations` has 6 rows; `memory_facts` ≥1 row when scored ≥0.65; recalled context appears in 4th turn's system prompt; `pytest backend/` passes *(verified 2026-06-05 — 7/7 targeted tests pass: recall prepended, store×2, fire-and-forget consolidate, no-memory fallback, persona single-header, interrupt no-store; 109/110 suite)*
-
-### 12C — Agent Memory
-*Handled by: backend-agent. Agents persist context across restarts and write domain-scoped facts.*
-
-- [x] Update `backend/agents/base_agent.py` — full memory integration in `reason()`: when `memory_manager` is wired in, `recall(query=prompt, n_recent=6, n_semantic=3)` runs before the Claude call (prepends `episodic_messages`, injects `formatted_context` into the system prompt) and `store(user)`/`store(jarvis)` + fire-and-forget `consolidate(source="agent")` run after. Context checkpoint: `_remember()` persists each exchange to `conversations` under `channel="agent:<id>"` (skipped when a memory manager already owns the episodic write, to avoid a duplicate row). Context restore: `start()` calls `_restore_context()` which reloads this agent's last 12 turns (`get_recent_conversations(channel="agent:<id>", limit=12)`) into `self._context`; empty DB → `self._context = []` as before. `reason()` signature relaxed to `system_prompt: str | None = None` (no caller change). All memory writes are `asyncio.create_task` fire-and-forget; `else` branch identical to prior behaviour
-- [x] Update `backend/agents/production_lead.py` — `_delegate()` writes a `decisions` row (title `Delegated: <summary>`, reasoning `Routed to <name> (<id>) via classify().`, `agent_id="production_lead"`) via fire-and-forget `_save_decision_async`, gated on `memory_manager` present
-- [x] Update each specialist agent (Kado/Ben/Sentinel/Vega/Quill) — `handle_task` now records `agent_performance` on completion (`outcome="success"`/`"failed"`, `task_type` derived from content via `_record_performance`/`_derive_task_type` in `base_agent.py`), gated on `memory_manager` present
-- [x] Hook `audit_log` writes → semantic memory — `_log_audit()` promotes each logged action to a `memory_facts` row (category `agent_outcome`, importance 1.0) + FAISS via new `MemoryManager.store_fact()`; metadata only (action + target, no content — Security Rule 6). Added `conversations.channel` migration in `init_db` so existing DBs accept `agent:%` channels
-- [x] Verify (debugger-agent): agent context survives backend restart; `audit_log` entries appear in `memory_facts`; `pytest backend/` passes *(verified 2026-06-05 — 8/8 targeted tests pass: checkpoint, restore, empty-DB restore, recall-in-reason, store-after-reason, decisions row, agent_performance row, Phase 4 regression 12/12; 116/117 suite)*
-
-### 12D — Memory Intelligence
-*Handled by: backend-agent. Evaluator, open loops, people profiles, failure memory.*
-
-- [x] Complete `MemoryEvaluator` — `detect_open_loops()` + `extract_person()` added; `people` profile updates wired into `MemoryManager.consolidate()` (deduped by email via existing `save_person`) *(self-verified)*
-- [x] Add `open_loops` detection — `MemoryEvaluator.detect_open_loops()` scans for remind/follow-up/need-to/make-sure/schedule patterns; `consolidate()` fires `_save_open_loop_async` per match (fire-and-forget) *(self-verified)*
-- [x] Add session-start open loop surfacing — `_startup_greeting(memory_manager)` in `main.py` appends overdue items (open >12h) via `get_open_loops_async(db_path, status, older_than_hours)`; guarded for `memory_manager is None` *(self-verified)*
-- [x] Add failure memory extraction — expanded `failure` keyword set (attempted/caused issues/was too slow/conflicted with); `extract_fact` emits "Failed approach: … Reason: … Date: …" via `_split_failure()`; scores 0.85 *(self-verified)*
-- [x] Add memory consolidation background task — `_consolidation_loop()` in `main.py` lifespan runs `MemoryManager.run_consolidation()` every 600s (cancellable on shutdown); back-fills missed semantic facts from last 50 conversations, idempotent via distilled-fact content hash *(self-verified)*
-- [x] Verify (debugger-agent): reminder → `open_loops` row, surfaced next session; failure → `memory_facts` category=failure; `pytest backend/` passes *(verified 2026-06-05 — 10/10 targeted tests pass after multi-trigger bug fix; 126/127 suite)*
-
-### 12E — Search, Backup, and CLAUDE.md
-*Handled by: backend-agent. FTS5 keyword search, daily backup job, project state in CLAUDE.md.*
-
-- [x] Add FTS5 virtual tables to `database.py` for keyword search over `conversations` + `memory_facts` — `conversations_fts` + `memory_facts_fts` virtual tables with `porter ascii` tokenizer + AFTER INSERT sync triggers in `init_db`; `search_conversations` + `search_memory_facts` helpers added
-- [x] Add `MemoryManager.search_keyword(query)` — queries FTS5 tables; returns `{"conversations": [...], "memory_facts": [...]}`; degrades to empty lists on malformed queries (no crash)
-- [x] Add daily backup job in `main.py` lifespan — `_backup_loop` zips `jarvis.db` + `faiss_index.bin` + `.meta.json` to `data/backups/jarvis_YYYY-MM-DD.zip` at startup then every 24h; prunes >30 days; cancellable on shutdown (mirrors `_consolidation_loop` pattern)
-- [x] Update CLAUDE.md — Phase 12E checklist + Current Status updated *(this session)*
-- [x] Verify (debugger-agent): keyword search returns results; backup file created at startup; `pytest backend/` passes *(verified 2026-06-05 — 8/8 targeted tests pass; 134/135 suite)*
-
----
-
 ## Phase 13 — Agent Direct Interaction (AgentsWindow)
 *Not yet started. User wants to submit tasks and chat directly with individual agents from the AgentsWindow UI.*
 
@@ -245,7 +195,7 @@ Dark theme `#080810` (updated 2026-06-04), electric blue/cyan accents `#00D4FF`,
 
 | File | Contents | When to read |
 |---|---|---|
-| [docs/PHASE_HISTORY.md](docs/PHASE_HISTORY.md) | Phases 1–10 complete checklists + full project file structure | When you need to know exactly what was built, or to understand the file layout |
+| [docs/PHASE_HISTORY.md](docs/PHASE_HISTORY.md) | Phases 1–12 complete checklists + full project file structure. **Archiving destination — move fully completed phase sections here from CLAUDE.md.** | When you need to know exactly what was built, or to understand the file layout |
 | [docs/TEST_HISTORY.md](docs/TEST_HISTORY.md) | All debugger-agent test run logs (Phases 1–11C, 96 tests) | When you need to understand what is already tested and how |
 | [docs/SECURITY_AUDIT.md](docs/SECURITY_AUDIT.md) | Phase 8 + Phase 10 audit findings and verifications | Before touching auth, credentials, or network bindings |
 
