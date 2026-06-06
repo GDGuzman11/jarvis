@@ -16,7 +16,7 @@ A local-first personal AI assistant for Windows 11. Say **"Hey Jarvis"** — it 
 | **Five HUD windows** | Particle orb · Live reasoning stream · Communications panel · Agent dashboard · Tools grid |
 | **Six background agents** | Atlas (Lead) · Ben (Frontend) · Kado (Backend) · Sentinel (Security) · Vega (Marketing) · Quill (Content) |
 | **Slack + Gmail** | Read, draft, and reply by voice |
-| **Persistent memory** | SQLite for conversation history; FAISS + sentence-transformers for semantic recall |
+| **Persistent memory** | Three-layer brain: SQLite episodic recall + FAISS semantic search + agent working memory. Remembers facts, preferences, open loops, and failures across sessions |
 | **Sandboxed tools** | Web search, browser automation, file ops, RestrictedPython code runner |
 | **Startup greeting** | Jarvis greets you by name and reads the system status when windows open |
 | **One-click shutdown** | ⏻ button on the orb window exits all five windows cleanly |
@@ -57,7 +57,7 @@ Local LLMs are sized for 4 GB VRAM: `phi3.5` (3.8B, ~2.4 GB) for general tasks a
 | Vector memory | FAISS + sentence-transformers |
 | Credentials | Windows Credential Manager (keyring) |
 | Integrations | Slack Bolt · Gmail API (OAuth 2.0) |
-| Testing | pytest + pytest-asyncio (85 backend tests) |
+| Testing | pytest + pytest-asyncio (134 backend tests) |
 
 ---
 
@@ -189,7 +189,7 @@ Open `http://localhost:1420` — single-tab preview of all windows. Good for fro
 .venv\Scripts\python.exe -m pytest backend/ -v
 ```
 
-85 backend tests, all passing.
+134 backend tests, all passing.
 
 ---
 
@@ -261,8 +261,10 @@ Jarvis/
 │   │   ├── slack_client.py       # Slack Bolt, DM listener, send/read
 │   │   └── gmail_client.py       # Gmail OAuth2, inbox, draft, send
 │   ├── memory/
-│   │   ├── database.py           # SQLite — conversations, agents, tasks, audit log
-│   │   └── vector_store.py       # FAISS + sentence-transformers
+│   │   ├── database.py           # SQLite schema — 12 tables, FTS5 virtual tables, aiosqlite helpers
+│   │   ├── manager.py            # MemoryManager — store / recall / consolidate / search_keyword
+│   │   ├── evaluator.py          # MemoryEvaluator — scoring, fact extraction, open loop detection
+│   │   └── vector_store.py       # FAISS + sentence-transformers (semantic layer)
 │   ├── tools/
 │   │   ├── registry.py           # ToolRegistry + per-agent permission matrix
 │   │   ├── web_search.py         # DuckDuckGo
@@ -327,9 +329,103 @@ Security audit: **0 Critical, 0 High findings**.
 | 6 — Tools System | Complete |
 | 7 — Multi-Window UI | Complete |
 | 8 — Security Hardening | Complete |
-| 9 — Testing (85/85) | Complete |
+| 9 — Testing (134/134) | Complete |
 | 10 — Polish & Packaging | Complete |
-| 11 — Live Usage | In progress |
+| 11 — Live Usage | In progress (mic deferred) |
+| 12 — Three-Layer Memory | Complete |
+
+---
+
+## Phase 12 — The Brain (Three-Layer Memory System)
+
+The biggest architectural addition to date. Jarvis now remembers across sessions using three complementary layers that work together on every single turn.
+
+### Three layers
+
+**Layer 1 — Episodic memory (SQLite)**
+
+Every conversation turn is written to a `conversations` table. On each new turn, the last 10 turns are fetched and prepended to the Claude call as prior messages — immediate short-term recall with zero vector overhead. Five additional tables were added alongside `conversations`:
+
+| Table | What it stores |
+|---|---|
+| `memory_facts` | Distilled facts scored and extracted from conversations |
+| `people` | Named people + contact details mentioned by the user |
+| `open_loops` | Reminders, follow-ups, and promises detected in speech |
+| `decisions` | Agent delegation decisions logged by Atlas |
+| `agent_performance` | Task outcomes per agent |
+
+**Layer 2 — Semantic memory (FAISS)**
+
+High-scoring facts (score ≥ 0.65) are embedded with `sentence-transformers` and stored in a FAISS flat L2 index. At recall time, a vector similarity search runs alongside the episodic fetch, pulling in semantically relevant facts even if they weren't recent. All FAISS operations run in `asyncio.to_thread` — the event loop is never blocked.
+
+**Layer 3 — Agent working memory**
+
+Each of the six background agents persists its last 12 conversation turns to `conversations` under an `agent:<id>` channel. On restart, `start()` reloads this context before processing the first task — agents pick up exactly where they left off.
+
+### How memory flows on every turn
+
+```
+User speaks or types
+        ↓
+recall(query, n_recent=10, n_semantic=3)
+  — fetch last 10 turns from SQLite
+  — fetch top 3 semantic matches from FAISS
+  — format into "# Current context" system prompt block
+        ↓
+Claude API streaming call
+  — system prompt includes: current date/time,
+    "## What I remember about you", "## Recent conversation"
+        ↓
+TTS speaks the response
+        ↓
+store(user turn) + store(Jarvis reply)
+  — written to conversations + FTS5 index synced via trigger
+        ↓
+consolidate() [fire-and-forget background task]
+  — MemoryEvaluator scores the exchange
+  — Score ≥ 0.65 → memory_facts + FAISS
+  — Open loop patterns → open_loops table
+  — Person mentions → people table
+  — Failure patterns → memory_facts (category: failure)
+```
+
+### MemoryEvaluator — how facts are scored
+
+Pure keyword matching — no ML, no extra API calls:
+
+| Category | Score | Trigger words / patterns |
+|---|---|---|
+| `agent_outcome` | 1.0 | Tool call results, task completions |
+| `failure` | 0.85 | "was too slow", "caused issues", "attempted", "conflicted with" |
+| `preference` | 0.75 | "I prefer", "my name is", "I like", "I don't like" |
+| `project` | 0.70 | "we're building", "the project", "deadline", "milestone" |
+| `app_work` | 0.65 | "deployed", "implemented", "fixed", "shipped" |
+| `general` | 0.20 | Everything else (stored episodically only) |
+
+### Open loop detection
+
+Every user turn is scanned for reminder/follow-up language: `remind me`, `follow up`, `need to`, `make sure`, `schedule`. Matches are written to `open_loops`. On startup, `_startup_greeting()` fetches any open loops older than 12 hours and includes them in the greeting.
+
+### FTS5 keyword search
+
+Two FTS5 virtual tables (`conversations_fts`, `memory_facts_fts`) with Porter stemming enable fast full-text search over all stored text. `AFTER INSERT` triggers keep them in sync automatically. `MemoryManager.search_keyword(query)` returns matched rows from both tables. Malformed queries degrade to an empty result — no exceptions propagated.
+
+### Background tasks (always running)
+
+| Task | Interval | What it does |
+|---|---|---|
+| `_consolidation_loop` | Every 10 min | Back-fills any turns that scored high enough for semantic promotion but weren't promoted yet. Idempotent via content hash. |
+| `_backup_loop` | Every 24 h (+ on startup) | Zips `jarvis.db` + FAISS index into `data/backups/jarvis_YYYY-MM-DD.zip`. Prunes backups older than 30 days. |
+
+### Test coverage added in Phase 12
+
+| Test file | Tests | What it covers |
+|---|---|---|
+| `backend/test_phase12a_verify.py` | 7 | Schema, evaluator scoring, MemoryManager init, recall on empty DB |
+| `backend/voice/test_phase12b_verify.py` | 7 | Voice pipeline recall/store, fire-and-forget consolidation, persona header deduplication, interrupt cancellation |
+| `backend/agents/test_phase12c_verify.py` | 8 | Agent checkpoint/restore, recall-in-reason, decisions row, agent_performance row |
+| `backend/memory/test_phase12d_verify.py` | 11 | Open loop detection, person extraction, failure scoring, consolidation writes |
+| `backend/memory/test_phase12e_verify.py` | 8 | FTS5 tables/triggers, search helpers, bad-query resilience, backup zip, prune |
 
 ---
 
