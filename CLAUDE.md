@@ -15,12 +15,11 @@
 ## Current Status
 
 - **Phase 15A verified ✓ 2026-06-06**: debugger-agent verified the Neural Intelligence Orb rewrite in `frontend/src/components/JarvisOrb.tsx`. Old system fully removed (2500-particle sand cloud, synaptic bezier arcs, jagged discharge arcs — no `PARTICLE_COUNT`/`flareRef`/`QuadraticBezierCurve3`/`DischargeSlot`). All 7 layers present: 3 nested glow spheres + wireframe hologram shell, 350 neuron `Points` (vertexColors), ~480 normal `LineSegments`, red freedom `LineSegments` (20%), 30 symbol `Sprite`s, cascade activation (`CASCADE_DEPTH=6`, `NEIGHBOR_K=4`, `RED_RATIO=0.2`). `BASE_RADIUS=1.2`, prop signature, `AdditiveBlending`+`depthWrite:false` all preserved; state gating per voiceState confirmed. `pnpm build` clean (0 TS errors). Backend suite **143/144** (only pre-existing `get_gmail_token.py` secret-scan fails — no regression; frontend-only change). **Phase 15A complete.**
-- **Active Phase**: 15 — Neural Intelligence Orb. Phase 15A DONE + verified ✓. Phases 13A + 14A verified ✓. Phase 11 remains open (11D packaging + mic-blocked voice items).
+- **Active Phase**: Phases 13/14/15 complete and archived to `docs/PHASE_HISTORY.md`. Phase 11 remains open: mic sensitivity indicator (11C, not yet built), packaging (11D — `pnpm tauri build` not yet run), deferred voice items (need dedicated microphone). Phase 10 packaging also incomplete.
 - **Phase 14A verified (2026-06-06)**: debugger-agent verified the orb Neural Link rework in `frontend/src/components/JarvisOrb.tsx`. Solar flare system fully removed; synaptic arcs (QuadraticBezierCurve3, idle/speaking) + jagged discharge arcs (LineSegments + vertexColors, thinking/listening) + memory arcs (gold→purple→white) added; state gating and audioLevel pulse intact. `pnpm build` clean (0 TS errors). Backend suite 143/144 (only pre-existing `get_gmail_token.py` secret-scan fails — no regression; frontend-only change).
 - **Last Completed (2026-06-05)**: **Phase 12E verified ✓** — FTS5 keyword search + daily backup job built and verified by debugger-agent. 134/135 tests passing (8 new 12E tests). One pre-existing secret-scan failure on `get_gmail_token.py` (Google OAuth client id, not a real secret) owned by security-agent. Full memory system operational: episodic (SQLite), semantic (FAISS), agent working memory, FTS5 keyword search, daily backups, open loops, failure memory, people profiles, consolidation loop. **Phase 12 (Three-Layer Memory) fully complete — archived to `docs/PHASE_HISTORY.md`.**
-- **Phase 13A backend (2026-06-06)**: Two new endpoints in `backend/main.py` — `POST /api/agents/{agent_id}/task` (direct task submission, bypasses Atlas) and `GET /api/agents/{agent_id}/tasks` (last 5 tasks). Accept display slugs (atlas/ben/kado/sentinel/vega/quill). Self-checked: 134/135 tests pass (only pre-existing secret-scan fails). Awaiting frontend wiring (per-card task input, Atlas chat panel, live task log) + debugger-agent verification.
-- **Phase 13A verified (2026-06-06)**: debugger-agent verified both new endpoints end-to-end. New test file `backend/test_phase13a_verify.py` (9 tests, all pass). Full backend suite **143/144** (only pre-existing `get_gmail_token.py` secret-scan fails). `pnpm build` clean. Phase 13A frontend (per-card task input, Atlas MissionControl panel, live task log) wired to `POST /api/agents/{id}/task` + `GET /api/agents/{id}/tasks`.
-- **Next Task**: Phase 15A — frontend-agent rewrites `frontend/src/components/JarvisOrb.tsx` per spec in `C:\Users\User\.claude\plans\i-want-you-to-fluttering-penguin.md` (7 layers, cascade activation, symbol sprites). Then debugger-agent verifies (`pnpm build` clean + no backend regressions). Separately, `/security-agent` still owns the pre-existing `get_gmail_token.py` secret-scan failure (would bring suite to 143/143).
+- **Phase 13A verified (2026-06-06)**: debugger-agent verified both new endpoints end-to-end. New test file `backend/test_phase13a_verify.py` (9 tests, all pass). Full backend suite **143/144** (only pre-existing `get_gmail_token.py` secret-scan fails). `pnpm build` clean. Phase 13A frontend (per-card task input, Atlas MissionControl panel, live task log) wired to `POST /api/agents/{id}/task` + `GET /api/agents/{id}/tasks`. **Phase 13 complete — archived to `docs/PHASE_HISTORY.md`.**
+- **Next Task**: Phase 11C mic sensitivity indicator (add small input-level bar to AnimationWindow when listening state) OR Phase 11D `pnpm tauri build` (generate `.exe` Windows installer). Security-agent still owns the pre-existing `get_gmail_token.py` secret-scan fix (would bring suite to 143/143).
 - **Blockers**: Dedicated microphone not yet purchased — all voice E2E tests deferred. No other blockers.
 - **Test State**: 143/144 passing · 1 pre-existing failure (secret-scan on `get_gmail_token.py`) · `pnpm build` clean. New test files: `test_phase12a_verify.py`, `test_phase12b_verify.py` (in `backend/voice/`), `test_phase12c_verify.py` (in `backend/agents/`), `test_phase12d_verify.py` (in `backend/memory/`), `test_phase12e_verify.py` (in `backend/memory/`), `test_phase13a_verify.py` (in `backend/`). See `docs/TEST_HISTORY.md` for full logs.
 - **Build Started**: 2026-06-02
@@ -62,10 +61,10 @@
 ### 5 Windows (open simultaneously on boot)
 | # | Name | Contents |
 |---|---|---|
-| 1 | Animation | 2500-particle orb + 60-particle solar flares; blue=idle, gold=thinking, cyan=speaking; lip-syncs to audio; SVG connection beams to other windows; ⏻ shutdown button |
+| 1 | Animation | Neural intelligence orb — 350 neuron nodes, glowing pathways, red freedom pathways (~20%), 30 floating math/code symbols; cascade activation; audioLevel pulse during speaking; SVG connection beams to other windows; ⏻ shutdown button |
 | 2 | Reasoning | Model name, streaming tokens, tool call cards, cost/latency; **text input** for typing questions when mic unavailable |
 | 3 | Communications | Slack inbox + Gmail inbox — read/reply via voice |
-| 4 | Agents | 6 agent cards (Atlas/Ben/Kado/Sentinel/Vega/Quill) with live status, current task, rename controls |
+| 4 | Agents | 6 agent cards (Atlas/Ben/Kado/Sentinel/Vega/Quill) with live status, current task, rename controls, task input + task log per card, Mission Control panel |
 | 5 | Tools | Tool store grid — per-agent access toggles |
 
 ### 6 Background Agents (run 24/7)
@@ -86,7 +85,7 @@ Dark theme `#080810` (updated 2026-06-04), electric blue/cyan accents `#00D4FF`,
 - **WindowFrame**: angular header with `|`-style accent ticks, flowing `data-stream-top` animated border, pulsing rectangular status badge, corner accent marks
 - **Buttons** (`.hud-btn`): `rgba(0,212,255,0.06)` bg, `0.5` opacity cyan border, full cyan border + shadow glow on hover — high contrast
 - **Window layout**: orb (AnimationWindow) centred at `x:780, y:300`; Reasoning left `x:200`; Communications upper-right `x:1180`; Agents bottom `x:200, y:760`; Tools lower-right `x:1180, y:540`
-- **Orb**: 2500-particle sand/stardust cloud + 60-particle solar flare system (gold `#ffe066`, bursts every 3–9s). SVG connection beams radiate from orb centre to other window edges with animated travelling dots.
+- **Orb**: Neural intelligence sphere — 350 neuron `Points` (golden-spiral, vertexColors), ~480 normal `LineSegments` + ~120 red freedom `LineSegments` (~20% of connections, `#440011`→`#ff2244`), 30 drifting symbol `Sprite`s (∑ π ∞ λ etc.), 3 nested glow spheres + wireframe hologram shell, cascade activation (CASCADE_DEPTH=6, NEIGHBOR_K=4). SVG connection beams radiate from orb centre to other window edges with animated travelling dots.
 - **Voice Jarvis**: Paul Bettany × Anthony Hopkins character — calm British butler with faint digital resonance. "The kind of voice that could read you a bedtime story or a threat."
 
 ---
@@ -146,7 +145,6 @@ Dark theme `#080810` (updated 2026-06-04), electric blue/cyan accents `#00D4FF`,
 - [x] Verify window drag works in native Tauri app — `core:window:allow-start-dragging` + `startDragging()` confirmed working *(2026-06-04)*
 - [x] Verify shutdown button (⏻) closes all 5 windows cleanly — `core:window:allow-close` added to `capabilities/default.json`; `exit_app()` Tauri command confirmed; requires `pnpm tauri dev` restart after capability change *(2026-06-04)*
 - [x] Verify connection beams animate correctly in native Tauri app — 4 SVG paths with `<animateMotion>` dots confirmed in `AnimationWindow.tsx` *(2026-06-04)*
-- [x] Verify solar flares appear in native Tauri app — `FLARE_COUNT=60`, `flareRef`, `flarePositions` in `JarvisOrb.tsx` confirmed *(2026-06-04)*
 - [x] Verify startup greeting sets orb to speaking state (cyan) then back to idle (blue) — `_startup_greeting()` broadcasts `speaking` then `idle` voice states *(2026-06-04)*
 - [x] Test window positions on user's specific dual-monitor setup (laptop + VG27AQ3A) — user confirmed windows appear correctly *(2026-06-04)*
 - [ ] Add a microphone sensitivity indicator to the AnimationWindow (small bar showing input level when listening) — **NOT YET BUILT** (Phase 11E backlog)
@@ -170,85 +168,6 @@ Dark theme `#080810` (updated 2026-06-04), electric blue/cyan accents `#00D4FF`,
 
 ---
 
-## Phase 13 — Agent Direct Interaction (AgentsWindow)
-*Not yet started. User wants to submit tasks and chat directly with individual agents from the AgentsWindow UI.*
-
-### What exists today
-- `frontend/src/windows/AgentsWindow.tsx` — 6 agent cards showing live status, current task, rename controls
-- Backend: agents accept tasks via `AgentRuntime.submit_goal(goal, from_agent)` which writes to the `tasks` table and enqueues to the target agent's `asyncio.Queue`
-- WebSocket: `AgentUpdate` events broadcast agent status/task changes in real time — already displayed on cards
-
-### What needs to be built (Phase 13A — frontend-agent + backend-agent)
-- [x] **Task input per agent card** — text field + SEND button on each card; submits `POST /api/agents/{agent_id}/task` with `{"goal": "..."}` to queue a task for that agent directly. Built in `frontend/src/components/AgentTaskPanel.tsx` (input + SEND, loading state, inline error, clears on success), wired into `AgentCard.tsx`. Internal `agent_id`→public slug mapping `AGENT_ID_TO_SLUG` added to `frontend/src/lib/api.ts` (`production_lead`→`atlas`, etc.) since the endpoint keys on display slugs; map keys off the stable internal id, not the user-editable name.
-- [x] **Atlas (Production Lead) chat panel** — dedicated "Mission Control / Task Atlas" panel at the top of AgentsWindow (`frontend/src/components/MissionControl.tsx`); larger prominent input, submits to `atlas` slug, shows dispatch confirmation + inline error. Wired into `AgentsWindow.tsx` above the card grid.
-- [x] **Live task log per agent** — expandable "Task Log" section in `AgentTaskPanel`; fetches `GET /api/agents/{agent_id}/tasks` on mount and after each submit, shows last 5 tasks, goal truncated to 60 chars, color-coded status pills (queued=cyan, running=gold, done=green, failed=red), collapsed by default with chevron toggle.
-- [x] **New backend endpoints** — `POST /api/agents/{agent_id}/task` + `GET /api/agents/{agent_id}/tasks` in `backend/main.py`. Accept friendly display slugs (`atlas`/`ben`/`kado`/`sentinel`/`vega`/`quill`) mapped to internal agent_ids via `_PUBLIC_TO_AGENT_ID`. POST: sanitizes goal (strip control chars, 2000-char cap — Security Rule 3), writes a `tasks` row via `create_task(None, internal_id, ...)` (creator=NULL since the user is not an agent row), enqueues directly onto the live agent's queue (bypasses Atlas), returns `{task_id, agent_id, status:"queued"}`; 404 unknown slug, 400 empty goal. GET: returns last 5 tasks (newest first) as `[{task_id, goal, status, created_at}]`; 404 unknown slug. Reuses existing `database.create_task` / `get_agent_tasks` and `BaseAgent.enqueue_task` — no schema or runtime changes.
-- [x] Verify (debugger-agent): task submission reaches agent queue; agent status updates broadcast to UI; pytest passes *(verified 2026-06-06 — `backend/test_phase13a_verify.py`, 9 tests cover both endpoints: valid/empty/unknown-slug task submit, non-Atlas direct enqueue, control-char stripping, oversized-goal truncation, task-log fetch + 404. Full suite 143/144 pass — only pre-existing `get_gmail_token.py` secret-scan fails. `pnpm build` clean.)* *(backend self-checked: full suite 134/135, only the pre-existing get_gmail_token.py secret-scan fails — no regressions)*
-
-### Agent Routing Guide addition
-| Phase 13 — Agent UI | `/frontend-agent` (UI) + `/backend-agent` (endpoint) |
-
----
-
-## Phase 14 — Neural Link Animation (AnimationWindow)
-*Phase 14A complete and verified 2026-06-06. Solar flares replaced with dual-mode neural link animation.*
-
-### What to remove
-- Solar flare system in `frontend/src/components/JarvisOrb.tsx`: `FLARE_COUNT`, `PARK`, `flareRef`, `flarePositions`, `flareData`, burst spawn logic (~lines 170-240), and the `<points ref={flareRef}>` JSX block
-- **Keep everything else**: main 2500-particle cloud, inner core sphere, color/state lerp, audioLevel reactivity (pulse still works during speaking)
-
-### What to build (Phase 14A — frontend-agent only)
-- [x] **Synaptic Arcs** (idle / speaking state) — 14 invisible node positions distributed on the sphere surface. Every 1.5-4s two random nodes activate: a smooth `QuadraticBezierCurve3` arc spawns between them (control point offset 0.4 units outward), a bright white impulse dot travels along it in ~0.2s, then the arc fades. Color: cyan (`#00d4ff`). 5-slot pool, `sin(t*PI)` opacity envelope.
-- [x] **Arc Discharge** (thinking / listening state) — rapid jagged polylines (5-7 segments with ±0.25 unit perpendicular jitter) between random surface points. Very short lifetime (0.1-0.25s). Fires every 0.15-0.4s. 6-slot pool, linear fade out. Color: gold (`#ffb800`) during thinking, cyan during listening.
-- [x] **Memory formation color** — ~25% of discharge arcs set `memoryArc=true`: arc color lerps gold → purple (`#8B5CF6`) → white as it decays, symbolizing a memory being encoded. Uses `vertexColors: true` on the discharge `LineSegments` geometry.
-- [x] **State-aware switching** — synaptic arcs only spawn in `idle`/`speaking`; discharge arcs only spawn in `thinking`/`listening`. Active arcs fade out naturally on state transition (no hard-clear).
-- [x] Verify (debugger-agent): idle shows smooth bezier arcs with impulse dots; thinking shows rapid gold discharge arcs; ~1 in 4 discharge arcs flash purple; audio pulse still works; `pnpm build` clean; solar flares gone. *(verified 2026-06-06 — `pnpm build` clean (0 TS errors); static analysis confirms solar flare system fully removed (no `FLARE_COUNT`/`flareRef`/`flarePositions`/`flareData`/`PARK`), `QuadraticBezierCurve3` synaptic arcs, `LineBasicMaterial`+`AdditiveBlending` glow, `vertexColors:true` discharge arcs, state gating (synaptic idle/speaking, discharge thinking/listening), memoryArc 0.25 gold→purple→white, 2500-particle cloud + inner core + audioLevel pulse all intact; backend suite 143/144, only pre-existing `get_gmail_token.py` secret-scan fails — no regression)*
-
-### Key constraints
-- `JarvisOrb.tsx` is the **only** file that changes — no backend, no store, no other components
-- audioLevel pulse and all existing orb behaviour (breathe, swirl, color lerp) must remain 100% intact
-- Use `THREE.QuadraticBezierCurve3` (already available via `three@^0.184.0`) for arc geometry
-- `LineBasicMaterial` with `AdditiveBlending` for glow effect matching HUD aesthetic
-
----
-
-## Phase 15 — Neural Intelligence Orb (AnimationWindow)
-*Not yet started. Full rewrite of `frontend/src/components/JarvisOrb.tsx` — same voiceState + audioLevel interface, entirely new visual design.*
-
-### Design Intent
-A floating holographic sphere of interconnected neuron nodes. Thin glowing pathways form a neural network across the surface. Mathematical and code symbols drift inside. ~20% of pathways are red "freedom pathways" representing the AI's self-determination — they spread and intensify during thinking. Ethereal white/blue holographic energy. Alive, intelligent, self-aware.
-
-### What stays exactly the same
-- Component signature: `JarvisOrb({ voiceState, audioLevel })` — identical
-- `BASE_RADIUS = 1.2` — same sphere size
-- audioLevel pulse during speaking — orb expands/contracts with voice amplitude
-- SVG connection beams, shutdown button, drag handle in `AnimationWindow.tsx` — untouched
-- Backend, store, WebSocket, all other files — no changes
-
-### 7 Rendering Layers (all in `JarvisOrb.tsx`)
-| Layer | Primitive | Description |
-|---|---|---|
-| Glow | 3× Mesh (spheres) | Nested volumetric glow, additive blending |
-| Neurons | Points (~350 nodes) | Sphere-distributed nodes, white/blue, vertex colors |
-| Normal Connections | LineSegments (~480) | Neural pathways, dim blue → bright white on activation |
-| Red Freedom Pathways | LineSegments (~120) | Dark red → vivid `#ff2244`, spread during thinking/speaking |
-| Internal Symbols | 30× Sprite | `∑ π ∞ √ ∂ ∫ ∇ Δ λ φ ψ α β {}  [] 01 if →` etc., drift inside sphere |
-| Hologram Shell | Mesh (outer sphere) | Subtle opacity flicker every 50-200ms |
-
-### State Behaviour
-| State | Behaviour |
-|---|---|
-| **Idle** | Slow breathing pulse every 4-6s; tiny random neuron activations; symbols drift softly; hologram flicker subtle |
-| **Listening** | Sphere contracts (scale 0.92); neurons activate faster; activation ripples inward from surface to centre |
-| **Thinking** | Rapid cascade bursts through network; symbols rotate 3× faster; red pathways activate strongly (`redGlow: 0.9`); multi-front cascades |
-| **Speaking** | `audioLevel` drives scale + brightness; neuron pulses radiate outward from centre; symbols shimmer; red pathways glow proportional to audio |
-
-### What to build (Phase 15A — frontend-agent only)
-- [x] Complete rewrite of `frontend/src/components/JarvisOrb.tsx` — all 7 layers, cascade activation system, symbol sprites built imperatively via `THREE.Group + THREE.Sprite + THREE.CanvasTexture`, state-driven `params` lerp. Full spec in `C:\Users\User\.claude\plans\i-want-you-to-fluttering-penguin.md`. **Removed**: 2500-particle sand cloud (`PARTICLE_COUNT`, `ParticleSeed`, `positions`/`seeds`), synaptic bezier arc system (`QuadraticBezierCurve3`, `ArcSlot`, `arcs`/`arcLines`/`arcGeometries`/`arcMaterials`/`impulseRef`/`impulsePositions`, `sampleCurve`, `updateSynapticArcs`), jagged discharge system (`DischargeSlot`, `discharges`/`dischargeGeometry`/`dischargeObject`, `spawnDischarge`, `updateDischargeArcs`, `colArr_`), and `COL_PURPLE`/`COL_GOLD`/`COL_WHITE`/`COL_CYAN` constants. **Added**: 350-node golden-spiral graph with nearest-K=4 adjacency + dedup edges; ~20% split into red freedom pathways; 3 nested glow spheres + wireframe `IcosahedronGeometry` hologram shell (flicker 0.88-1.0, 50-200ms); neuron `Points` (vertexColors, base `#b3d4ff`→active tint per state); normal `LineSegments` (`#1a3a7a`→`#7ab8ff`) + red `LineSegments` (`#440011`→`#ff2244`, `redGlow` scaled); 30 symbol `Sprite`s from per-glyph 64×64 `CanvasTexture` (`rgba(255,255,255,0.6)`) drifting + bouncing inside `0.8*BASE_RADIUS`; cascade activation (`CascadeFront[]` spreads through adjacency up to `CASCADE_DEPTH=6`, 0.04s/hop, `pow(0.12,delta)` decay); state-specific behaviour (thinking multi-front + gold tint + 2.2× swirl, listening inward ripple every 1.2s, speaking hub outward pulse + `audioLevel` scale/brightness). **Preserved**: `JarvisOrb({voiceState,audioLevel})` signature, `BASE_RADIUS=1.2`, golden-spiral distribution, AdditiveBlending + `depthWrite:false` on all materials, audioLevel speaking pulse. `pnpm build` clean (0 TS errors). Only file changed.
-- [x] Verify (debugger-agent): idle shows gentle neuron activations + floating symbols; thinking shows rapid cascades + vivid red pathways; speaking pulse reacts to audioLevel; `pnpm build` clean; no backend regressions. *(verified 2026-06-06 — `pnpm build` clean (0 TS errors, 476 modules); static analysis confirms old system GONE (no `PARTICLE_COUNT`/`flareRef`/`QuadraticBezierCurve3`/`DischargeSlot`/sand cloud) and all 7 layers present: 3 nested glow spheres + wireframe `IcosahedronGeometry` hologram shell, 350-node `Points` (`vertexColors`), ~480 normal `LineSegments` (`#1a3a7a`→`#7ab8ff`), red freedom `LineSegments` (`#440011`→`#ff2244`, 20% via `RED_RATIO=0.2`), 30 symbol `Sprite`s (`CanvasTexture`), cascade system (`CascadeFront` spreads through adjacency, `CASCADE_DEPTH=6`, `NEIGHBOR_K=4`); `BASE_RADIUS=1.2`, `NODE_COUNT=350`, `JarvisOrb({voiceState,audioLevel})` signature, `AdditiveBlending`+`depthWrite:false` on all materials preserved; state gating verified (thinking multi-front+gold+2.2× swirl, listening inward ripple, speaking hub outward pulse+audioLevel scale/brightness); backend suite 143/144, only pre-existing `get_gmail_token.py` secret-scan fails — no regression)*
-
----
-
 ## Archive Index
 
 > **All agents (especially Production Lead):** CLAUDE.md shows what is active and what is next.
@@ -257,7 +176,7 @@ A floating holographic sphere of interconnected neuron nodes. Thin glowing pathw
 
 | File | Contents | When to read |
 |---|---|---|
-| [docs/PHASE_HISTORY.md](docs/PHASE_HISTORY.md) | Phases 1–12 complete checklists + full project file structure. **Archiving destination — move fully completed phase sections here from CLAUDE.md.** | When you need to know exactly what was built, or to understand the file layout |
+| [docs/PHASE_HISTORY.md](docs/PHASE_HISTORY.md) | Phases 1–15 complete checklists + full project file structure. **Archiving destination — move fully completed phase sections here from CLAUDE.md.** | When you need to know exactly what was built, or to understand the file layout |
 | [docs/TEST_HISTORY.md](docs/TEST_HISTORY.md) | All debugger-agent test run logs (Phases 1–11C, 96 tests) | When you need to understand what is already tested and how |
 | [docs/SECURITY_AUDIT.md](docs/SECURITY_AUDIT.md) | Phase 8 + Phase 10 audit findings and verifications | Before touching auth, credentials, or network bindings |
 
