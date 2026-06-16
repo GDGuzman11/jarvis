@@ -289,6 +289,78 @@ class ClaudeClient:
                 await hub.broadcast(metrics)
 
 
+    # --- Non-streaming completion ------------------------------------------
+
+    async def complete(
+        self,
+        messages: Sequence[dict[str, Any]],
+        system_prompt: str,
+        *,
+        model: str | None = None,
+        max_tokens: int | None = None,
+    ) -> str:
+        """Return a full Claude response as plain text (no streaming, no fan-out).
+
+        Used for off-UI work that needs the *whole* answer at once rather than a
+        live token stream — e.g. the Phase 16C memory extractor, which asks a
+        cheap model (``claude-haiku-4-5``) for a structured JSON array. Unlike
+        :meth:`stream_response` this broadcasts **nothing** to the WebSocket hub,
+        so extraction never appears in the Reasoning window, and it does not emit
+        a final token or metrics event.
+
+        Parameters
+        ----------
+        messages:
+            Conversation/messages list in Anthropic format.
+        system_prompt:
+            Wrapped in an ephemeral ``cache_control`` block (same prefix-cache
+            treatment as :meth:`stream_response`) so a repeated extraction system
+            prompt re-reads from cache.
+        model:
+            Per-call model override (e.g. ``claude-haiku-4-5`` for extraction).
+            Defaults to this client's configured model.
+        max_tokens:
+            Per-call output cap; defaults to the instance default.
+
+        Returns
+        -------
+        str
+            The concatenation of every ``text`` content block in the reply
+            (stripped). Empty string if the reply carries no text blocks.
+
+        Raises
+        ------
+        ClaudeAPIError
+            If the API call fails, so the caller can fall back (e.g. to Ollama).
+        backend.security.keystore.MissingCredentialError
+            If the Anthropic API key is not set in the keyring.
+        """
+        client = self._ensure_client()
+        request: dict[str, Any] = {
+            "model": model or self.model,
+            "max_tokens": max_tokens or self.max_tokens,
+            "system": _system_blocks(system_prompt),
+            "messages": list(messages),
+        }
+        try:
+            response = await client.messages.create(**request)
+        except anthropic.APIError as exc:
+            log.error(
+                "claude_complete_error",
+                model=request["model"],
+                error=str(exc),
+                request_id=getattr(exc, "request_id", None),
+            )
+            raise ClaudeAPIError(str(exc)) from exc
+
+        parts = [
+            block.text
+            for block in response.content
+            if getattr(block, "type", None) == "text"
+        ]
+        return "".join(parts).strip()
+
+
 __all__ = [
     "ClaudeClient",
     "ClaudeAPIError",

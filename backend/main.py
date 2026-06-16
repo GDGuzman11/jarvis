@@ -45,6 +45,7 @@ from backend.memory.database import (
     init_db,
     rename_agent,
 )
+from backend.memory.extractor import LLMExtractor
 from backend.memory.manager import MemoryManager
 from backend.memory.vector_store import DEFAULT_INDEX_PATH, VectorStore
 from backend.memory.database import DEFAULT_DB_PATH
@@ -380,7 +381,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # shared vector store so every consumer reads/writes the same memory. Wiring
     # into the voice pipeline (12B) and agents (12C) follows; here it is built
     # and shared.
-    memory_manager = MemoryManager(db_path=DEFAULT_DB_PATH, vector_store=vector_store)
+    # Phase 16C: LLM-driven fact extraction (Claude Haiku 4.5 → local phi3.5
+    # fallback). Runs off the voice hot path inside the fire-and-forget
+    # consolidate task, gated by the rule pre-filter, so it adds no latency to
+    # the spoken reply and degrades to rule distillation if both LLMs are down.
+    memory_manager = MemoryManager(
+        db_path=DEFAULT_DB_PATH,
+        vector_store=vector_store,
+        extractor=LLMExtractor(),
+    )
     app.state.memory_manager = memory_manager
     log.info("Memory manager ready")
 

@@ -187,6 +187,13 @@ _FTS_SCHEMA: tuple[str, ...] = (
     "AFTER INSERT ON memory_facts BEGIN "
     "INSERT INTO memory_facts_fts(rowid, content, category) "
     "VALUES (new.id, new.content, new.category); END",
+    # Phase 16C: an UPDATE action overwrites a fact's content in place (the
+    # supersede/dedup path). Keep the FTS shadow in sync so keyword recall does
+    # not surface the stale pre-update text. Mirrors the INSERT trigger.
+    "CREATE TRIGGER IF NOT EXISTS memory_facts_fts_update "
+    "AFTER UPDATE OF content, category ON memory_facts BEGIN "
+    "UPDATE memory_facts_fts SET content = new.content, category = new.category "
+    "WHERE rowid = new.id; END",
 )
 
 # Helpful indexes for the common access patterns (queue polling, audit reads).
@@ -320,11 +327,21 @@ async def _migrate_conversations_channel(conn: aiosqlite.Connection) -> None:
 #   created_by TEXT DEFAULT 'system' — provenance: user|agent|inference|system
 #   source_turn_id INTEGER         — conversations.id the fact was distilled from
 #   access_count INTEGER DEFAULT 0 — times the fact has been recalled (16B)
+#
+# Phase 16C adds a single ``valid_to`` column to support the LLM extractor's
+# DELETE/supersede action — a minimal soft-delete so a retracted/contradicted
+# fact stops surfacing in recall without being physically removed. This is the
+# *minimal* validity marker; Phase 16D extends it into a full bi-temporal model
+# (valid_from, strength, half_life_days, superseded_by_fact_id, …). The shared
+# check-before-alter migration below is idempotent, so 16D can add the remaining
+# columns later without conflicting with this one.
+#   valid_to TIMESTAMP             — NULL = active; set = archived/superseded (16C)
 _MEMORY_FACTS_NEW_COLUMNS: tuple[tuple[str, str], ...] = (
     ("confidence", "FLOAT DEFAULT 0.8"),
     ("created_by", "TEXT DEFAULT 'system'"),
     ("source_turn_id", "INTEGER"),
     ("access_count", "INTEGER DEFAULT 0"),
+    ("valid_to", "TIMESTAMP"),
 )
 
 
@@ -722,19 +739,47 @@ async def save_memory_fact(
     importance: float = 0.5,
     agent_id: str | None = None,
     *,
+    created_by: str | None = None,
+    confidence: float | None = None,
+    source_turn_id: int | None = None,
     db_path: Path | str = DEFAULT_DB_PATH,
 ) -> int:
     """Persist a single distilled memory fact and return its row id.
 
     ``content`` is a compact declarative fact (e.g. "User prefers dark mode."),
     never a raw transcript. ``importance`` is the evaluator's 0.0–1.0 score.
+
+    Phase 16C provenance columns are optional so every existing caller keeps its
+    behaviour: when ``created_by`` / ``confidence`` are omitted the schema
+    defaults (``'system'`` / ``0.8``) apply. The LLM extractor (Phase 16C) passes
+    ``created_by='user'|'inference'`` and the model's per-fact ``confidence``.
     """
+    # Only name the provenance columns when a value is supplied, so omitted
+    # arguments fall through to the column DEFAULTs rather than being forced to
+    # NULL (which would clobber the 'system'/0.8 defaults).
+    columns = ["source", "category", "content", "importance", "agent_id"]
+    values: list[object] = [
+        source, category, content, float(importance), agent_id,
+    ]
+    if created_by is not None:
+        columns.append("created_by")
+        values.append(created_by)
+    if confidence is not None:
+        columns.append("confidence")
+        values.append(float(confidence))
+    if source_turn_id is not None:
+        columns.append("source_turn_id")
+        values.append(int(source_turn_id))
+
+    placeholders = ", ".join("?" for _ in columns)
+    col_sql = ", ".join(columns)
     conn = await connect(db_path)
     try:
         cursor = await conn.execute(
-            "INSERT INTO memory_facts (source, category, content, importance, "
-            "agent_id) VALUES (?, ?, ?, ?, ?)",
-            (source, category, content, float(importance), agent_id),
+            # col_sql/placeholders are built from the hardcoded `columns` list,
+            # never from caller input — the values stay parameterised.
+            f"INSERT INTO memory_facts ({col_sql}) VALUES ({placeholders})",  # noqa: S608
+            tuple(values),
         )
         row_id = cursor.lastrowid
         await conn.commit()
@@ -742,6 +787,84 @@ async def save_memory_fact(
         await conn.close()
     assert row_id is not None
     return row_id
+
+
+async def update_memory_fact(
+    fact_id: int,
+    content: str,
+    *,
+    importance: float | None = None,
+    confidence: float | None = None,
+    created_by: str | None = None,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> bool:
+    """Overwrite an existing fact's content in place (Phase 16C UPDATE action).
+
+    The LLM extractor's ``UPDATE`` action supersedes a near-duplicate fact rather
+    than inserting a second row — e.g. "I moved to Boston" overwrites a prior
+    "User lives in Portland." Only the ``content`` (and any supplied quality
+    fields) change; ``created_at`` is preserved so the fact's age is unchanged.
+    The ``memory_facts_fts_update`` trigger keeps the keyword index in sync.
+
+    Returns ``True`` when a row matched. The FAISS vector for the *old* text is
+    left in place (the store is append-only); recall ranking tolerates the
+    near-duplicate because the new text is added alongside it. A proper FAISS
+    tombstone is deferred to Phase 16D's bi-temporal rework.
+    """
+    sets = ["content = ?"]
+    params: list[object] = [content]
+    if importance is not None:
+        sets.append("importance = ?")
+        params.append(float(importance))
+    if confidence is not None:
+        sets.append("confidence = ?")
+        params.append(float(confidence))
+    if created_by is not None:
+        sets.append("created_by = ?")
+        params.append(created_by)
+    params.append(int(fact_id))
+
+    conn = await connect(db_path)
+    try:
+        cursor = await conn.execute(
+            # `sets` is assembled from hardcoded column fragments only; every
+            # bound value is parameterised via `params`.
+            f"UPDATE memory_facts SET {', '.join(sets)} WHERE id = ?",  # noqa: S608
+            tuple(params),
+        )
+        await conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        await conn.close()
+
+
+async def invalidate_memory_fact(
+    fact_id: int,
+    *,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> bool:
+    """Soft-delete a fact by stamping ``valid_to`` (Phase 16C DELETE action).
+
+    Used when the LLM extractor decides an existing fact has been retracted or
+    contradicted. The row is kept (archival, not destruction) but excluded from
+    active recall via the ``valid_to IS NULL`` filter the recall pipeline applies.
+    Returns ``True`` when a row matched. Idempotent — re-stamping an already
+    archived fact simply refreshes its ``valid_to``.
+
+    TODO(Phase 16D): replace this minimal marker with the full bi-temporal
+    write-policy machinery (last-write-wins / evidence-weighted / merge /
+    await-confirmation) and a FAISS tombstone so the archived vector is dropped.
+    """
+    conn = await connect(db_path)
+    try:
+        cursor = await conn.execute(
+            "UPDATE memory_facts SET valid_to = datetime('now') WHERE id = ?",
+            (int(fact_id),),
+        )
+        await conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        await conn.close()
 
 
 async def get_memory_facts(
@@ -829,7 +952,8 @@ async def get_memory_facts_by_ids(
     conn = await connect(db_path)
     try:
         cursor = await conn.execute(
-            "SELECT id, importance, last_recalled_at, created_at, access_count "
+            "SELECT id, importance, last_recalled_at, created_at, access_count, "
+            "valid_to "
             f"FROM memory_facts WHERE id IN ({placeholders})",
             ids,
         )

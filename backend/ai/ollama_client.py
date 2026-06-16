@@ -141,6 +141,57 @@ class OllamaClient:
             )
 
 
+    async def complete(
+        self,
+        messages: Sequence[dict[str, Any]],
+        system_prompt: str,
+        *,
+        fmt: str | None = None,
+    ) -> str:
+        """Return a full local phi3.5 response as plain text (non-streaming).
+
+        The fallback counterpart to
+        :meth:`backend.ai.claude_client.ClaudeClient.complete`. Used by the Phase
+        16C memory extractor when the Claude call is unavailable or its output
+        could not be parsed. Broadcasts nothing to the WebSocket hub.
+
+        Parameters
+        ----------
+        messages:
+            Conversation/messages list in chat format.
+        system_prompt:
+            Prepended as the leading ``system`` message.
+        fmt:
+            Optional Ollama ``format`` hint (pass ``"json"`` to push phi3.5
+            toward strict JSON output for extraction).
+
+        Returns
+        -------
+        str
+            The model's reply text, or ``""`` when Ollama is not running/reachable
+            (the same silent-degradation contract as :meth:`stream_response` — a
+            cold fallback never raises).
+        """
+        client = self._ensure_client()
+        chat_messages: list[dict[str, Any]] = [
+            {"role": "system", "content": system_prompt},
+            *messages,
+        ]
+        try:
+            response = await client.chat(
+                model=self.model,
+                messages=chat_messages,
+                stream=False,
+                format=fmt,
+            )
+            content = response.get("message", {}).get("content", "")
+            log.info("ollama_complete_done", model=self.model)
+            return content or ""
+        except _CONNECTION_ERRORS as exc:
+            log.warning("ollama_unavailable", model=self.model, error=str(exc))
+            return ""
+
+
 __all__ = [
     "OllamaClient",
     "DEFAULT_MODEL",

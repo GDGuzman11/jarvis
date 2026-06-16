@@ -24,9 +24,10 @@
 - **Phase 15B COMPLETE (2026-06-16)** ✅: All 3 missing WS events (`tool_call`, `comms`, `tool_permissions`) wired + `shutdown` verified; Reasoning/Communications/Tools windows now receive live data. Verified 6/6 by debugger-agent. Note: 3 of the 4 event classes didn't actually exist and were added.
 - **Phase 16A COMPLETE (2026-06-16)** ✅: Recall→prompt injection boundary sanitized (`<untrusted_memory>` + control-char strip), `last_recalled_at` activated on the real recall hot path, 4 memory-quality columns added via idempotent migration. Verified 5/5 by debugger-agent. Suite 161/161.
 - **Phase 16B COMPLETE (2026-06-16)** ✅: Similarity-only recall replaced with weighted composite score (0.40 semantic + 0.20 keyword/FTS5 + 0.20 recency + 0.10 importance + 0.10 frequency); `access_count` increment wired into the recall stamp. Verified 6/6 by debugger-agent. Suite 170/170.
-- **Next Task**: **Phase 16C** — LLM-Driven Extraction (`/backend-agent`). Replace keyword rule-matching in `evaluator.py` with an LLM extraction call that classifies each fact as ADD/UPDATE/DELETE/NOOP (structured JSON), wired into `save_memory_fact()` with FAISS-similarity dedup. Then 16D → 16F.
+- **Phase 16C COMPLETE (2026-06-16)** ✅: Keyword extraction replaced with LLM extraction (Haiku 4.5 primary + phi3.5 fallback, async, rule pre-filter gate) classifying facts ADD/UPDATE/DELETE/NOOP; FAISS-0.85 UPDATE dedup; `created_by`/`confidence` set; minimal `valid_to` soft-delete. Verified 8/8 by debugger-agent. Suite 183/183.
+- **Next Task**: **Phase 16D** — Bi-Temporal Facts + Ebbinghaus + TOKI Operators (`/backend-agent`). Add full bi-temporal columns, TOKI contradiction write-policies (last-write-wins/evidence-weighted/merge/await-confirmation), nightly Ebbinghaus strength decay, and FAISS tombstoning (the 16C-deferred TODO). Then 16F (Memory Graph Window).
 - **Blockers**: Dedicated microphone not yet purchased — voice E2E tests deferred to Pending.
-- **Test State**: **170/170 passing** (secret-scan green; +9 Phase 16B re-ranking tests, 2026-06-16) · `pnpm build` clean.
+- **Test State**: **183/183 passing** (secret-scan green; +13 Phase 16C extraction tests, 2026-06-16) · `pnpm build` clean.
 - **Build Started**: 2026-06-02
 
 ---
@@ -166,13 +167,14 @@ Frontend (`websocket.ts`) handles 9 event types. Backend (`events.py` + `main.py
 - [x] **Increment `access_count`** — `mark_facts_recalled()` (`database.py:779`) now does a single combined UPDATE: `last_recalled_at = datetime('now')` AND `access_count = COALESCE(access_count,0)+1`, PK-keyed, wrapped, stamps only the returned top-N.
 - [x] Verify (debugger-agent): recently accessed facts rank above equally-similar older facts; importance-weighted facts surface correctly; `pytest backend/` passes. **Verified 2026-06-16 — 170/170 passing (161 + 9 new). All 6 checks PASS.**
 
-### Phase 16C — LLM-Driven Extraction
+### Phase 16C — LLM-Driven Extraction — ✅ COMPLETE & verified 8/8 (2026-06-16)
 *Replace keyword rule-matching in `evaluator.py` with an LLM-driven fact extraction pipeline (Mem0 pattern).*
-
-- [ ] **Replace `_RULES` keyword matching** in `backend/memory/evaluator.py` with an LLM extraction call — prompt Claude (or Ollama `phi3.5` for speed/cost) to extract facts from each conversation turn and classify each as `ADD`, `UPDATE`, `DELETE`, or `NOOP`. Prompt template should output structured JSON: `[{"action": "ADD"|"UPDATE"|"DELETE"|"NOOP", "fact": "...", "confidence": 0.0-1.0, "subject": "..."}]`. Keep existing rule pass as a fast pre-filter (if no patterns match at all, skip LLM call).
-- [ ] **Wire ADD/UPDATE/DELETE/NOOP** into `save_memory_fact()` — UPDATE finds the most similar existing fact (FAISS score > 0.85) and overwrites; DELETE marks `valid_to = now()`; NOOP skips write.
-- [ ] **Set `created_by`** on every extracted fact (`'user'` for direct statements, `'inference'` for LLM-derived).
-- [ ] Verify (debugger-agent): paraphrased facts ("I moved to Boston" / "Boston is where I live now") produce single fact not two; explicit contradictions trigger UPDATE not second INSERT; `pytest backend/` passes.
+> **Model strategy (user-decided)**: Claude **Haiku 4.5** (`claude-haiku-4-5`, per-call override — client default stays `claude-opus-4-7`) as primary extractor, local Ollama **phi3.5** as fallback, run **async off the voice hot path**, gated behind the existing rule pre-filter. New `backend/memory/extractor.py` (`LLMExtractor`). Haiku chosen over Opus: cheap + reliable structured JSON, no Opus needed for extraction. See memory `phase16c-extraction-model`.
+- [x] **Replace `_RULES` keyword matching** — `LLMExtractor.extract()` prompts Haiku→(raise/unparseable)→phi3.5→(fail)→`[]`, never raises. Defensive JSON parse (`_extract_json_array` strips fences/prose, carves outermost `[...]`). Runs inside `MemoryManager.consolidate()`, fire-and-forget `asyncio.create_task` from `pipeline.py:531` + `base_agent.py:418` (off hot path). Rule `score()` < 0.65 returns before the LLM call (pre-filter gate). New non-streaming `ClaudeClient.complete()` + `OllamaClient.complete(fmt="json")`.
+- [x] **Wire ADD/UPDATE/DELETE/NOOP** — `_apply_extractions()`: ADD inserts; UPDATE finds most-similar fact via FAISS, overwrites in place if ≥0.85 else falls through to ADD (no dup); DELETE soft-deletes via new `valid_to` column (recall excludes); NOOP skips. Empty `[]` (both LLMs down) falls back to Phase 12A rule distillation so a write is never lost.
+- [x] **Set `created_by`** — 'user' for direct statements, 'inference' for LLM-derived; `confidence` persisted from LLM output.
+- [x] Verified (debugger-agent 2026-06-16): paraphrase→1 fact (UPDATE dedup); contradiction→UPDATE not 2nd INSERT; NOOP no-write; pre-filter skips LLM; phi3.5 fallback exercised; provenance correct; opt-in (pre-16C tests unchanged, no LLM); `valid_to` migration idempotent; FTS trigger syncs after UPDATE. **Suite 183/183** (+13 mocked tests, no network).
+- **Deferred to 16D (TODOs in code)**: FAISS not tombstoned on UPDATE/DELETE (stale vector lingers beside revised text — ranking tolerates it); full bi-temporal columns (`valid_from`/`strength`/`half_life_days`/`superseded_by_fact_id`/`write_policy`/`conflicting_fact_ids`) — 16C ships only the minimal `valid_to` marker, migration is forward-compatible.
 
 ### Phase 16D — Bi-Temporal Facts + Ebbinghaus + TOKI Operators
 *Contradiction resolution, temporal validity, and natural forgetting.*

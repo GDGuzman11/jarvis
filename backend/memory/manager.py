@@ -44,6 +44,7 @@ from typing import Any
 from backend.logging_config import get_logger
 from backend.memory import database
 from backend.memory.evaluator import MemoryEvaluator
+from backend.memory.extractor import Extraction, LLMExtractor
 from backend.memory.vector_store import VectorStore
 
 log = get_logger(__name__)
@@ -78,6 +79,15 @@ CANDIDATE_POOL_K: int = 20
 # Recency fallback when a fact has neither a parseable ``last_recalled_at`` nor a
 # parseable ``created_at``: treat it as a decade old so recency ≈ 0.
 _UNKNOWN_AGE_DAYS: float = 3650.0
+
+# --- Phase 16C — LLM extraction dedup ---------------------------------------
+# FAISS cosine-similarity floor for an UPDATE/DELETE to act on an *existing*
+# fact. The extractor's UPDATE supersedes the single most-similar stored fact
+# only when it clears this bar; below it, an UPDATE is treated as an ADD (we
+# could not confidently find the fact it meant to revise) and a DELETE is a
+# no-op (nothing close enough to retract). 0.85 ≈ "essentially the same fact,
+# reworded" for all-MiniLM-L6-v2.
+UPDATE_SIMILARITY_THRESHOLD: float = 0.85
 
 
 def _clamp01(value: float) -> float:
@@ -251,6 +261,13 @@ class MemoryManager:
     evaluator:
         Optional injected :class:`MemoryEvaluator`; a default one is created when
         omitted.
+    extractor:
+        Optional :class:`~backend.memory.extractor.LLMExtractor` (Phase 16C).
+        When supplied, :meth:`consolidate` distils facts with the LLM (Haiku →
+        phi3.5) and applies the returned ADD/UPDATE/DELETE/NOOP operations. When
+        ``None`` (the default — and how every pre-16C caller/test constructs the
+        manager), consolidation uses the Phase 12A rule distillation unchanged,
+        so no LLM is ever contacted.
     """
 
     def __init__(
@@ -259,10 +276,12 @@ class MemoryManager:
         vector_store: VectorStore,
         *,
         evaluator: MemoryEvaluator | None = None,
+        extractor: LLMExtractor | None = None,
     ) -> None:
         self._db_path = db_path
         self._vector_store = vector_store
         self._evaluator = evaluator or MemoryEvaluator()
+        self._extractor = extractor
 
     # --- Database kwargs ----------------------------------------------------
 
@@ -399,46 +418,205 @@ class MemoryManager:
             if person:
                 asyncio.create_task(self._upsert_person_async(person))
 
+            # Pre-filter (Phase 12A rules): the threshold gate also gates the LLM
+            # — an exchange that matched no rule scores 'general' (0.20) and never
+            # reaches the extractor, so idle chatter costs nothing. Only an
+            # exchange that already looks memorable is sent to the LLM below.
             score, category = self._evaluator.score(user_text, reply)
             if score < self._evaluator.threshold:
                 log.info("memory_consolidate_skip", category=category, score=score)
                 return None
 
-            fact = self._evaluator.extract_fact(user_text, reply, category)
-            if not fact.strip():
-                return None
+            # Phase 16C: LLM-driven extraction (Haiku → phi3.5) when an extractor
+            # is wired. It returns structured ADD/UPDATE/DELETE/NOOP operations;
+            # applying them dedups paraphrases and supersedes contradictions
+            # instead of always inserting.
+            #
+            # A *non-empty* result is the LLM's verdict and is respected as-is —
+            # even when every operation is NOOP (the model deliberately decided
+            # nothing is worth storing), in which case nothing is written and we
+            # do NOT second-guess it with the rules. Only an *empty* result
+            # (extractor unavailable, or output unparseable past both Haiku and
+            # phi3.5) falls back to the Phase 12A rule distillation, so a memory
+            # write is never silently lost to an outage.
+            if self._extractor is not None:
+                extractions = await self._extractor.extract(user_text, reply)
+                if extractions:
+                    return await self._apply_extractions(
+                        extractions, category=category, score=score,
+                        source=source, agent_id=agent_id,
+                    )
+                # else: empty extraction → rule fallback below.
 
-            fact_id = await database.save_memory_fact(
-                source,
-                category,
-                fact,
-                importance=score,
+            return await self._store_rule_fact(
+                user_text, reply, category, score=score, source=source,
                 agent_id=agent_id,
-                **self._db_kwargs(),
             )
-
-            # Mirror into FAISS so semantic recall can find it. The vector store
-            # is synchronous + CPU-bound, so run it off the event loop.
-            await asyncio.to_thread(
-                self._vector_store.add,
-                fact,
-                {
-                    "fact_id": fact_id,
-                    "category": category,
-                    "source": source,
-                    "importance": score,
-                },
-            )
-            log.info(
-                "memory_consolidate_promote",
-                category=category,
-                score=score,
-                fact_id=fact_id,
-            )
-            return fact_id
         except Exception:  # noqa: BLE001 — consolidation must never break a turn
             log.warning("memory_consolidate_failed", exc_info=True)
             return None
+
+    # --- Fact persistence (rule + LLM paths share the FAISS mirror) ---------
+
+    async def _add_fact(
+        self,
+        content: str,
+        *,
+        category: str,
+        source: str,
+        importance: float,
+        agent_id: str | None = None,
+        created_by: str | None = None,
+        confidence: float | None = None,
+    ) -> int:
+        """Insert one fact into ``memory_facts`` and mirror it into FAISS.
+
+        The single write path shared by the rule distillation and the LLM
+        extractor's ADD/UPDATE actions, so the SQLite row and the FAISS vector
+        never drift. FAISS is synchronous + CPU-bound, so its add runs off the
+        event loop. Returns the new ``memory_facts`` row id.
+        """
+        fact_id = await database.save_memory_fact(
+            source,
+            category,
+            content,
+            importance=importance,
+            agent_id=agent_id,
+            created_by=created_by,
+            confidence=confidence,
+            **self._db_kwargs(),
+        )
+        await asyncio.to_thread(
+            self._vector_store.add,
+            content,
+            {
+                "fact_id": fact_id,
+                "category": category,
+                "source": source,
+                "importance": importance,
+            },
+        )
+        return fact_id
+
+    async def _store_rule_fact(
+        self,
+        user_text: str,
+        reply: str,
+        category: str,
+        *,
+        score: float,
+        source: str,
+        agent_id: str | None,
+    ) -> int | None:
+        """Phase 12A rule distillation: distil one fact and ADD it (no LLM)."""
+        fact = self._evaluator.extract_fact(user_text, reply, category)
+        if not fact.strip():
+            return None
+        fact_id = await self._add_fact(
+            fact, category=category, source=source, importance=score,
+            agent_id=agent_id,
+        )
+        log.info(
+            "memory_consolidate_promote", category=category, score=score,
+            fact_id=fact_id,
+        )
+        return fact_id
+
+    # --- Phase 16C: apply LLM extraction operations -------------------------
+
+    async def _find_similar_fact_id(self, text: str) -> int | None:
+        """Return the id of the stored fact most similar to ``text`` if ≥ 0.85.
+
+        Used by UPDATE/DELETE to locate the existing fact an operation revises or
+        retracts. Searches FAISS for the single closest entry; returns its
+        ``fact_id`` only when the cosine similarity clears
+        :data:`UPDATE_SIMILARITY_THRESHOLD`, else ``None`` (caller treats UPDATE
+        as ADD and DELETE as a no-op). Never raises.
+        """
+        if not text or not text.strip() or not len(self._vector_store):
+            return None
+        try:
+            hits = await asyncio.to_thread(self._vector_store.search, text, 1)
+        except Exception:  # noqa: BLE001
+            log.warning("memory_extract_dedup_search_failed", exc_info=True)
+            return None
+        for hit in hits:
+            if hit.score >= UPDATE_SIMILARITY_THRESHOLD:
+                raw_id = hit.metadata.get("fact_id")
+                if isinstance(raw_id, int):
+                    return raw_id
+        return None
+
+    async def _apply_extractions(
+        self,
+        extractions: list[Extraction],
+        *,
+        category: str,
+        score: float,
+        source: str,
+        agent_id: str | None,
+    ) -> int | None:
+        """Apply a list of LLM extraction operations to memory.
+
+        Returns the id of the last fact written/updated, or ``None`` when nothing
+        was written (every operation was a NOOP, or a DELETE/UPDATE found no
+        existing fact close enough to act on). ``created_by`` is taken from each
+        operation's provenance (``'user'`` vs ``'inference'``) and ``confidence``
+        from the model's per-fact score. The caller has already confirmed the
+        list is non-empty, so a ``None`` return here means "the LLM looked and
+        decided nothing", not "fall back to rules".
+        """
+        last_id: int | None = None
+        for op in extractions:
+            if op.action == "NOOP":
+                continue
+            if op.action == "DELETE":
+                target = await self._find_similar_fact_id(op.fact)
+                if target is not None:
+                    await database.invalidate_memory_fact(
+                        target, **self._db_kwargs()
+                    )
+                    last_id = target
+                    log.info("memory_extract_delete", fact_id=target)
+                continue
+
+            if op.action == "UPDATE":
+                target = await self._find_similar_fact_id(op.fact)
+                if target is not None:
+                    await database.update_memory_fact(
+                        target,
+                        op.fact,
+                        importance=score,
+                        confidence=op.confidence,
+                        created_by=op.source,
+                        **self._db_kwargs(),
+                    )
+                    # Mirror the revised text into FAISS so recall can match the
+                    # new phrasing (the stale vector lingers; see Phase 16D TODO
+                    # in database.update_memory_fact).
+                    await asyncio.to_thread(
+                        self._vector_store.add,
+                        op.fact,
+                        {
+                            "fact_id": target,
+                            "category": category,
+                            "source": source,
+                            "importance": score,
+                        },
+                    )
+                    last_id = target
+                    log.info("memory_extract_update", fact_id=target)
+                    continue
+                # No close enough existing fact → treat UPDATE as ADD.
+
+            # ADD (or an UPDATE that found no target to revise).
+            last_id = await self._add_fact(
+                op.fact, category=category, source=source, importance=score,
+                agent_id=agent_id, created_by=op.source, confidence=op.confidence,
+            )
+            log.info("memory_extract_add", fact_id=last_id, created_by=op.source)
+
+        return last_id
 
     # --- Intelligence-layer helpers (Phase 12D) -----------------------------
 
@@ -647,6 +825,11 @@ class MemoryManager:
                         raw_id = hit.metadata.get("fact_id")
                         fid = raw_id if isinstance(raw_id, int) else None
                         meta = meta_by_id.get(fid, {}) if fid is not None else {}
+                        # Phase 16C: skip facts the extractor archived (DELETE /
+                        # supersede). ``valid_to`` set means inactive — drop it
+                        # from the candidate pool so retracted facts never recall.
+                        if meta.get("valid_to"):
+                            continue
                         # Recency: prefer last_recalled_at; fall back to
                         # created_at (a never-recalled fact is "as recent as its
                         # creation", not stale); else treat as a decade old.
@@ -794,6 +977,7 @@ __all__ = [
     "DEFAULT_N_SEMANTIC",
     "MIN_SEMANTIC_SCORE",
     "CANDIDATE_POOL_K",
+    "UPDATE_SIMILARITY_THRESHOLD",
     "W_SEMANTIC",
     "W_KEYWORD",
     "W_RECENCY",
