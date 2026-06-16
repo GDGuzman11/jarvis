@@ -22,6 +22,8 @@ from __future__ import annotations
 import asyncio
 import os
 import signal
+import sqlite3
+import tempfile
 import zipfile
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -207,6 +209,32 @@ BACKUP_INTERVAL_S: int = 86_400  # 24 hours
 BACKUP_RETENTION_DAYS: int = 30
 
 
+def _online_backup_db(src_path: Path, dst_path: Path) -> None:
+    """Copy a WAL-safe, consistent online snapshot of the SQLite DB.
+
+    Uses :meth:`sqlite3.Connection.backup`, which reads a transactionally
+    consistent image of the source database — including committed pages that
+    still live in the ``-wal`` sidecar — and writes a fresh, self-contained DB
+    file at ``dst_path``. This is safe under WAL journal mode with concurrent
+    writers (the consolidation loop, voice pipeline, and agents all write while
+    a backup runs); a raw file copy of just the ``.db`` would miss un-checkpointed
+    WAL pages and produce a stale or torn snapshot.
+
+    The source is opened read-write (the standard, robust path that avoids the
+    read-only-WAL ``-shm`` pitfall); ``backup()`` never mutates the source. The
+    journal mode of the live DB is untouched.
+    """
+    src = sqlite3.connect(str(src_path))
+    try:
+        dst = sqlite3.connect(str(dst_path))
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+    finally:
+        src.close()
+
+
 def _write_backup_zip(db_path: Path, vector_store_path: Path) -> Path | None:
     """Zip the DB + FAISS index/sidecar into ``data/backups/jarvis_<date>.zip``.
 
@@ -214,26 +242,57 @@ def _write_backup_zip(db_path: Path, vector_store_path: Path) -> Path | None:
     missing is simply skipped — a fresh install with no FAISS index yet still
     produces a valid backup of whatever exists. Returns the zip path written, or
     ``None`` when there was nothing to back up.
+
+    The database is captured via :func:`_online_backup_db` (a WAL-safe online
+    snapshot) rather than raw-copied, so the archive always holds a consistent,
+    self-contained DB even under concurrent writers. Because the snapshot already
+    folds in committed WAL pages, the ``-wal``/``-shm`` sidecars are intentionally
+    NOT shipped — they would be redundant. The DB is stored in the archive under
+    ``db_path.name`` (``jarvis.db`` in production) so existing restore logic keeps
+    working. FAISS vector files are plain on-disk blobs with no journal, so they
+    are still raw-copied as before.
     """
     backups_dir = db_path.parent / "backups"
     backups_dir.mkdir(parents=True, exist_ok=True)
 
-    sources = [
-        db_path,
+    vector_sources = [
         vector_store_path,
         vector_store_path.with_suffix(vector_store_path.suffix + ".meta.json"),
     ]
-    present = [p for p in sources if p.exists()]
-    if not present:
+    vector_present = [p for p in vector_sources if p.exists()]
+    db_present = db_path.exists()
+
+    if not db_present and not vector_present:
         log.info("backup_skipped_no_sources")
         return None
 
     stamp = datetime.now().strftime("%Y-%m-%d")
     zip_path = backups_dir / f"jarvis_{stamp}.zip"
-    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for src in present:
-            zf.write(src, arcname=src.name)
-    log.info("backup_written", path=str(zip_path), files=len(present))
+
+    tmp_db: Path | None = None
+    try:
+        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            if db_present:
+                tmp_fd, tmp_name = tempfile.mkstemp(
+                    prefix=".backup_", suffix=".db", dir=str(backups_dir)
+                )
+                os.close(tmp_fd)
+                tmp_db = Path(tmp_name)
+                _online_backup_db(db_path, tmp_db)
+                zf.write(tmp_db, arcname=db_path.name)
+            for src in vector_present:
+                zf.write(src, arcname=src.name)
+    finally:
+        if tmp_db is not None:
+            try:
+                tmp_db.unlink()
+            except OSError:
+                log.warning(
+                    "backup_tmp_cleanup_failed", path=str(tmp_db), exc_info=True
+                )
+
+    file_count = (1 if db_present else 0) + len(vector_present)
+    log.info("backup_written", path=str(zip_path), files=file_count)
     return zip_path
 
 

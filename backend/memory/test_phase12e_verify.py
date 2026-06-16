@@ -190,6 +190,74 @@ async def test_backup_creates_zip(tmp_path):
     assert db.name in names, f"db not found in archive: {names}"
 
 
+# --- 7b. backup is WAL-safe: un-checkpointed writes survive ------------------
+
+
+async def test_backup_is_wal_safe(tmp_path):
+    """A WAL-mode DB with un-checkpointed writes backs up consistently.
+
+    Regression guard for the WAL backup fix: the live ``.db`` file does not hold
+    the most-recent committed pages under WAL (they sit in the ``-wal`` sidecar
+    until a checkpoint). The online ``sqlite3.Connection.backup`` snapshot must
+    fold those pages in, so the DB inside the zip must contain the just-written
+    row and open cleanly.
+    """
+    import sqlite3
+    import zipfile as _zipfile
+
+    from backend.main import _write_backup_zip
+
+    db_path = await _make_db(tmp_path)
+    db = tmp_path / "phase12e.db"
+
+    # Force WAL mode and write a row WITHOUT checkpointing, so the committed page
+    # lives only in the -wal sidecar — exactly the torn/stale-backup scenario.
+    conn = sqlite3.connect(str(db))
+    try:
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute(
+            "INSERT INTO conversations (role, content) VALUES ('user', ?)",
+            ("uncheckpointed-wal-row",),
+        )
+        conn.commit()
+        # NOTE: deliberately no wal_checkpoint here.
+    finally:
+        conn.close()
+
+    index_path = tmp_path / "faiss_index.bin"  # absent — DB-only backup
+    zip_path = _write_backup_zip(db, index_path)
+    assert zip_path is not None and zip_path.exists()
+
+    # Extract the snapshot DB and confirm the un-checkpointed row is present.
+    restore_dir = tmp_path / "restore"
+    restore_dir.mkdir()
+    with _zipfile.ZipFile(zip_path) as zf:
+        assert db.name in zf.namelist()
+        zf.extract(db.name, restore_dir)
+
+    restored = sqlite3.connect(str(restore_dir / db.name))
+    try:
+        tables = {
+            row[0]
+            for row in restored.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        assert "conversations" in tables, "restored DB missing core tables"
+        rows = restored.execute(
+            "SELECT content FROM conversations WHERE content = ?",
+            ("uncheckpointed-wal-row",),
+        ).fetchall()
+        assert rows, "un-checkpointed WAL row was lost in the backup snapshot"
+    finally:
+        restored.close()
+
+    # No stray temp snapshot files left behind in the backups dir.
+    backups_dir = db.parent / "backups"
+    leftovers = list(backups_dir.glob(".backup_*"))
+    assert not leftovers, f"temp backup files not cleaned up: {leftovers}"
+
+
 # --- 8. backup pruning by age -----------------------------------------------
 
 
