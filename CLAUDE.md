@@ -23,9 +23,10 @@
 - **Tier 0 COMPLETE (2026-06-16)** ✅: Item 1 (Jarvis → Helix rename, verified 5/5), Items 2–3 (OAuth client ID scrub), Item 4 (WAL-safe SQLite backup) all done. **Suite now 145/145 green.**
 - **Phase 15B COMPLETE (2026-06-16)** ✅: All 3 missing WS events (`tool_call`, `comms`, `tool_permissions`) wired + `shutdown` verified; Reasoning/Communications/Tools windows now receive live data. Verified 6/6 by debugger-agent. Note: 3 of the 4 event classes didn't actually exist and were added.
 - **Phase 16A COMPLETE (2026-06-16)** ✅: Recall→prompt injection boundary sanitized (`<untrusted_memory>` + control-char strip), `last_recalled_at` activated on the real recall hot path, 4 memory-quality columns added via idempotent migration. Verified 5/5 by debugger-agent. Suite 161/161.
-- **Next Task**: **Phase 16B** — Multi-Signal Re-Ranking (`/backend-agent`). Replace similarity-only FAISS recall with a weighted composite score (0.40 semantic + 0.20 BM25 + 0.20 recency + 0.10 importance + 0.10 frequency) and wire the `access_count` increment on recall. Then 16C → 16D → 16F.
+- **Phase 16B COMPLETE (2026-06-16)** ✅: Similarity-only recall replaced with weighted composite score (0.40 semantic + 0.20 keyword/FTS5 + 0.20 recency + 0.10 importance + 0.10 frequency); `access_count` increment wired into the recall stamp. Verified 6/6 by debugger-agent. Suite 170/170.
+- **Next Task**: **Phase 16C** — LLM-Driven Extraction (`/backend-agent`). Replace keyword rule-matching in `evaluator.py` with an LLM extraction call that classifies each fact as ADD/UPDATE/DELETE/NOOP (structured JSON), wired into `save_memory_fact()` with FAISS-similarity dedup. Then 16D → 16F.
 - **Blockers**: Dedicated microphone not yet purchased — voice E2E tests deferred to Pending.
-- **Test State**: **161/161 passing** (secret-scan green; +7 Phase 16A memory tests, 2026-06-16) · `pnpm build` clean.
+- **Test State**: **170/170 passing** (secret-scan green; +9 Phase 16B re-ranking tests, 2026-06-16) · `pnpm build` clean.
 - **Build Started**: 2026-06-02
 
 ---
@@ -158,18 +159,12 @@ Frontend (`websocket.ts`) handles 9 event types. Backend (`events.py` + `main.py
 - [x] **Add memory quality columns to `memory_facts`** — `_migrate_memory_facts_quality_columns()` (`database.py:331`) adds `confidence FLOAT DEFAULT 0.8`, `created_by TEXT DEFAULT 'system'`, `source_turn_id INTEGER`, `access_count INTEGER DEFAULT 0`. Idempotent (PRAGMA check-before-ALTER; SQLite auto-backfills defaults). `access_count` increment correctly DEFERRED to 16B (column only).
 - [x] Verified (debugger-agent 2026-06-16): control chars stripped + `<untrusted_memory>` wrapper present (no bypass path); `last_recalled_at` NULL→now on recall; 4 new columns w/ defaults; idempotent across 3× `init_db`; cheap PK-update, no hot-path regression. **Suite 161/161** (+7 tests in `test_phase16a_verify.py`).
 
-### Phase 16B — Multi-Signal Re-Ranking
+### Phase 16B — Multi-Signal Re-Ranking — ✅ COMPLETE & verified 6/6 (2026-06-16)
 *Replace similarity-only FAISS recall with a weighted scoring pipeline.*
-
-- [ ] **Implement multi-signal retrieval** in `backend/memory/manager.py` — after FAISS returns top-K candidates, score each with:
-  - `0.40 × semantic_similarity` (FAISS score, already have it)
-  - `0.20 × keyword_bm25` (FTS5 already built — reuse `search_memory_facts()`)
-  - `0.20 × recency_score` (`1 / (1 + days_since_last_recalled)` using now-active `last_recalled_at`)
-  - `0.10 × importance_score` (existing `importance` column in `memory_facts`)
-  - `0.10 × frequency_score` (`log(access_count + 1)` using new column from 16A)
-  - Return top-N by composite score. No new dependencies — pure Python math over existing data.
-- [ ] **Increment `access_count`** on every recall hit (same DB write as `last_recalled_at` in 16A).
-- [ ] Verify (debugger-agent): recently accessed facts rank above equally-similar older facts; importance-weighted facts surface correctly; `pytest backend/` passes.
+> Inserted in `recall()` Layer 3 (`manager.py:598-706`). FAISS pool `max(n_semantic, CANDIDATE_POOL_K=20)`; `MIN_SEMANTIC_SCORE=0.25` kept as pre-filter; `_rank_candidates()[:n_semantic]` selects final. FAISS confirmed `IndexFlatIP` over L2-normalized vectors = cosine similarity [0,1], higher=better (not inverted). Bounded DB cost: 2 extra queries/recall (batched `get_memory_facts_by_ids` + one FTS pass), no per-candidate loop.
+- [x] **Implement multi-signal retrieval** — composite score with tunable constants `W_SEMANTIC=0.40 / W_KEYWORD=0.20 / W_RECENCY=0.20 / W_IMPORTANCE=0.10 / W_FREQUENCY=0.10` (sum 1.0). Keyword = FTS5 position-rank `(n-pos)/n`; recency = `1/(1+days)` with NULL fallback `last_recalled_at`→`created_at`→3650d; frequency = `log(access_count+1)` normalized by pool max (div-by-zero guarded); importance = existing column. Deterministic order: composite desc, tie-break semantic desc then `fact_id` asc.
+- [x] **Increment `access_count`** — `mark_facts_recalled()` (`database.py:779`) now does a single combined UPDATE: `last_recalled_at = datetime('now')` AND `access_count = COALESCE(access_count,0)+1`, PK-keyed, wrapped, stamps only the returned top-N.
+- [x] Verify (debugger-agent): recently accessed facts rank above equally-similar older facts; importance-weighted facts surface correctly; `pytest backend/` passes. **Verified 2026-06-16 — 170/170 passing (161 + 9 new). All 6 checks PASS.**
 
 ### Phase 16C — LLM-Driven Extraction
 *Replace keyword rule-matching in `evaluator.py` with an LLM-driven fact extraction pipeline (Mem0 pattern).*

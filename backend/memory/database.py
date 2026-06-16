@@ -781,26 +781,62 @@ async def mark_facts_recalled(
     *,
     db_path: Path | str = DEFAULT_DB_PATH,
 ) -> None:
-    """Stamp ``last_recalled_at = now`` on each recalled fact (Phase 16A).
+    """Stamp recall metadata on each recalled fact (Phase 16A + 16B).
 
-    Activates the previously-dead ``last_recalled_at`` column so the recency
-    signal in the Phase 16B re-ranking pipeline has real data to score against.
-    Each row is keyed by primary key, so the write is cheap even on the recall
-    hot path. Uses ``datetime('now')`` to match how every other timestamp in
-    this schema is stored. A no-op on an empty list; never deduplicates the
-    caller's ids (the executemany simply re-stamps the same row, which is fine).
+    A single combined UPDATE per fact stamps ``last_recalled_at = now`` (Phase
+    16A — recency signal) and increments ``access_count`` (Phase 16B — frequency
+    signal). Both feed the multi-signal re-ranking pipeline. Each row is keyed by
+    primary key, so the write stays cheap even on the recall hot path. Uses
+    ``datetime('now')`` to match how every other timestamp in this schema is
+    stored. A no-op on an empty list. The caller passes the ids of the facts
+    actually returned by a recall, so each is stamped once per recall; if the
+    same id appears twice in one call it is simply bumped twice, which is fine.
     """
     if not fact_ids:
         return
     conn = await connect(db_path)
     try:
         await conn.executemany(
-            "UPDATE memory_facts SET last_recalled_at = datetime('now') WHERE id = ?",
+            "UPDATE memory_facts "
+            "SET last_recalled_at = datetime('now'), "
+            "    access_count = COALESCE(access_count, 0) + 1 "
+            "WHERE id = ?",
             [(int(fid),) for fid in fact_ids],
         )
         await conn.commit()
     finally:
         await conn.close()
+
+
+async def get_memory_facts_by_ids(
+    fact_ids: list[int],
+    *,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> list[dict]:
+    """Batch-fetch quality metadata for a set of fact ids in one query.
+
+    Returns one dict per matching row with the columns the Phase 16B re-ranking
+    pipeline scores against: ``id``, ``importance``, ``last_recalled_at``,
+    ``created_at`` and ``access_count``. Used to enrich a FAISS candidate pool
+    without a per-candidate round trip — a single ``WHERE id IN (...)`` keeps the
+    recall hot path cheap. Order is unspecified (the caller maps by id); an empty
+    input yields ``[]`` without touching the database.
+    """
+    if not fact_ids:
+        return []
+    ids = [int(fid) for fid in fact_ids]
+    placeholders = ",".join("?" for _ in ids)
+    conn = await connect(db_path)
+    try:
+        cursor = await conn.execute(
+            "SELECT id, importance, last_recalled_at, created_at, access_count "
+            f"FROM memory_facts WHERE id IN ({placeholders})",
+            ids,
+        )
+        rows = await cursor.fetchall()
+    finally:
+        await conn.close()
+    return [dict(row) for row in rows]
 
 
 # --- Phase 12: people (contact profiles) ------------------------------------

@@ -34,9 +34,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import math
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -53,8 +54,144 @@ DEFAULT_N_RECENT: int = 10
 DEFAULT_N_SEMANTIC: int = 3
 
 # Minimum cosine similarity for a semantic hit to be considered relevant enough
-# to inject. Below this the memory is likely noise and is dropped.
+# to inject. Below this the memory is likely noise and is dropped. Phase 16B
+# keeps this as a *pre-filter*: candidates must clear this floor before they
+# enter the re-ranking pool, so weak-semantic noise can never be re-ranked in on
+# the strength of recency/frequency alone.
 MIN_SEMANTIC_SCORE: float = 0.25
+
+# --- Phase 16B — multi-signal re-ranking ------------------------------------
+# Composite recall score = weighted sum of five 0–1 signals (weights sum to 1.0).
+# All tunable; pure-Python math over data already on hand (no new dependencies).
+W_SEMANTIC: float = 0.40  # FAISS cosine similarity (meaning)
+W_KEYWORD: float = 0.20  # FTS5/BM25 keyword overlap
+W_RECENCY: float = 0.20  # how recently the fact was last recalled
+W_IMPORTANCE: float = 0.10  # the evaluator's stored importance
+W_FREQUENCY: float = 0.10  # how often the fact has been recalled
+
+# Size of the FAISS candidate pool pulled *before* re-ranking. Larger than the
+# final ``n_semantic`` so the weaker signals have material to reorder. Bounded so
+# the single batched metadata SELECT + one FTS query stay cheap on the voice hot
+# path (the re-rank itself is O(pool) pure-Python math).
+CANDIDATE_POOL_K: int = 20
+
+# Recency fallback when a fact has neither a parseable ``last_recalled_at`` nor a
+# parseable ``created_at``: treat it as a decade old so recency ≈ 0.
+_UNKNOWN_AGE_DAYS: float = 3650.0
+
+
+def _clamp01(value: float) -> float:
+    """Clamp a float into the inclusive ``[0.0, 1.0]`` range."""
+    if value < 0.0:
+        return 0.0
+    if value > 1.0:
+        return 1.0
+    return value
+
+
+def _semantic_score(cosine: float) -> float:
+    """Normalise a FAISS cosine similarity into ``[0, 1]`` (higher = closer).
+
+    The vector store is an ``IndexFlatIP`` over L2-normalised vectors, so its
+    score is a cosine similarity in ``[-1, 1]``. Candidates have already cleared
+    :data:`MIN_SEMANTIC_SCORE` (0.25), so they sit in ``[0.25, 1.0]``; clamping
+    to ``[0, 1]`` is therefore lossless for real candidates and merely defensive.
+    """
+    return _clamp01(cosine)
+
+
+def _recency_score(days_since: float) -> float:
+    """``1 / (1 + days_since_last_recalled)`` — recalled today ≈ 1, a year ago ≈ 0."""
+    return 1.0 / (1.0 + max(0.0, days_since))
+
+
+def _keyword_score(rank_pos: int | None, n_results: int) -> float:
+    """Position-based BM25 proxy from the FTS5 result order (best-first).
+
+    FTS5 returns matches ordered by ``rank`` (best first); we map a fact's
+    position into ``[0, 1]`` — the top hit scores ≈ 1.0, the last ≈ ``1/n``.
+    Facts absent from the FTS result set (no keyword overlap) score 0. Using the
+    position rather than the raw bm25 value keeps this independent of FTS5's
+    internal scale and avoids changing the shared ``search_memory_facts`` API.
+    """
+    if rank_pos is None or n_results <= 0:
+        return 0.0
+    return (n_results - rank_pos) / n_results
+
+
+def _frequency_score(access_count: int, max_log: float) -> float:
+    """``log(access_count + 1)`` normalised by the pool's max log (0 when flat)."""
+    if max_log <= 0.0:
+        return 0.0
+    return math.log(access_count + 1) / max_log
+
+
+def _days_since(timestamp: str | None, *, now: datetime) -> float | None:
+    """Whole+fractional days between a SQLite datetime string and ``now``.
+
+    Returns ``None`` when ``timestamp`` is falsy or unparseable so the caller can
+    fall back to another column. ``now`` should be UTC (``datetime.utcnow()``) to
+    match SQLite's ``datetime('now')``, which is UTC — keeping the recency signal
+    free of a constant timezone offset. Never negative.
+    """
+    if not timestamp:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+        try:
+            then = datetime.strptime(timestamp, fmt)
+            return max(0.0, (now - then).total_seconds() / 86400.0)
+        except ValueError:
+            continue
+    return None
+
+
+@dataclass
+class _Candidate:
+    """One FAISS candidate enriched with the signals the re-ranker scores."""
+
+    fact_id: int | None
+    text: str
+    category: str
+    semantic: float  # raw FAISS cosine similarity
+    importance: float
+    access_count: int
+    days_since: float  # since last recall (or creation); large when unknown
+    keyword_pos: int | None  # position in the FTS result set, or None
+    keyword_n: int  # size of the FTS result set (denominator)
+
+    def composite(self, max_log: float) -> float:
+        """Weighted multi-signal score for this candidate."""
+        return (
+            W_SEMANTIC * _semantic_score(self.semantic)
+            + W_KEYWORD * _keyword_score(self.keyword_pos, self.keyword_n)
+            + W_RECENCY * _recency_score(self.days_since)
+            + W_IMPORTANCE * _clamp01(self.importance)
+            + W_FREQUENCY * _frequency_score(self.access_count, max_log)
+        )
+
+
+def _rank_candidates(
+    candidates: list[_Candidate],
+) -> list[tuple[_Candidate, float]]:
+    """Score and order a candidate pool by composite score (pure function).
+
+    Deterministic for fixed inputs: ties on the composite break by semantic
+    similarity (desc) then ``fact_id`` (asc), so the ordering never depends on
+    dict/iteration nondeterminism. Returned best-first as ``(candidate, score)``.
+    """
+    if not candidates:
+        return []
+    # Frequency is normalised across the pool, so compute the denominator once.
+    max_log = max(math.log(c.access_count + 1) for c in candidates)
+    scored = [(c, c.composite(max_log)) for c in candidates]
+    scored.sort(
+        key=lambda pair: (
+            -pair[1],
+            -pair[0].semantic,
+            pair[0].fact_id if pair[0].fact_id is not None else (1 << 31),
+        )
+    )
+    return scored
 
 # Phase 16A — recall→prompt injection boundary.
 # Recalled facts can originate from untrusted content (a Slack/email body that
@@ -458,39 +595,113 @@ class MemoryManager:
             except Exception:  # noqa: BLE001
                 log.warning("memory_recall_episodic_failed", exc_info=True)
 
-        # Layer 3 — semantic similarity over distilled facts.
+        # Layer 3 — semantic recall, then multi-signal re-ranking (Phase 16B).
+        # FAISS gives a candidate pool by *meaning*; the pool is then reordered by
+        # a weighted blend of semantic / keyword / recency / importance /
+        # frequency, and only the top ``n_semantic`` survive. MIN_SEMANTIC_SCORE
+        # stays a pre-filter so weak-semantic noise never enters the pool.
         if n_semantic > 0 and query and query.strip() and len(self._vector_store):
-            recalled_fact_ids: list[int] = []
             try:
+                pool_k = max(n_semantic, CANDIDATE_POOL_K)
                 hits = await asyncio.to_thread(
-                    self._vector_store.search, query, n_semantic
+                    self._vector_store.search, query, pool_k
                 )
-                for hit in hits:
-                    if hit.score < MIN_SEMANTIC_SCORE:
-                        continue
-                    semantic_facts.append(
-                        {
-                            "content": hit.text,
-                            "category": hit.metadata.get("category", "general"),
-                            "score": hit.score,
-                        }
-                    )
-                    fact_id = hit.metadata.get("fact_id")
-                    if isinstance(fact_id, int):
-                        recalled_fact_ids.append(fact_id)
+                hits = [h for h in hits if h.score >= MIN_SEMANTIC_SCORE]
+
+                if hits:
+                    # One batched SELECT for the whole pool's quality columns —
+                    # no per-candidate round trip on the hot path.
+                    cand_ids = [
+                        fid
+                        for fid in (h.metadata.get("fact_id") for h in hits)
+                        if isinstance(fid, int)
+                    ]
+                    meta_by_id: dict[int, dict[str, Any]] = {}
+                    if cand_ids:
+                        try:
+                            rows = await database.get_memory_facts_by_ids(
+                                cand_ids, **self._db_kwargs()
+                            )
+                            meta_by_id = {row["id"]: row for row in rows}
+                        except Exception:  # noqa: BLE001
+                            log.warning("memory_recall_meta_failed", exc_info=True)
+
+                    # One FTS keyword pass for the same query → position map.
+                    kw_pos: dict[int, int] = {}
+                    try:
+                        fts_rows = await database.search_memory_facts(
+                            query=query, limit=pool_k, **self._db_kwargs()
+                        )
+                        for pos, row in enumerate(fts_rows):
+                            rid = row.get("rowid")
+                            if isinstance(rid, int) and rid not in kw_pos:
+                                kw_pos[rid] = pos
+                    except Exception:  # noqa: BLE001
+                        log.warning("memory_recall_keyword_failed", exc_info=True)
+                    kw_n = len(kw_pos)
+
+                    # Naive UTC to match SQLite's UTC ``datetime('now')`` strings.
+                    now = datetime.now(timezone.utc).replace(tzinfo=None)
+                    candidates: list[_Candidate] = []
+                    for hit in hits:
+                        raw_id = hit.metadata.get("fact_id")
+                        fid = raw_id if isinstance(raw_id, int) else None
+                        meta = meta_by_id.get(fid, {}) if fid is not None else {}
+                        # Recency: prefer last_recalled_at; fall back to
+                        # created_at (a never-recalled fact is "as recent as its
+                        # creation", not stale); else treat as a decade old.
+                        days = _days_since(meta.get("last_recalled_at"), now=now)
+                        if days is None:
+                            days = _days_since(meta.get("created_at"), now=now)
+                        if days is None:
+                            days = _UNKNOWN_AGE_DAYS
+                        importance = meta.get(
+                            "importance", hit.metadata.get("importance", 0.5)
+                        )
+                        candidates.append(
+                            _Candidate(
+                                fact_id=fid,
+                                text=hit.text,
+                                category=hit.metadata.get("category", "general"),
+                                semantic=float(hit.score),
+                                importance=float(importance or 0.0),
+                                access_count=int(meta.get("access_count", 0) or 0),
+                                days_since=days,
+                                keyword_pos=(
+                                    kw_pos.get(fid) if fid is not None else None
+                                ),
+                                keyword_n=kw_n,
+                            )
+                        )
+
+                    ranked = _rank_candidates(candidates)[:n_semantic]
+                    recalled_fact_ids: list[int] = []
+                    for cand, composite in ranked:
+                        semantic_facts.append(
+                            {
+                                "content": cand.text,
+                                "category": cand.category,
+                                "score": cand.semantic,
+                                "composite_score": composite,
+                            }
+                        )
+                        if cand.fact_id is not None:
+                            recalled_fact_ids.append(cand.fact_id)
+
+                    # Phase 16A + 16B: stamp last_recalled_at AND bump
+                    # access_count on the facts we actually return. Isolated so a
+                    # write failure never drops the recalled facts. PK updates.
+                    if recalled_fact_ids:
+                        try:
+                            await database.mark_facts_recalled(
+                                recalled_fact_ids, **self._db_kwargs()
+                            )
+                        except Exception:  # noqa: BLE001 — must not break a turn
+                            log.warning(
+                                "memory_recall_touch_failed", exc_info=True
+                            )
             except Exception:  # noqa: BLE001
                 log.warning("memory_recall_semantic_failed", exc_info=True)
-
-            # Phase 16A: activate last_recalled_at on the real recall hot path.
-            # Kept in its own try/except so a stamp failure never drops the
-            # facts we just recalled. The UPDATE is by primary key (cheap).
-            if recalled_fact_ids:
-                try:
-                    await database.mark_facts_recalled(
-                        recalled_fact_ids, **self._db_kwargs()
-                    )
-                except Exception:  # noqa: BLE001 — a stamp must not break a turn
-                    log.warning("memory_recall_touch_failed", exc_info=True)
 
         result = RecallResult(
             episodic_messages=episodic_messages,
@@ -582,4 +793,10 @@ __all__ = [
     "DEFAULT_N_RECENT",
     "DEFAULT_N_SEMANTIC",
     "MIN_SEMANTIC_SCORE",
+    "CANDIDATE_POOL_K",
+    "W_SEMANTIC",
+    "W_KEYWORD",
+    "W_RECENCY",
+    "W_IMPORTANCE",
+    "W_FREQUENCY",
 ]
