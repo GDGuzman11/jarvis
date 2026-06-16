@@ -94,6 +94,9 @@ desktop.ini
 *.log
 logs/
 
+# --- Local design references (kept on disk, not tracked) ---------------------
+References/
+
 # --- ML / Binary artifacts (runtime-generated) -------------------------------
 *.bin
 *.meta.json
