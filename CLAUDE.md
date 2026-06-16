@@ -1,4 +1,4 @@
-# JARVIS — Master Control Document
+# HELIX — Master Control Document
 
 > **Step 1 — Every agent MUST read THIS FILE FIRST before starting any task.**
 > **Step 2 — Then read the archive files in `docs/` (listed in the Archive Index below) for full historical context: completed phases, test logs, and security audits.**
@@ -29,7 +29,7 @@
 
 ## Project Overview
 
-**Jarvis** is a personal AI assistant that runs locally on Windows 11. It wakes on voice command, understands natural speech, responds in a subtle British tone (Tom Hardy meets Jarvis from the Avengers), and manages a team of 6 background AI agents.
+**Helix** is a personal AI assistant that runs locally on Windows 11. It wakes on voice command, understands natural speech, responds in a subtle British tone (Tom Hardy meets Helix from the Avengers), and manages a team of 6 background AI agents.
 
 ### Hardware
 - GPU: NVIDIA RTX 3050 Ti Laptop — 4GB VRAM
@@ -40,9 +40,9 @@
 ### AI Stack
 - **Primary AI**: Claude API — `claude-opus-4-7` (Anthropic SDK, streaming + prompt caching)
 - **Local Fallback**: Ollama — `phi3.5` (3.8B, ~2.4GB VRAM) and `qwen2.5-coder:3b`
-- **Wake Word**: OpenWakeWord (model: "hey_jarvis", Apache 2.0, fully local, no API key)
+- **Wake Word**: OpenWakeWord (model: "hey_jarvis", Apache 2.0, fully local, no API key) — ⚠️ pre-trained on "hey_jarvis"; responds to "hey_helix" only after custom model is trained (see Pending)
 - **Speech-to-Text**: faster-whisper (base.en model)
-- **Text-to-Speech**: ElevenLabs API (custom Paul Bettany × Anthony Hopkins × JARVIS voice — calm British butler with faint digital resonance)
+- **Text-to-Speech**: ElevenLabs API (custom Paul Bettany × Anthony Hopkins × HELIX voice — calm British butler with faint digital resonance)
 
 ### Tech Stack
 | Layer | Technology |
@@ -88,7 +88,7 @@ Dark theme `#080810` (updated 2026-06-04), electric blue/cyan accents `#00D4FF`,
 - **Buttons** (`.hud-btn`): `rgba(0,212,255,0.06)` bg, `0.5` opacity cyan border, full cyan border + shadow glow on hover — high contrast
 - **Window layout**: orb (AnimationWindow) centred at `x:780, y:300`; Reasoning left `x:200`; Communications upper-right `x:1180`; Agents bottom `x:200, y:760`; Tools lower-right `x:1180, y:540`
 - **Orb**: Neural intelligence sphere — 350 neuron `Points` (golden-spiral, vertexColors), ~480 normal `LineSegments` + ~120 red freedom `LineSegments` (~20% of connections, `#440011`→`#ff2244`), 30 drifting symbol `Sprite`s (∑ π ∞ λ etc.), 3 nested glow spheres + wireframe hologram shell, cascade activation (CASCADE_DEPTH=6, NEIGHBOR_K=4). SVG connection beams radiate from orb centre to other window edges with animated travelling dots.
-- **Voice Jarvis**: Paul Bettany × Anthony Hopkins character — calm British butler with faint digital resonance. "The kind of voice that could read you a bedtime story or a threat."
+- **Voice Helix**: Paul Bettany × Anthony Hopkins character — calm British butler with faint digital resonance. "The kind of voice that could read you a bedtime story or a threat."
 
 ---
 
@@ -104,8 +104,16 @@ Dark theme `#080810` (updated 2026-06-04), electric blue/cyan accents `#00D4FF`,
 ---
 
 ## Tier 0 — Hygiene (do before Phase 15B)
-*Handled by: `/security-agent` (items 1–2) + `/backend-agent` (item 3). Hours of work. Unblock 144/144 clean suite.*
+*Handled by: `/security-agent` (items 1–2) + `/backend-agent` (items 3–4) + `/frontend-agent` (item 5). Hours of work. Unblock 144/144 clean suite.*
 
+- [ ] **Rename assistant from Jarvis → Helix across entire codebase** — Helix must know his own name. Touch every layer:
+  - `backend/agents/persona.py` — update system prompt: name, personality intro, self-references ("I am Helix", not "I am Jarvis")
+  - `frontend/src/components/JarvisOrb.tsx` → rename file to `HelixOrb.tsx`; update all imports
+  - `frontend/src/windows/` — update any window titles, display text, or comments referencing "Jarvis"
+  - `tauri.conf.json` — update app title and any window labels
+  - `package.json` / `Cargo.toml` — update project name fields
+  - Do NOT change `"hey_jarvis"` wake word string — that is the OpenWakeWord model filename and will break detection if changed. Add a code comment: `# wake phrase is "hey_jarvis" until custom "hey_helix" model is trained`
+  - After rename: `pnpm build` clean, backend suite still passes.
 - [ ] **Scrub OAuth client ID** from `get_gmail_token.py:9` — delete or parameterize the hardcoded `client_id`. Script is one-time bootstrap, not imported at runtime; safe to delete body or replace with `input()` prompt.
 - [ ] **Scrub OAuth client ID** from `docs/TEST_HISTORY.md:110` (also present in `.claude/agent-memory/debugger-agent/` snapshot). Remove or redact from doc. Verify secret-scan passes on both files → **144/144 green**.
 - [ ] **Fix SQLite backup** in `main.py:233` — replace raw file-copy zip with `conn.backup()` (or `VACUUM INTO`) and include `-wal`/`-shm` sidecar files. Current approach can produce stale/torn backups under WAL mode with concurrent writers.
@@ -174,7 +182,7 @@ Frontend (`websocket.ts`) handles 9 event types. Backend (`events.py` + `main.py
   - `last-write-wins` — set `valid_to = now()` on old fact, INSERT new (default for locations, status)
   - `evidence-weighted` — compare `confidence` scores; higher wins (for preferences, allergies)
   - `merge` — both facts valid in different time windows; set `valid_to` on old, INSERT new with `valid_from` = now (for employment history, relationships)
-  - `await-confirmation` — mark `conflicting_fact_ids`, surface to Jarvis at next session start
+  - `await-confirmation` — mark `conflicting_fact_ids`, surface to Helix at next session start
 - [ ] **Nightly Ebbinghaus decay job** — add to `_consolidation_loop()` in `main.py`: for each fact, `strength = strength × exp(-days_since_recalled / half_life_days)`. Facts at `strength < 0.1` → mark `valid_to = now()` (archived, not deleted). Run after existing consolidation step.
 - [ ] Verify (debugger-agent): old fact's `valid_to` set when superseded; strength decays on schedule; archived facts excluded from active recall; `pytest backend/` passes.
 
@@ -198,16 +206,25 @@ Frontend (`websocket.ts`) handles 9 event types. Backend (`events.py` + `main.py
 - **Window**: 6th Tauri window — "Memory" — positioned at `x:780, y:760` (below orb, completing the layout).
 
 **What to build:**
-- [ ] **Backend `GET /api/memory/graph`** — returns `{nodes: [{id, text_preview, type, importance, access_count, confidence, last_recalled_at, conflicting_fact_ids}], edges: [{source_id, target_id, similarity}]}`. Query top-500 active facts from `memory_facts`; compute pairwise FAISS similarity for pairs above 0.5 threshold. Cap at 2000 edges for performance.
+- [ ] **Backend `GET /api/memory/graph`** — returns `{nodes: [{id, text_preview, text_full, type, importance, access_count, confidence, created_at, last_recalled_at, conflicting_fact_ids, subject}], edges: [{source_id, target_id, similarity}]}`. Query top-500 active facts from `memory_facts`; compute pairwise FAISS similarity for pairs above 0.5 threshold. Cap at 2000 edges for performance.
 - [ ] **New `frontend/src/windows/MemoryWindow.tsx`** — 6th Tauri window. Uses `react-force-graph-2d` (lightweight 2D canvas renderer, ~150KB). HUD-styled: `#080810` background, cyan/gold/red/purple/green node palette, glowing edges. Search input filters nodes live. Click-to-highlight interaction.
+- [ ] **Node hover HUD panel** — on hover, render a floating HUD card anchored to the node with a thin cyan connecting line. Panel contains:
+  - Full fact text (not truncated)
+  - Type badge (color-matched: GENERAL / HIGH IMPORTANCE / CONTRADICTION / PERSON / OPEN LOOP)
+  - Confidence: e.g. `0.87`
+  - Created: absolute date
+  - Last recalled: date + relative ("3 days ago") — greyed out if never recalled
+  - Access count: "recalled 12 times"
+  - **Connected to**: list of up to 5 most similar nodes, each showing: truncated fact preview + similarity as percentage (e.g. "87% match"). Clicking a listed node jumps focus to it in the graph.
+  - Panel positions itself to avoid clipping the window edge (auto-flips left/right/up depending on node position).
 - [ ] **Register MemoryWindow in Tauri config** — add to `tauri.conf.json` windows array at position `x:780, y:760`. Add navigation entry.
 - [ ] **WebSocket `memory_update` event** — emit from backend whenever a fact is added/updated/recalled. Frontend redraws affected node in real time (no full refresh needed).
-- [ ] Verify (debugger-agent): graph renders with real facts; node colors match types; edges connect semantically similar facts; clicking a node highlights connections; search filters correctly; `pnpm build` clean; `pytest backend/` passes.
+- [ ] Verify (debugger-agent): graph renders with real facts; node colors match types; edges connect semantically similar facts; hover panel appears anchored to node with correct metadata; clicking a connected node in the panel focuses it; search filters correctly; `pnpm build` clean; `pytest backend/` passes.
 
 ---
 
 ## Phase 17 — Computer Eyes & Hands
-*Handled by: `/backend-agent` (tools + wiring) + `/frontend-agent` (UI feedback). Gives Jarvis desktop vision and control. Planned in detail during 2026-06-15 session — see plan file at `C:\Users\User\.claude\plans\i-want-you-to-fluttering-penguin.md`.*
+*Handled by: `/backend-agent` (tools + wiring) + `/frontend-agent` (UI feedback). Gives Helix desktop vision and control. Planned in detail during 2026-06-15 session — see plan file at `C:\Users\User\.claude\plans\i-want-you-to-fluttering-penguin.md`.*
 
 ### New dependencies
 - `mss` — fast screenshots (pure Python, Windows 11 optimised)
@@ -237,7 +254,7 @@ Frontend (`websocket.ts`) handles 9 event types. Backend (`events.py` + `main.py
 
 ### Phase 17C — Web Access Confirmation + Enhancement
 - [ ] **Expose screenshot in `browse_url` schema** — add `take_screenshot: bool = False` param to `BROWSE_URL_SCHEMA`; when true, capture full-page PNG and return `{"text": ..., "is_image": True, "image_base64": ...}` — same sentinel as screen_tool. `_execute_tool()` handles multi-part (text + image) tool_result content block.
-- [ ] **Confirm end-to-end**: voice command "search the web for X" → Claude calls `web_search` or `browse_url` → result returned → Jarvis speaks summary.
+- [ ] **Confirm end-to-end**: voice command "search the web for X" → Claude calls `web_search` or `browse_url` → result returned → Helix speaks summary.
 - [ ] Verify (debugger-agent): browse_url with screenshot returns image content block; web_search returns results; both tools visible in Reasoning window tool cards (from Phase 15B); `pytest backend/` passes.
 
 ---
@@ -250,8 +267,8 @@ Frontend (`websocket.ts`) handles 9 event types. Backend (`events.py` + `main.py
 - [ ] Verify clean install on fresh Windows 11 machine end-to-end *(blocked — requires installer first)*
 
 ### Voice & Microphone *(requires dedicated microphone — not yet purchased)*
-- [ ] E2E voice test — "Hey Jarvis, what's in my Slack?" → reads Slack → speaks answer
-- [ ] E2E voice test — "Hey Jarvis, what's in my Gmail?" → reads inbox → speaks answer
+- [ ] E2E voice test — "Hey Helix, what's in my Slack?" → reads Slack → speaks answer
+- [ ] E2E voice test — "Hey Helix, what's in my Gmail?" → reads inbox → speaks answer
 - [ ] Tune wake-word sensitivity (currently threshold=0.5, may need adjustment after mic upgrade)
 - [ ] Tune silence detection threshold (`SILENCE_RMS_THRESHOLD=500`) for new microphone
 - [ ] Test interrupt ("stop") cancels mid-response reliably with new microphone
@@ -260,9 +277,9 @@ Frontend (`websocket.ts`) handles 9 event types. Backend (`events.py` + `main.py
 - [ ] Add microphone sensitivity indicator to AnimationWindow (small input-level bar when listening)
 
 ### Future Enhancements
-- [ ] Proactive notifications — Jarvis speaks when important Slack/Gmail arrives
+- [ ] Proactive notifications — Helix speaks when important Slack/Gmail arrives
 - [ ] Agent task visibility — show what each agent is working on in real-time in AgentsWindow
-- [ ] Voice commands to control agent tasks ("Jarvis, tell Ben to update the UI")
+- [ ] Voice commands to control agent tasks ("Helix, tell Ben to update the UI")
 - [ ] Custom wake word training (replace "hey_jarvis" OpenWakeWord model with user-trained model)
 - [ ] Multiple voice profiles (switch between voices via voice command)
 
