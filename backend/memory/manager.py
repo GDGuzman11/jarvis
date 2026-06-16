@@ -89,6 +89,70 @@ _UNKNOWN_AGE_DAYS: float = 3650.0
 # reworded" for all-MiniLM-L6-v2.
 UPDATE_SIMILARITY_THRESHOLD: float = 0.85
 
+# --- Phase 16D — TOKI contradiction write-policies + Ebbinghaus decay --------
+# The four write-policies a fact can be resolved under when a new fact contradicts
+# it. The policy lives on the *existing* fact (``memory_facts.write_policy``) and
+# is chosen at insert time from the fact's category/content (see
+# ``_choose_write_policy``). The manager applies the matched fact's policy.
+POLICY_LAST_WRITE_WINS: str = "last-write-wins"
+POLICY_EVIDENCE_WEIGHTED: str = "evidence-weighted"
+POLICY_MERGE: str = "merge"
+POLICY_AWAIT_CONFIRMATION: str = "await-confirmation"
+_VALID_POLICIES: frozenset[str] = frozenset(
+    {
+        POLICY_LAST_WRITE_WINS,
+        POLICY_EVIDENCE_WEIGHTED,
+        POLICY_MERGE,
+        POLICY_AWAIT_CONFIRMATION,
+    }
+)
+
+# Category -> default write-policy. A fact whose category is absent here (and
+# whose text matches none of the keyword hints below) defaults to
+# last-write-wins -- the right behaviour for volatile state like a location or a
+# task status, where the newest value simply replaces the old one.
+_POLICY_BY_CATEGORY: dict[str, str] = {
+    "preference": POLICY_EVIDENCE_WEIGHTED,
+}
+
+# Keyword hints that override the category default. Employment/relationship facts
+# accrue history (you held job A *then* job B), so they ``merge`` -- both stay
+# valid in non-overlapping time windows. Allergy/dietary facts are safety-
+# sensitive, so a contradiction is resolved by ``evidence-weighted`` (higher
+# confidence wins) rather than blindly trusting the latest mention.
+_MERGE_HINTS: tuple[str, ...] = (
+    "work at", "works at", "works on", "employed", "employer", "company",
+    "job at", "role at", "promoted", "manager", "colleague", "married",
+    "dating", "partner", "girlfriend", "boyfriend", "relationship with",
+)
+_EVIDENCE_HINTS: tuple[str, ...] = (
+    "allergic", "allergy", "intolerant", "dietary", "gluten", "lactose",
+)
+
+# Ebbinghaus decay: a fact whose strength falls below this floor is archived
+# (``valid_to`` set) rather than recalled -- natural forgetting of stale,
+# never-revisited memories. Kept above 0 so a fact can sit near-zero for a while
+# before it is finally let go.
+DECAY_THRESHOLD: float = 0.1
+
+
+def _choose_write_policy(category: str, fact: str, subject: str = "") -> str:
+    """Pick the TOKI write-policy a new fact should be stored under.
+
+    Simple and documented: keyword hints (employment/relationship -> ``merge``;
+    allergy/dietary -> ``evidence-weighted``) win first, then the category map
+    (``preference`` -> ``evidence-weighted``), else ``last-write-wins``. The
+    extractor could one day suggest a policy directly; until then this
+    category/keyword heuristic keeps the choice local to the manager and free of
+    extra LLM calls.
+    """
+    blob = f"{fact or ''} {subject or ''}".lower()
+    if any(hint in blob for hint in _MERGE_HINTS):
+        return POLICY_MERGE
+    if any(hint in blob for hint in _EVIDENCE_HINTS):
+        return POLICY_EVIDENCE_WEIGHTED
+    return _POLICY_BY_CATEGORY.get(category, POLICY_LAST_WRITE_WINS)
+
 
 def _clamp01(value: float) -> float:
     """Clamp a float into the inclusive ``[0.0, 1.0]`` range."""
@@ -468,6 +532,7 @@ class MemoryManager:
         agent_id: str | None = None,
         created_by: str | None = None,
         confidence: float | None = None,
+        write_policy: str | None = None,
     ) -> int:
         """Insert one fact into ``memory_facts`` and mirror it into FAISS.
 
@@ -475,7 +540,13 @@ class MemoryManager:
         extractor's ADD/UPDATE actions, so the SQLite row and the FAISS vector
         never drift. FAISS is synchronous + CPU-bound, so its add runs off the
         event loop. Returns the new ``memory_facts`` row id.
+
+        Phase 16D: ``write_policy`` records how a *future* contradiction of this
+        fact is resolved (TOKI). When omitted it is derived from the category and
+        content via :func:`_choose_write_policy`, so even the rule path tags every
+        fact with a sensible policy.
         """
+        policy = write_policy or _choose_write_policy(category, content)
         fact_id = await database.save_memory_fact(
             source,
             category,
@@ -484,6 +555,7 @@ class MemoryManager:
             agent_id=agent_id,
             created_by=created_by,
             confidence=confidence,
+            write_policy=policy,
             **self._db_kwargs(),
         )
         await asyncio.to_thread(
@@ -497,6 +569,23 @@ class MemoryManager:
             },
         )
         return fact_id
+
+    async def _tombstone_vector(self, fact_id: int) -> None:
+        """Tombstone every FAISS vector for ``fact_id`` (Phase 16D). Never raises.
+
+        Called when a fact is superseded, deleted, or decayed away so its stale
+        vector stops surfacing in recall and dedup. Degrades to a no-op when the
+        injected vector store predates tombstone support (older fakes/tests) —
+        the ``valid_to`` recall filter still excludes the fact, so correctness is
+        preserved either way; tombstoning is the earlier, defence-in-depth layer.
+        """
+        fn = getattr(self._vector_store, "tombstone_fact_id", None)
+        if fn is None:
+            return
+        try:
+            await asyncio.to_thread(fn, fact_id)
+        except Exception:  # noqa: BLE001 — a tombstone must never break a write
+            log.warning("memory_tombstone_failed", fact_id=fact_id, exc_info=True)
 
     async def _store_rule_fact(
         self,
@@ -576,6 +665,8 @@ class MemoryManager:
                     await database.invalidate_memory_fact(
                         target, **self._db_kwargs()
                     )
+                    # Phase 16D: drop the retracted fact's vector from recall.
+                    await self._tombstone_vector(target)
                     last_id = target
                     log.info("memory_extract_delete", fact_id=target)
                 continue
@@ -583,29 +674,15 @@ class MemoryManager:
             if op.action == "UPDATE":
                 target = await self._find_similar_fact_id(op.fact)
                 if target is not None:
-                    await database.update_memory_fact(
-                        target,
-                        op.fact,
-                        importance=score,
-                        confidence=op.confidence,
-                        created_by=op.source,
-                        **self._db_kwargs(),
+                    # Phase 16D: route the contradiction through the matched
+                    # fact's TOKI write-policy (supersede / evidence / merge /
+                    # await-confirmation) instead of a blind in-place overwrite.
+                    resolved = await self._resolve_conflict(
+                        target, op, category=category, score=score,
+                        source=source, agent_id=agent_id,
                     )
-                    # Mirror the revised text into FAISS so recall can match the
-                    # new phrasing (the stale vector lingers; see Phase 16D TODO
-                    # in database.update_memory_fact).
-                    await asyncio.to_thread(
-                        self._vector_store.add,
-                        op.fact,
-                        {
-                            "fact_id": target,
-                            "category": category,
-                            "source": source,
-                            "importance": score,
-                        },
-                    )
-                    last_id = target
-                    log.info("memory_extract_update", fact_id=target)
+                    if resolved is not None:
+                        last_id = resolved
                     continue
                 # No close enough existing fact → treat UPDATE as ADD.
 
@@ -613,10 +690,153 @@ class MemoryManager:
             last_id = await self._add_fact(
                 op.fact, category=category, source=source, importance=score,
                 agent_id=agent_id, created_by=op.source, confidence=op.confidence,
+                write_policy=_choose_write_policy(category, op.fact, op.subject),
             )
             log.info("memory_extract_add", fact_id=last_id, created_by=op.source)
 
         return last_id
+
+    # --- Phase 16D: TOKI contradiction operators ----------------------------
+
+    async def _resolve_conflict(
+        self,
+        old_id: int,
+        op: Extraction,
+        *,
+        category: str,
+        score: float,
+        source: str,
+        agent_id: str | None,
+    ) -> int | None:
+        """Apply the matched fact's TOKI write-policy to an incoming UPDATE.
+
+        ``old_id`` is the existing fact the extractor's UPDATE most resembles
+        (FAISS ≥ 0.85). The policy stored on *that* fact decides the outcome:
+
+        * ``last-write-wins`` / ``merge`` — archive the old fact (``valid_to`` +
+          ``superseded_by_fact_id``) and insert the incoming one. (``merge``
+          additionally preserves the old fact as historically valid; both end up
+          with non-overlapping ``[valid_from, valid_to)`` windows.)
+        * ``evidence-weighted`` — the higher ``confidence`` wins; a
+          lower-confidence incoming fact is a NOOP, a higher one supersedes.
+        * ``await-confirmation`` — do not auto-resolve: insert the incoming fact,
+          leave both active, and cross-link them via ``conflicting_fact_ids`` so
+          Helix can raise the clash at the next session start.
+
+        Returns the id of the fact that should be treated as "the result" (the
+        new fact when one is written, the retained old fact for a NOOP), or
+        ``None`` if nothing actionable happened.
+        """
+        old = await database.get_memory_fact(old_id, **self._db_kwargs())
+        # Target vanished or is already archived → treat the incoming as a fresh
+        # ADD rather than superseding a dead row.
+        if old is None or old.get("valid_to"):
+            return await self._add_fact(
+                op.fact, category=category, source=source, importance=score,
+                agent_id=agent_id, created_by=op.source, confidence=op.confidence,
+                write_policy=_choose_write_policy(category, op.fact, op.subject),
+            )
+
+        policy = (old.get("write_policy") or POLICY_LAST_WRITE_WINS).strip()
+        if policy not in _VALID_POLICIES:
+            policy = POLICY_LAST_WRITE_WINS
+
+        if policy == POLICY_EVIDENCE_WEIGHTED:
+            old_conf = float(old.get("confidence") or 0.0)
+            if op.confidence <= old_conf:
+                # Existing evidence is at least as strong → keep it, drop incoming.
+                log.info(
+                    "memory_conflict_evidence_noop", fact_id=old_id,
+                    old_confidence=old_conf, new_confidence=op.confidence,
+                )
+                return old_id
+            log.info(
+                "memory_conflict_evidence_supersede", fact_id=old_id,
+                old_confidence=old_conf, new_confidence=op.confidence,
+            )
+            return await self._supersede_fact(
+                old_id, op, category=category, score=score, source=source,
+                agent_id=agent_id, policy=policy,
+            )
+
+        if policy == POLICY_AWAIT_CONFIRMATION:
+            return await self._await_confirmation(
+                old_id, op, category=category, score=score, source=source,
+                agent_id=agent_id,
+            )
+
+        # last-write-wins and merge both archive-old + insert-new. They differ
+        # only in intent (merge keeps the old fact as historically true), which
+        # the bi-temporal window already captures via valid_from/valid_to.
+        return await self._supersede_fact(
+            old_id, op, category=category, score=score, source=source,
+            agent_id=agent_id, policy=policy,
+        )
+
+    async def _supersede_fact(
+        self,
+        old_id: int,
+        op: Extraction,
+        *,
+        category: str,
+        score: float,
+        source: str,
+        agent_id: str | None,
+        policy: str,
+    ) -> int:
+        """Insert the incoming fact and archive the old one it replaces (16D).
+
+        The new fact inherits ``policy`` so a later contradiction of it resolves
+        the same way. The old row is stamped ``valid_to = now`` +
+        ``superseded_by_fact_id = <new id>`` and its FAISS vector is tombstoned,
+        so only the new fact survives in active recall.
+        """
+        new_id = await self._add_fact(
+            op.fact, category=category, source=source, importance=score,
+            agent_id=agent_id, created_by=op.source, confidence=op.confidence,
+            write_policy=policy,
+        )
+        await database.supersede_memory_fact(old_id, new_id, **self._db_kwargs())
+        await self._tombstone_vector(old_id)
+        log.info(
+            "memory_conflict_supersede", policy=policy, old_fact_id=old_id,
+            new_fact_id=new_id,
+        )
+        return new_id
+
+    async def _await_confirmation(
+        self,
+        old_id: int,
+        op: Extraction,
+        *,
+        category: str,
+        score: float,
+        source: str,
+        agent_id: str | None,
+    ) -> int:
+        """Record an unresolved conflict, leaving both facts active (16D).
+
+        Inserts the incoming fact (active) and cross-links it with the existing
+        one via ``conflicting_fact_ids`` on both rows. Neither is archived — the
+        clash is surfaced to Helix at the next session start for the user to
+        adjudicate. Returns the new fact id.
+        """
+        new_id = await self._add_fact(
+            op.fact, category=category, source=source, importance=score,
+            agent_id=agent_id, created_by=op.source, confidence=op.confidence,
+            write_policy=POLICY_AWAIT_CONFIRMATION,
+        )
+        await database.set_conflicting_fact_ids(
+            old_id, [new_id], **self._db_kwargs()
+        )
+        await database.set_conflicting_fact_ids(
+            new_id, [old_id], **self._db_kwargs()
+        )
+        log.info(
+            "memory_conflict_await_confirmation", old_fact_id=old_id,
+            new_fact_id=new_id,
+        )
+        return new_id
 
     # --- Intelligence-layer helpers (Phase 12D) -----------------------------
 
@@ -734,6 +954,79 @@ class MemoryManager:
         return hashlib.sha1(
             normalized.encode("utf-8"), usedforsecurity=False
         ).hexdigest()
+
+    # --- Phase 16D: nightly Ebbinghaus forgetting curve ---------------------
+
+    async def run_decay(self) -> int:
+        """Apply one Ebbinghaus decay pass over all active facts.
+
+        For each active fact: ``strength *= exp(-days_since_recalled /
+        half_life_days)``. ``days_since_recalled`` is taken from
+        ``last_recalled_at`` and, when that is NULL (a never-recalled fact),
+        falls back to ``valid_from`` then ``created_at`` — the same recency
+        fallback chain Phase 16B uses, so a fresh never-recalled fact is treated
+        as new (≈ no decay) rather than ancient. A fact whose decayed strength
+        drops below :data:`DECAY_THRESHOLD` is archived (``valid_to = now``, not
+        deleted) and its FAISS vector tombstoned, so it leaves active recall.
+
+        Returns the number of facts archived this pass. This is a **batch** job
+        (the lifespan loop runs it at most once per calendar day — see
+        ``main._consolidation_loop``); it is not on the voice hot path. The
+        multiply form of the formula assumes that once-per-day cadence. Never
+        raises — a decay pass must never crash the loop that drives it.
+        """
+        archived = 0
+        try:
+            rows = await database.get_active_facts_for_decay(**self._db_kwargs())
+            if not rows:
+                return 0
+
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            strength_updates: list[tuple[float, int]] = []
+            archived_pairs: list[tuple[float, int]] = []
+            archived_ids: list[int] = []
+
+            for row in rows:
+                fid = row["id"]
+                strength = float(
+                    row["strength"] if row["strength"] is not None else 1.0
+                )
+                # Guard against a 0/NULL half-life (would divide by zero).
+                half_life = float(row["half_life_days"] or 14) or 14.0
+
+                days = _days_since(row.get("last_recalled_at"), now=now)
+                if days is None:
+                    days = _days_since(row.get("valid_from"), now=now)
+                if days is None:
+                    days = _days_since(row.get("created_at"), now=now)
+                if days is None:
+                    days = 0.0  # undateable → don't decay (never archive blindly)
+
+                new_strength = strength * math.exp(-days / half_life)
+                if new_strength < DECAY_THRESHOLD:
+                    archived_pairs.append((new_strength, fid))
+                    archived_ids.append(fid)
+                else:
+                    strength_updates.append((new_strength, fid))
+
+            await database.apply_decay(
+                strength_updates, archived_pairs, **self._db_kwargs()
+            )
+            # Tombstone the archived facts' vectors so they drop from recall and
+            # dedup immediately (the valid_to filter already excludes them too).
+            for fid in archived_ids:
+                await self._tombstone_vector(fid)
+
+            archived = len(archived_ids)
+            if archived or strength_updates:
+                log.info(
+                    "memory_decay", archived=archived,
+                    decayed=len(strength_updates),
+                )
+            return archived
+        except Exception:  # noqa: BLE001 — a decay pass must never crash its loop
+            log.warning("memory_decay_failed", exc_info=True)
+            return archived
 
     # --- Recall: blend Layer 2 (recent) + Layer 3 (semantic) ----------------
 
@@ -983,4 +1276,9 @@ __all__ = [
     "W_RECENCY",
     "W_IMPORTANCE",
     "W_FREQUENCY",
+    "DECAY_THRESHOLD",
+    "POLICY_LAST_WRITE_WINS",
+    "POLICY_EVIDENCE_WEIGHTED",
+    "POLICY_MERGE",
+    "POLICY_AWAIT_CONFIRMATION",
 ]

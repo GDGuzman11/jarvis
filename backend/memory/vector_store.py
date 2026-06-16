@@ -91,6 +91,15 @@ class VectorStore:
         self._texts: list[str] = []
         self._metadata: list[dict[str, Any]] = []
 
+        # Phase 16D: tombstoned FAISS positions. ``IndexFlatIP`` has no efficient
+        # in-place removal, so instead of rebuilding the index we record the
+        # positions of stale vectors (a fact that was superseded, deleted, or
+        # decayed away) and skip them at search time. This mirrors the recall
+        # path's ``valid_to`` filter but acts one layer earlier — directly on the
+        # vector store — so a stale vector can never be returned to *any* caller
+        # (recall, the dedup ``_find_similar_fact_id`` lookup, or the graph API).
+        self._tombstoned: set[int] = set()
+
         # Lazily initialised heavy objects.
         self._model: Any | None = None
         self._index: Any | None = None
@@ -142,12 +151,42 @@ class VectorStore:
         self._metadata.append(dict(metadata or {}))
         return len(self._texts) - 1
 
+    def tombstone_fact_id(self, fact_id: int) -> int:
+        """Mark every stored vector whose metadata ``fact_id`` matches as stale.
+
+        Phase 16D. Called when a fact is superseded (last-write-wins / merge),
+        deleted (DELETE), or archived by the nightly decay job. Tombstoned
+        positions are skipped by :meth:`search` so the stale vector drops out of
+        recall and dedup without an (expensive, ``IndexFlatIP``-unsupported)
+        index rebuild. Returns the number of positions newly tombstoned.
+
+        A fact may own more than one vector (e.g. a 16C in-place UPDATE added a
+        second vector under the same ``fact_id``); all of them are tombstoned.
+        """
+        newly = 0
+        for position, meta in enumerate(self._metadata):
+            if position in self._tombstoned:
+                continue
+            if meta.get("fact_id") == fact_id:
+                self._tombstoned.add(position)
+                newly += 1
+        return newly
+
+    @property
+    def active_count(self) -> int:
+        """Number of non-tombstoned (live) entries."""
+        return len(self._texts) - len(self._tombstoned)
+
     def search(self, query: str, top_k: int = 5) -> list[SearchResult]:
-        """Return the ``top_k`` most similar entries to ``query``.
+        """Return the ``top_k`` most similar *live* entries to ``query``.
 
         Each result is a :class:`SearchResult`, which unpacks as
         ``(text, metadata, score)``. Returns an empty list if the store is
         empty. Scores are cosine similarities in ``[-1, 1]`` (higher = closer).
+
+        Tombstoned positions (Phase 16D) are skipped. To still return up to
+        ``top_k`` live hits, the FAISS query asks for enough extra neighbours to
+        cover every tombstone before the live results are truncated.
         """
         if top_k <= 0:
             raise ValueError("top_k must be a positive integer.")
@@ -155,12 +194,16 @@ class VectorStore:
             return []
 
         index = self._ensure_index()
-        k = min(top_k, len(self._texts))
+        # Over-fetch by the tombstone count so up to top_k live hits survive the
+        # post-filter even if the closest neighbours are all tombstoned.
+        k = min(top_k + len(self._tombstoned), len(self._texts))
         scores, ids = index.search(self._embed(query), k)
 
         results: list[SearchResult] = []
         for position, score in zip(ids[0], scores[0]):
             if position < 0:  # FAISS pads with -1 when fewer than k results.
+                continue
+            if position in self._tombstoned:  # Phase 16D: skip stale vectors.
                 continue
             results.append(
                 SearchResult(
@@ -169,10 +212,12 @@ class VectorStore:
                     score=float(score),
                 )
             )
+            if len(results) >= top_k:
+                break
         return results
 
     def __len__(self) -> int:
-        """Number of entries currently stored."""
+        """Number of entries currently stored (including tombstoned ones)."""
         return len(self._texts)
 
     # --- Persistence --------------------------------------------------------
@@ -201,6 +246,9 @@ class VectorStore:
                     "model_name": self.model_name,
                     "texts": self._texts,
                     "metadata": self._metadata,
+                    # Phase 16D: persist tombstones so archived/superseded
+                    # vectors stay excluded across restarts.
+                    "tombstoned": sorted(self._tombstoned),
                 },
                 ensure_ascii=False,
             ),
@@ -229,6 +277,12 @@ class VectorStore:
         self.model_name = payload.get("model_name", self.model_name)
         self._texts = list(payload.get("texts", []))
         self._metadata = list(payload.get("metadata", []))
+        # Phase 16D: restore tombstones (older indexes simply have none).
+        self._tombstoned = {
+            int(p)
+            for p in payload.get("tombstoned", [])
+            if isinstance(p, (int, float)) and 0 <= int(p) < len(self._texts)
+        }
         logger.info("Loaded vector store (%d entries) from %s", len(self), source)
 
 

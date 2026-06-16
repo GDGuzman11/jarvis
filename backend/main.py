@@ -185,13 +185,20 @@ CONSOLIDATION_INTERVAL_S: int = 600  # 10 minutes
 
 
 async def _consolidation_loop(memory_manager: MemoryManager) -> None:
-    """Run :meth:`MemoryManager.run_consolidation` every 10 minutes forever.
+    """Run consolidation every 10 min, plus a once-daily Ebbinghaus decay pass.
 
     Cancellable: the lifespan cancels this task on shutdown, raising
     :class:`asyncio.CancelledError` out of the ``sleep`` — which we let
     propagate so the task ends cleanly. Any other error inside a pass is
     swallowed so a single bad consolidation never kills the loop.
+
+    Phase 16D: after each consolidation step we run the nightly Ebbinghaus decay
+    job, but gate it to **at most once per calendar day**. The loop ticks every
+    10 minutes; the date guard ensures the multiply-form decay formula is applied
+    once a day (not 144×), matching its "nightly" design. Decay failures are
+    isolated from consolidation so neither can kill the other or the loop.
     """
+    last_decay_day: Any = None
     while True:
         try:
             await asyncio.sleep(CONSOLIDATION_INTERVAL_S)
@@ -203,6 +210,17 @@ async def _consolidation_loop(memory_manager: MemoryManager) -> None:
             raise
         except Exception:  # noqa: BLE001 — never crash the loop on a bad pass
             log.warning("consolidation_loop_pass_failed", exc_info=True)
+
+        # Phase 16D: nightly decay, once per day, AFTER consolidation.
+        try:
+            today = datetime.now().date()
+            if today != last_decay_day:
+                await memory_manager.run_decay()
+                last_decay_day = today
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — a decay pass must not kill the loop
+            log.warning("decay_loop_pass_failed", exc_info=True)
 
 
 # Daily backup cadence + retention window (Phase 12E).

@@ -20,6 +20,7 @@ context (e.g. a tool name or status code), not message bodies.
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
@@ -330,28 +331,53 @@ async def _migrate_conversations_channel(conn: aiosqlite.Connection) -> None:
 #
 # Phase 16C adds a single ``valid_to`` column to support the LLM extractor's
 # DELETE/supersede action — a minimal soft-delete so a retracted/contradicted
-# fact stops surfacing in recall without being physically removed. This is the
-# *minimal* validity marker; Phase 16D extends it into a full bi-temporal model
-# (valid_from, strength, half_life_days, superseded_by_fact_id, …). The shared
-# check-before-alter migration below is idempotent, so 16D can add the remaining
-# columns later without conflicting with this one.
+# fact stops surfacing in recall without being physically removed.
 #   valid_to TIMESTAMP             — NULL = active; set = archived/superseded (16C)
+#
+# Phase 16D extends that minimal marker into a full bi-temporal + decay model:
+#   valid_from TIMESTAMP           — when the fact became valid (backfilled below)
+#   strength FLOAT DEFAULT 1.0     — Ebbinghaus memory strength (decays nightly)
+#   half_life_days INTEGER DEF 14  — per-fact forgetting half-life
+#   superseded_by_fact_id INTEGER  — id of the fact that replaced this one
+#   write_policy TEXT              — TOKI contradiction policy for this fact
+#   conflicting_fact_ids TEXT      — JSON array of unresolved-conflict fact ids
+#
+# SQLite's ``ALTER TABLE ... ADD COLUMN`` forbids a non-constant DEFAULT (it
+# rejects ``CURRENT_TIMESTAMP`` and any ``(expr)``), so ``valid_from`` is added
+# *without* a default and then (a) backfilled to ``created_at`` for existing
+# rows and (b) populated on every future insert by an AFTER INSERT trigger. The
+# constant-default columns (strength/half_life_days/write_policy) backfill every
+# existing row automatically via ADD COLUMN, exactly like the 16A columns.
 _MEMORY_FACTS_NEW_COLUMNS: tuple[tuple[str, str], ...] = (
     ("confidence", "FLOAT DEFAULT 0.8"),
     ("created_by", "TEXT DEFAULT 'system'"),
     ("source_turn_id", "INTEGER"),
     ("access_count", "INTEGER DEFAULT 0"),
     ("valid_to", "TIMESTAMP"),
+    # --- Phase 16D bi-temporal + decay columns --------------------------
+    ("valid_from", "TIMESTAMP"),  # no constant default → backfilled + trigger
+    ("strength", "FLOAT DEFAULT 1.0"),
+    ("half_life_days", "INTEGER DEFAULT 14"),
+    ("superseded_by_fact_id", "INTEGER"),
+    ("write_policy", "TEXT DEFAULT 'last-write-wins'"),
+    ("conflicting_fact_ids", "TEXT"),
 )
 
 
 async def _migrate_memory_facts_quality_columns(conn: aiosqlite.Connection) -> None:
-    """Add Phase 16A quality columns to ``memory_facts`` if they are missing.
+    """Add Phase 16A/16C/16D columns to ``memory_facts`` if they are missing.
 
     Check-before-alter via ``PRAGMA table_info`` so the migration is idempotent
     and safe to run on every startup — already-present columns are skipped, and
     a fresh DB (where the base CREATE already lacks them) gets them all added on
     first run. A no-op once every column exists.
+
+    After the ADD COLUMN pass, the Phase 16D ``valid_from`` column is backfilled
+    to ``created_at`` for any row lacking it and an AFTER INSERT trigger is
+    installed so future inserts always get ``valid_from = created_at`` (working
+    around SQLite's no-expression-default rule for ADD COLUMN). Both steps are
+    idempotent (``WHERE valid_from IS NULL`` matches nothing on later runs; the
+    trigger is ``IF NOT EXISTS``).
     """
     cursor = await conn.execute("PRAGMA table_info(memory_facts)")
     rows = await cursor.fetchall()
@@ -374,6 +400,22 @@ async def _migrate_memory_facts_quality_columns(conn: aiosqlite.Connection) -> N
         logger.info(
             "Added memory_facts quality columns: %s", ", ".join(added)
         )
+
+    # Phase 16D: ensure valid_from is populated everywhere. The backfill copies
+    # created_at into any NULL valid_from (existing rows added before this
+    # column), and the trigger does the same for every future insert. Neither
+    # the backfill nor the trigger touches content/category, so the FTS sync
+    # triggers are not disturbed.
+    await conn.execute(
+        "UPDATE memory_facts SET valid_from = created_at WHERE valid_from IS NULL"
+    )
+    await conn.execute(
+        "CREATE TRIGGER IF NOT EXISTS memory_facts_valid_from_default "
+        "AFTER INSERT ON memory_facts WHEN new.valid_from IS NULL BEGIN "
+        "UPDATE memory_facts SET valid_from = new.created_at WHERE id = new.id; "
+        "END"
+    )
+    await conn.commit()
 
 
 # --- CRUD: conversations ----------------------------------------------------
@@ -742,6 +784,7 @@ async def save_memory_fact(
     created_by: str | None = None,
     confidence: float | None = None,
     source_turn_id: int | None = None,
+    write_policy: str | None = None,
     db_path: Path | str = DEFAULT_DB_PATH,
 ) -> int:
     """Persist a single distilled memory fact and return its row id.
@@ -753,6 +796,12 @@ async def save_memory_fact(
     behaviour: when ``created_by`` / ``confidence`` are omitted the schema
     defaults (``'system'`` / ``0.8``) apply. The LLM extractor (Phase 16C) passes
     ``created_by='user'|'inference'`` and the model's per-fact ``confidence``.
+
+    Phase 16D adds the optional ``write_policy`` (the TOKI contradiction policy
+    this fact is resolved under: ``last-write-wins`` / ``evidence-weighted`` /
+    ``merge`` / ``await-confirmation``); when omitted the column default
+    (``'last-write-wins'``) applies. ``valid_from`` is set automatically to
+    ``created_at`` by the ``memory_facts_valid_from_default`` trigger.
     """
     # Only name the provenance columns when a value is supplied, so omitted
     # arguments fall through to the column DEFAULTs rather than being forced to
@@ -770,6 +819,9 @@ async def save_memory_fact(
     if source_turn_id is not None:
         columns.append("source_turn_id")
         values.append(int(source_turn_id))
+    if write_policy is not None:
+        columns.append("write_policy")
+        values.append(write_policy)
 
     placeholders = ", ".join("?" for _ in columns)
     col_sql = ", ".join(columns)
@@ -806,10 +858,12 @@ async def update_memory_fact(
     fields) change; ``created_at`` is preserved so the fact's age is unchanged.
     The ``memory_facts_fts_update`` trigger keeps the keyword index in sync.
 
-    Returns ``True`` when a row matched. The FAISS vector for the *old* text is
-    left in place (the store is append-only); recall ranking tolerates the
-    near-duplicate because the new text is added alongside it. A proper FAISS
-    tombstone is deferred to Phase 16D's bi-temporal rework.
+    Returns ``True`` when a row matched. NOTE: as of Phase 16D the manager no
+    longer routes contradiction handling through this in-place overwrite — it
+    archives the old row (``supersede_memory_fact``) and inserts a new one so the
+    bi-temporal history is preserved and the stale FAISS vector is tombstoned.
+    This helper is retained for direct/in-place edits that intentionally keep a
+    fact's id and age.
     """
     sets = ["content = ?"]
     params: list[object] = [content]
@@ -863,6 +917,168 @@ async def invalidate_memory_fact(
         )
         await conn.commit()
         return cursor.rowcount > 0
+    finally:
+        await conn.close()
+
+
+# --- Phase 16D: bi-temporal supersede + contradiction bookkeeping -----------
+
+
+async def get_memory_fact(
+    fact_id: int,
+    *,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> dict | None:
+    """Return a single ``memory_facts`` row by id, or ``None`` if absent.
+
+    Includes the Phase 16D bi-temporal columns (``write_policy``, ``confidence``,
+    ``valid_from``, ``valid_to``, ``conflicting_fact_ids``, …) so the TOKI
+    contradiction resolver can read the matched fact's policy and current state
+    before deciding how to apply an incoming fact.
+    """
+    conn = await connect(db_path)
+    try:
+        cursor = await conn.execute(
+            "SELECT id, source, category, content, importance, agent_id, "
+            "created_at, last_recalled_at, confidence, created_by, access_count, "
+            "valid_from, valid_to, strength, half_life_days, "
+            "superseded_by_fact_id, write_policy, conflicting_fact_ids "
+            "FROM memory_facts WHERE id = ?",
+            (int(fact_id),),
+        )
+        row = await cursor.fetchone()
+    finally:
+        await conn.close()
+    return dict(row) if row is not None else None
+
+
+async def supersede_memory_fact(
+    old_fact_id: int,
+    superseded_by_fact_id: int,
+    *,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> bool:
+    """Archive ``old_fact_id`` in favour of ``superseded_by_fact_id`` (16D).
+
+    Stamps ``valid_to = now`` on the old fact and records which fact replaced it
+    (``superseded_by_fact_id``). The row is kept for history (bi-temporal
+    archival) but the ``valid_to IS NULL`` recall filter now excludes it. Used by
+    the TOKI ``last-write-wins`` and ``merge`` operators. Returns ``True`` when a
+    row matched. ``content``/``category`` are untouched, so the FTS shadow stays
+    in sync (and keeps the archived text out of active recall via valid_to only).
+    """
+    conn = await connect(db_path)
+    try:
+        cursor = await conn.execute(
+            "UPDATE memory_facts SET valid_to = datetime('now'), "
+            "superseded_by_fact_id = ? WHERE id = ?",
+            (int(superseded_by_fact_id), int(old_fact_id)),
+        )
+        await conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        await conn.close()
+
+
+async def set_conflicting_fact_ids(
+    fact_id: int,
+    conflicting_ids: list[int],
+    *,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> bool:
+    """Merge ``conflicting_ids`` into a fact's ``conflicting_fact_ids`` JSON array.
+
+    The Phase 16D ``await-confirmation`` operator records a two-way link between
+    facts that conflict but must not be auto-resolved, so Helix can surface the
+    clash at the next session start. Read-modify-write: existing ids are unioned
+    with the new ones (deduped, sorted) and stored as a JSON array string.
+    Returns ``True`` when the row matched.
+    """
+    conn = await connect(db_path)
+    try:
+        cursor = await conn.execute(
+            "SELECT conflicting_fact_ids FROM memory_facts WHERE id = ?",
+            (int(fact_id),),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return False
+        existing: set[int] = set()
+        raw = row["conflicting_fact_ids"]
+        if raw:
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    existing = {int(x) for x in parsed}
+            except (ValueError, TypeError):
+                existing = set()
+        merged = sorted(existing | {int(x) for x in conflicting_ids})
+        await conn.execute(
+            "UPDATE memory_facts SET conflicting_fact_ids = ? WHERE id = ?",
+            (json.dumps(merged), int(fact_id)),
+        )
+        await conn.commit()
+        return True
+    finally:
+        await conn.close()
+
+
+# --- Phase 16D: Ebbinghaus decay batch operations ---------------------------
+
+
+async def get_active_facts_for_decay(
+    *,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> list[dict]:
+    """Return every active fact with the columns the decay job needs.
+
+    Active = ``valid_to IS NULL``. The nightly Ebbinghaus pass reads each fact's
+    current ``strength``, its ``half_life_days``, and the timestamps used to
+    compute "days since last recalled" (``last_recalled_at`` with ``valid_from``
+    / ``created_at`` fallbacks). Returned in id order for deterministic batching.
+    """
+    conn = await connect(db_path)
+    try:
+        cursor = await conn.execute(
+            "SELECT id, strength, half_life_days, last_recalled_at, valid_from, "
+            "created_at FROM memory_facts WHERE valid_to IS NULL ORDER BY id"
+        )
+        rows = await cursor.fetchall()
+    finally:
+        await conn.close()
+    return [dict(row) for row in rows]
+
+
+async def apply_decay(
+    strength_updates: list[tuple[float, int]],
+    archived: list[tuple[float, int]],
+    *,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> None:
+    """Persist a batch of decay results in one connection (Phase 16D).
+
+    ``strength_updates`` are ``(new_strength, fact_id)`` for facts that decayed
+    but stay active; ``archived`` are ``(new_strength, fact_id)`` for facts that
+    fell below the decay floor and are archived (``valid_to = now``) rather than
+    deleted. Both are applied with ``executemany`` so a large active set costs a
+    single round trip each. A no-op when both lists are empty.
+    """
+    if not strength_updates and not archived:
+        return
+    conn = await connect(db_path)
+    try:
+        if strength_updates:
+            await conn.executemany(
+                "UPDATE memory_facts SET strength = ? WHERE id = ?",
+                [(float(s), int(fid)) for s, fid in strength_updates],
+            )
+        if archived:
+            await conn.executemany(
+                "UPDATE memory_facts SET strength = ?, "
+                "valid_to = datetime('now') WHERE id = ?",
+                [(float(s), int(fid)) for s, fid in archived],
+            )
+        await conn.commit()
     finally:
         await conn.close()
 

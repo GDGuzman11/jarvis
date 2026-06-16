@@ -93,10 +93,16 @@ class _FakeVectorStore:
 class _PromoteEvaluator(MemoryEvaluator):
     """Evaluator whose ``score`` always clears the threshold (isolates the
     extraction path from keyword-rule specifics). Open-loop / person detection
-    is inherited unchanged."""
+    is inherited unchanged.
+
+    Uses the ``general`` category so stored facts carry the default
+    ``last-write-wins`` write-policy (Phase 16D): an UPDATE then supersedes the
+    old fact bi-temporally (archive old + insert new) rather than going through
+    evidence-weighted/merge — keeping these extraction-path tests deterministic.
+    """
 
     def score(self, user_text: str, reply: str):  # noqa: D102
-        return 0.9, "preference"
+        return 0.9, "general"
 
 
 class _QueueExtractor:
@@ -132,13 +138,18 @@ async def test_paraphrased_facts_produce_single_fact(tmp_path) -> None:
     await mgr.consolidate("I moved to Boston", "Noted.")
     await mgr.consolidate("Boston is where I live now", "Understood.")
 
-    assert await _fact_count(db_path) == 1, (
-        "paraphrased facts should dedup to ONE row via the UPDATE path"
-    )
+    # Phase 16D: an UPDATE under last-write-wins supersedes bi-temporally — the
+    # old fact is archived (valid_to set) and the revised fact inserted, so
+    # exactly ONE fact stays active and recall sees only the new phrasing.
     facts = await _all_facts(db_path)
-    assert facts[0]["content"] == "Boston is where the user lives now.", (
-        "the stored fact should carry the UPDATE's revised text"
+    active = [f for f in facts if f["valid_to"] is None]
+    assert len(active) == 1, "exactly one fact should remain active after supersede"
+    assert active[0]["content"] == "Boston is where the user lives now.", (
+        "the active fact should carry the UPDATE's revised text"
     )
+    # The superseded original is retained (archived), not destroyed.
+    archived = [f for f in facts if f["valid_to"] is not None]
+    assert len(archived) == 1 and archived[0]["content"] == "User lives in Boston."
 
 
 # --- 2. Explicit contradiction → UPDATE (supersede), not a 2nd INSERT -------
@@ -161,8 +172,13 @@ async def test_contradiction_triggers_update_not_insert(tmp_path) -> None:
     await mgr.consolidate("I live in Portland", "Noted.")
     await mgr.consolidate("No, I live in Boston now", "Understood.")
 
-    assert await _fact_count(db_path) == 1, "contradiction must UPDATE, not insert"
-    assert (await _all_facts(db_path))[0]["content"] == "User lives in Boston."
+    # Phase 16D: a contradiction supersedes bi-temporally — the old fact is
+    # archived and the new one inserted, leaving exactly ONE active fact (the
+    # newest value). Recall therefore never surfaces the stale Portland fact.
+    facts = await _all_facts(db_path)
+    active = [f for f in facts if f["valid_to"] is None]
+    assert len(active) == 1, "contradiction must leave exactly one active fact"
+    assert active[0]["content"] == "User lives in Boston."
 
 
 # --- 3. NOOP writes nothing (and does not fall back to rules) ----------------
