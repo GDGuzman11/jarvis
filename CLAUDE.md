@@ -14,12 +14,15 @@
 
 ## Current Status
 
-- **Phase 15A verified ✓ 2026-06-06**: debugger-agent verified the Neural Intelligence Orb rewrite in `frontend/src/components/JarvisOrb.tsx`. Old system fully removed (2500-particle sand cloud, synaptic bezier arcs, jagged discharge arcs — no `PARTICLE_COUNT`/`flareRef`/`QuadraticBezierCurve3`/`DischargeSlot`). All 7 layers present: 3 nested glow spheres + wireframe hologram shell, 350 neuron `Points` (vertexColors), ~480 normal `LineSegments`, red freedom `LineSegments` (20%), 30 symbol `Sprite`s, cascade activation (`CASCADE_DEPTH=6`, `NEIGHBOR_K=4`, `RED_RATIO=0.2`). `BASE_RADIUS=1.2`, prop signature, `AdditiveBlending`+`depthWrite:false` all preserved; state gating per voiceState confirmed. `pnpm build` clean (0 TS errors). Backend suite **143/144** (only pre-existing `get_gmail_token.py` secret-scan fails — no regression; frontend-only change). **Phase 15A complete.**
-- **Active Phase**: Phases 1–15 complete and archived. All remaining open items consolidated into the **Pending** section below — agents should skip that section when planning new phases.
-- **Phase 13A verified (2026-06-06)**: `POST /api/agents/{id}/task` + `GET /api/agents/{id}/tasks` endpoints live; `AgentTaskPanel.tsx`, `MissionControl.tsx` wired; 9 tests pass. Full suite **143/144**.
-- **Next Task**: Add a new phase here when the user is ready. See the **Pending** section for deferred items that are on hold.
-- **Blockers**: None. Dedicated microphone not yet purchased — voice E2E tests deferred to Pending.
-- **Test State**: 143/144 passing · 1 pre-existing failure (secret-scan on `get_gmail_token.py`) · `pnpm build` clean.
+- **Phase 15A verified ✓ 2026-06-06**: Neural Intelligence Orb rewrite complete. All 7 layers present, cascade activation, red freedom pathways. `pnpm build` clean. Backend suite 143/144.
+- **Active Phase**: Phases 1–15 complete and archived. Full project audit (HEALTH.md, 2026-06-16) identified 3 live issues: WebSocket contract drift (3 windows broken), secret-scan spreading to 2 files, memory recall unreliable. Phases 15B → 16 → 17 address these in order.
+- **HEALTH.md audit findings (2026-06-16)**:
+  - Secret-scan failure is now **2 files**: `get_gmail_token.py:9` + `docs/TEST_HISTORY.md:110` — not 1 as previously recorded
+  - **Phase 7 known gap**: Frontend handles 9 WS event types; backend only emits 6. `comms`, `tool_permissions`, `tool_call` never broadcast → Communications (Win3), Tools (Win5), and Reasoning tool cards (Win2) render skeletons
+  - Memory system is **~60% to goal** — infrastructure solid, recall reliability weak (similarity-only, `last_recalled_at` dead column, rule-based extraction, no contradiction handling)
+- **Next Task**: **Tier 0 hygiene first** (hours of work — scrub OAuth client ID from 2 files → 144/144 clean, fix backup WAL issue). Then **Phase 15B** (wire missing WebSocket events). Then **Phase 16** (Memory Intelligence).
+- **Blockers**: Dedicated microphone not yet purchased — voice E2E tests deferred to Pending.
+- **Test State**: 143/144 passing · **2 files** failing secret-scan (`get_gmail_token.py` + `docs/TEST_HISTORY.md`) · `pnpm build` clean.
 - **Build Started**: 2026-06-02
 
 ---
@@ -50,7 +53,7 @@
 | 3D Animation | Three.js / React Three Fiber |
 | State | Zustand 5, WebSocket sync |
 | Database | SQLite (aiosqlite) |
-| Vector Memory | FAISS + sentence-transformers |
+| Vector Memory | FAISS + sentence-transformers (`all-MiniLM-L6-v2`) |
 | Key Storage | Windows Credential Manager (keyring library) |
 | Integrations | Slack Bolt, Gmail API (OAuth2) |
 | Logging | structlog |
@@ -99,6 +102,123 @@ Dark theme `#080810` (updated 2026-06-04), electric blue/cyan accents `#00D4FF`,
 
 ---
 
+## Tier 0 — Hygiene (do before Phase 15B)
+*Handled by: `/security-agent` (items 1–2) + `/backend-agent` (item 3). Hours of work. Unblock 144/144 clean suite.*
+
+- [ ] **Scrub OAuth client ID** from `get_gmail_token.py:9` — delete or parameterize the hardcoded `client_id`. Script is one-time bootstrap, not imported at runtime; safe to delete body or replace with `input()` prompt.
+- [ ] **Scrub OAuth client ID** from `docs/TEST_HISTORY.md:110` (also present in `.claude/agent-memory/debugger-agent/` snapshot). Remove or redact from doc. Verify secret-scan passes on both files → **144/144 green**.
+- [ ] **Fix SQLite backup** in `main.py:233` — replace raw file-copy zip with `conn.backup()` (or `VACUUM INTO`) and include `-wal`/`-shm` sidecar files. Current approach can produce stale/torn backups under WAL mode with concurrent writers.
+
+---
+
+## Phase 15B — WebSocket Event Wiring
+*Handled by: `/backend-agent` (Kado). Must complete before Phase 16 — a broken UI demo undermines the memory work.*
+
+### Known gap (HEALTH.md verified)
+Frontend (`websocket.ts`) handles 9 event types. Backend (`events.py` + `main.py`) only broadcasts 6. Three windows are rendering skeletons:
+- **Window 2 (Reasoning)** — `tool_call` defined in `events.py` but `registry.py:259` only audit-logs it, never broadcasts → tool cards stay empty
+- **Window 3 (Communications)** — `comms` event never broadcast → Slack/Gmail inbox renders skeleton
+- **Window 5 (Tools)** — `tool_permissions` event never broadcast → permission toggles render skeleton
+
+### What to build (Phase 15B)
+- [ ] **Broadcast `tool_call` from registry** — in `registry.py` after successful `call_tool()`, emit `ToolCallEvent` via the WebSocket hub (already defined in `events.py`; hub already available via `app.state.hub`). Include `tool_name`, `agent_id`, `args` preview (truncated, no secrets), `result` preview (≤200 chars). Reasoning window tool cards will populate automatically.
+- [ ] **Broadcast `comms` event** — after each Slack/Gmail fetch in `backend/integrations/`, emit a `CommsEvent` with inbox snapshot (unread count, sender, subject/preview, timestamp). Communications window subscribes to this event type already.
+- [ ] **Broadcast `tool_permissions` event** — on startup and on any `grant()`/`revoke()` call in `registry.py`, emit current per-agent permission matrix as `ToolPermissionsEvent`. Tools window subscribes already.
+- [ ] **Wire `shutdown` broadcast** — confirm `shutdown` event fires to all connected windows when ⏻ is pressed (may already work via Tauri; verify and fix if not).
+- [ ] Verify (debugger-agent): Reasoning window shows tool call cards when an agent uses a tool; Communications window shows live Slack/Gmail data; Tools window shows live permission toggles; `pnpm build` clean; backend suite still 144/144.
+
+---
+
+## Phase 16 — Memory Intelligence
+*Handled by: `/backend-agent` (Kado). Enhance — do not replace — the existing SQLite + FAISS memory system. Research basis: Mem0 (49% LongMemEval), Zep/Graphiti (63.8% LongMemEval), TOKI bi-temporal operators, Ebbinghaus forgetting curves, ColBERT re-ranking. Target: ~85% of Zep quality, fully local, zero new cloud dependencies.*
+
+### Memory system current state (HEALTH.md verified)
+- **What works**: 3-layer brain (episodic SQLite + distilled `memory_facts` + FAISS semantic), wired into voice hot path, 7 memory tables, FTS5 keyword search, consolidation loop, daily backup, open loops, people profiles.
+- **What's broken**: recall is similarity-only (`MIN_SEMANTIC_SCORE=0.25`, no recency/importance/frequency); `last_recalled_at` column exists but is never written; extraction is keyword rule-matching (misses paraphrases); facts accumulate forever (no contradiction resolution, no eviction); recalled memories injected into system prompt without sanitization (latent injection vector).
+
+### Phase 16A — Foundation + Safety
+*Close the security gap and activate the dead recall infrastructure before adding more memory writers.*
+
+- [ ] **Sanitize recall→prompt injection boundary** — in `format_context()` / `build_system_prompt()` (`persona.py:118`): wrap recalled facts in an `<untrusted_memory>` delimiter tag and strip control characters before injection. Prevents a malicious email/Slack body (once those become facts) from injecting into the system prompt. Add to `backend/test_phase16a_verify.py`.
+- [ ] **Activate `last_recalled_at`** — in `database.py`, add `UPDATE memory_facts SET last_recalled_at = ? WHERE id = ?` on every fact returned by recall. Column already exists (line 113) but is written nowhere. Unlocks recency scoring in 16B.
+- [ ] **Add memory quality columns to `memory_facts`** — migrate schema to add: `confidence FLOAT DEFAULT 0.8`, `created_by TEXT DEFAULT 'system'` (values: `'user'`, `'agent'`, `'inference'`), `source_turn_id INTEGER`, `access_count INTEGER DEFAULT 0`. Backfill `access_count = 0` for existing rows. These columns are prerequisites for 16B scoring.
+- [ ] Verify (debugger-agent): control chars stripped from injected facts; `last_recalled_at` updates on recall; new columns present; `pytest backend/` passes.
+
+### Phase 16B — Multi-Signal Re-Ranking
+*Replace similarity-only FAISS recall with a weighted scoring pipeline.*
+
+- [ ] **Implement multi-signal retrieval** in `backend/memory/manager.py` — after FAISS returns top-K candidates, score each with:
+  - `0.40 × semantic_similarity` (FAISS score, already have it)
+  - `0.20 × keyword_bm25` (FTS5 already built — reuse `search_memory_facts()`)
+  - `0.20 × recency_score` (`1 / (1 + days_since_last_recalled)` using now-active `last_recalled_at`)
+  - `0.10 × importance_score` (existing `importance` column in `memory_facts`)
+  - `0.10 × frequency_score` (`log(access_count + 1)` using new column from 16A)
+  - Return top-N by composite score. No new dependencies — pure Python math over existing data.
+- [ ] **Increment `access_count`** on every recall hit (same DB write as `last_recalled_at` in 16A).
+- [ ] Verify (debugger-agent): recently accessed facts rank above equally-similar older facts; importance-weighted facts surface correctly; `pytest backend/` passes.
+
+### Phase 16C — LLM-Driven Extraction
+*Replace keyword rule-matching in `evaluator.py` with an LLM-driven fact extraction pipeline (Mem0 pattern).*
+
+- [ ] **Replace `_RULES` keyword matching** in `backend/memory/evaluator.py` with an LLM extraction call — prompt Claude (or Ollama `phi3.5` for speed/cost) to extract facts from each conversation turn and classify each as `ADD`, `UPDATE`, `DELETE`, or `NOOP`. Prompt template should output structured JSON: `[{"action": "ADD"|"UPDATE"|"DELETE"|"NOOP", "fact": "...", "confidence": 0.0-1.0, "subject": "..."}]`. Keep existing rule pass as a fast pre-filter (if no patterns match at all, skip LLM call).
+- [ ] **Wire ADD/UPDATE/DELETE/NOOP** into `save_memory_fact()` — UPDATE finds the most similar existing fact (FAISS score > 0.85) and overwrites; DELETE marks `valid_to = now()`; NOOP skips write.
+- [ ] **Set `created_by`** on every extracted fact (`'user'` for direct statements, `'inference'` for LLM-derived).
+- [ ] Verify (debugger-agent): paraphrased facts ("I moved to Boston" / "Boston is where I live now") produce single fact not two; explicit contradictions trigger UPDATE not second INSERT; `pytest backend/` passes.
+
+### Phase 16D — Bi-Temporal Facts + Ebbinghaus + TOKI Operators
+*Contradiction resolution, temporal validity, and natural forgetting.*
+
+- [ ] **Add bi-temporal columns to `memory_facts`** — `valid_from TIMESTAMP DEFAULT (datetime('now'))`, `valid_to TIMESTAMP DEFAULT NULL`, `strength FLOAT DEFAULT 1.0`, `half_life_days INTEGER DEFAULT 14`, `superseded_by_fact_id INTEGER DEFAULT NULL`, `write_policy TEXT DEFAULT 'last-write-wins'`, `conflicting_fact_ids TEXT DEFAULT NULL` (JSON array). Migrate existing rows with safe defaults.
+- [ ] **Implement TOKI contradiction operators** — when an incoming fact conflicts with an existing one, apply the `write_policy` for that fact type:
+  - `last-write-wins` — set `valid_to = now()` on old fact, INSERT new (default for locations, status)
+  - `evidence-weighted` — compare `confidence` scores; higher wins (for preferences, allergies)
+  - `merge` — both facts valid in different time windows; set `valid_to` on old, INSERT new with `valid_from` = now (for employment history, relationships)
+  - `await-confirmation` — mark `conflicting_fact_ids`, surface to Jarvis at next session start
+- [ ] **Nightly Ebbinghaus decay job** — add to `_consolidation_loop()` in `main.py`: for each fact, `strength = strength × exp(-days_since_recalled / half_life_days)`. Facts at `strength < 0.1` → mark `valid_to = now()` (archived, not deleted). Run after existing consolidation step.
+- [ ] Verify (debugger-agent): old fact's `valid_to` set when superseded; strength decays on schedule; archived facts excluded from active recall; `pytest backend/` passes.
+
+### Phase 16E — Optional: ColBERT Re-Ranking + Self-Reflection *(schedule when ready)*
+- [ ] **ColBERT cross-encoder re-ranking** — after multi-signal scoring returns top-20, re-rank with `cross-encoder/ms-marco-MiniLM-L-6-v2` (~100MB, runs on CPU). Conditional: enable for high-importance queries (Slack/Gmail bodies), skip for speed on casual queries. Adds ~100ms, significant precision lift.
+- [ ] **Self-reflective nightly routine** — add to consolidation loop: sample 50 random active facts; prompt Ollama `phi3.5` to evaluate consistency ("Are these still accurate? Any contradictions?"); emit ADD/UPDATE/DELETE corrections. Runs locally, zero API cost.
+
+---
+
+## Phase 17 — Computer Eyes & Hands
+*Handled by: `/backend-agent` (tools + wiring) + `/frontend-agent` (UI feedback). Gives Jarvis desktop vision and control. Planned in detail during 2026-06-15 session — see plan file at `C:\Users\User\.claude\plans\i-want-you-to-fluttering-penguin.md`.*
+
+### New dependencies
+- `mss` — fast screenshots (pure Python, Windows 11 optimised)
+- `pywinauto` — accessibility-tree-based desktop control (NOT pixel-based; reliable on Windows 11)
+- `pygetwindow` — window enumeration companion
+- Playwright already installed (used by `browse_url`) — no new web dependency
+
+### Phase 17A — Desktop Vision + Tool Wiring
+- [ ] **Fix critical tool-calling gap** — `base_agent.py` `reason()` never passes `tools=` to Claude and never handles `tool_use` response blocks. Add agentic loop: stream first response → if `stop_reason == "tool_use"`, execute tools via registry → append `tool_result` → continue until `end_turn`. Max 5 rounds. Expose `last_final_message` on `ClaudeClient` after each stream call.
+- [ ] **Add `complete()` non-streaming method to `ClaudeClient`** — for tool-loop rounds 2+ where tokens don't need streaming to UI.
+- [ ] **Inject `tool_registry` into `BaseAgent` + `VoicePipeline`** — reorder `main.py` lifespan to build registry before agent runtime; pass via `AgentRuntime` → `BaseAgent.__init__`.
+- [ ] **New `backend/tools/screen_tool.py`** — `take_screenshot(save_to?)` captures primary monitor via `mss`, returns `{"is_image": True, "image_base64": str, "path": str, "width": int, "height": int}`; `get_screen_info()` returns monitor geometry. Screenshots saved to `workspace/screenshots/`. Runs via `asyncio.to_thread`.
+- [ ] **`is_image` sentinel in `_execute_tool()`** — when tool result has `is_image: True`, build `{"type": "image", "source": {"type": "base64", ...}}` content block for Claude's tool_result (not text). Enables Claude Vision to analyze screenshots.
+- [ ] **Update `wiring.py` + `registry.py`** — register screen tools; grant `take_screenshot`/`get_screen_info` to all agents (read-only); desktop control tools (Phase 17B) to `production_lead` + `backend` only.
+- [ ] Verify (debugger-agent): voice command "take a screenshot" → Claude calls tool → PNG saved to workspace → Claude describes what it sees; `pytest backend/` passes; `pnpm build` clean.
+
+### Phase 17B — Desktop Control
+- [ ] **New `backend/tools/desktop_tool.py`** — six tools, all run via `asyncio.to_thread` (pywinauto is blocking):
+  - `open_application(app_name, args?)` — launches from hardcoded allowlist only (`notepad`, `calculator`, `explorer`, `chrome`, `firefox`, `code`, `terminal`, `powershell`); rejects unknown names → `{"ok": False, "error": "not in allowlist"}`. Uses `subprocess.Popen` (valid at tool level — not in code executor sandbox).
+  - `list_windows()` — `pygetwindow.getAllWindows()` → `[{title, pid, visible, minimized}]`
+  - `focus_window(title_contains)` — case-insensitive partial match, brings window to foreground
+  - `click_element(window_title, element_text?, element_type?, x?, y?)` — pywinauto `uia` backend accessibility-tree click; coords fallback. COM init/uninit per thread.
+  - `type_text(text, window_title?)` — pywinauto `type_keys()`
+  - `press_key(key, window_title?)` — pywinauto `send_keys()` (e.g. `"ctrl+c"`, `"alt+f4"`)
+- [ ] **Permissions**: desktop control tools → `production_lead` + `backend` only. NOT security, marketing, content, or frontend.
+- [ ] Verify (debugger-agent): "open Notepad" → Notepad opens; "click Save button" → pywinauto finds and clicks element; allowlist rejects unknown apps; `pytest backend/` passes.
+
+### Phase 17C — Web Access Confirmation + Enhancement
+- [ ] **Expose screenshot in `browse_url` schema** — add `take_screenshot: bool = False` param to `BROWSE_URL_SCHEMA`; when true, capture full-page PNG and return `{"text": ..., "is_image": True, "image_base64": ...}` — same sentinel as screen_tool. `_execute_tool()` handles multi-part (text + image) tool_result content block.
+- [ ] **Confirm end-to-end**: voice command "search the web for X" → Claude calls `web_search` or `browse_url` → result returned → Jarvis speaks summary.
+- [ ] Verify (debugger-agent): browse_url with screenshot returns image content block; web_search returns results; both tools visible in Reasoning window tool cards (from Phase 15B); `pytest backend/` passes.
+
+---
+
 ## Pending — On Hold Until Further Notice
 *Agents: **skip this entire section** when planning or starting any new phase. These items are intentionally deferred and are NOT prerequisites for upcoming work. The user will schedule them explicitly when ready.*
 
@@ -117,7 +237,6 @@ Dark theme `#080810` (updated 2026-06-04), electric blue/cyan accents `#00D4FF`,
 - [ ] Add microphone sensitivity indicator to AnimationWindow (small input-level bar when listening)
 
 ### Future Enhancements
-- [ ] Jarvis remembers context across sessions (FAISS semantic memory populated by conversations)
 - [ ] Proactive notifications — Jarvis speaks when important Slack/Gmail arrives
 - [ ] Agent task visibility — show what each agent is working on in real-time in AgentsWindow
 - [ ] Voice commands to control agent tasks ("Jarvis, tell Ben to update the UI")
@@ -137,6 +256,7 @@ Dark theme `#080810` (updated 2026-06-04), electric blue/cyan accents `#00D4FF`,
 | [docs/PHASE_HISTORY.md](docs/PHASE_HISTORY.md) | Phases 1–15 complete checklists + full project file structure. **Archiving destination — move fully completed phase sections here from CLAUDE.md.** | When you need to know exactly what was built, or to understand the file layout |
 | [docs/TEST_HISTORY.md](docs/TEST_HISTORY.md) | All debugger-agent test run logs (Phases 1–11C, 96 tests) | When you need to understand what is already tested and how |
 | [docs/SECURITY_AUDIT.md](docs/SECURITY_AUDIT.md) | Phase 8 + Phase 10 audit findings and verifications | Before touching auth, credentials, or network bindings |
+| [HEALTH.md](HEALTH.md) | Full project audit 2026-06-16 — verified health snapshot, memory gap analysis, WS contract drift, ranked improvement opportunities, resequenced phase plan | Before starting any new phase; before touching memory, WS events, or security |
 
 ---
 
@@ -163,6 +283,9 @@ Dark theme `#080810` (updated 2026-06-04), electric blue/cyan accents `#00D4FF`,
 | Phase 13 — Agent Direct Interaction | `/frontend-agent` (UI) + `/backend-agent` (API endpoint) |
 | Phase 14 — Neural Link Animation | `/frontend-agent` |
 | Phase 15 — Neural Intelligence Orb | `/frontend-agent` |
+| Phase 15B — WebSocket Event Wiring | `/backend-agent` |
+| Phase 16 (16A–16E) — Memory Intelligence | `/backend-agent` |
+| Phase 17 (17A–17C) — Computer Eyes & Hands | `/backend-agent` (tools) + `/frontend-agent` (UI feedback) |
 
 ---
 
