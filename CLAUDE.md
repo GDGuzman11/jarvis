@@ -59,7 +59,7 @@
 | Logging | structlog |
 | Testing | pytest + pytest-asyncio, Vitest |
 
-### 5 Windows (open simultaneously on boot)
+### 6 Windows (open simultaneously on boot)
 | # | Name | Contents |
 |---|---|---|
 | 1 | Animation | Neural intelligence orb — 350 neuron nodes, glowing pathways, red freedom pathways (~20%), 30 floating math/code symbols; cascade activation; audioLevel pulse during speaking; SVG connection beams to other windows; ⏻ shutdown button |
@@ -67,6 +67,7 @@
 | 3 | Communications | Slack inbox + Gmail inbox — read/reply via voice |
 | 4 | Agents | 6 agent cards (Atlas/Ben/Kado/Sentinel/Vega/Quill) with live status, current task, rename controls, task input + task log per card, Mission Control panel |
 | 5 | Tools | Tool store grid — per-agent access toggles |
+| 6 | Memory | Force-directed graph of all memory facts — nodes colored by type (cyan/gold/red/purple/green), sized by recall frequency, edges = semantic similarity. Click to inspect, search to filter. Live updates via WebSocket. *(Phase 16F)* |
 
 ### 6 Background Agents (run 24/7)
 | Agent | Name | Role |
@@ -181,6 +182,28 @@ Frontend (`websocket.ts`) handles 9 event types. Backend (`events.py` + `main.py
 - [ ] **ColBERT cross-encoder re-ranking** — after multi-signal scoring returns top-20, re-rank with `cross-encoder/ms-marco-MiniLM-L-6-v2` (~100MB, runs on CPU). Conditional: enable for high-importance queries (Slack/Gmail bodies), skip for speed on casual queries. Adds ~100ms, significant precision lift.
 - [ ] **Self-reflective nightly routine** — add to consolidation loop: sample 50 random active facts; prompt Ollama `phi3.5` to evaluate consistency ("Are these still accurate? Any contradictions?"); emit ADD/UPDATE/DELETE corrections. Runs locally, zero API cost.
 
+### Phase 16F — Memory Graph Visualization (Window 6)
+*Handled by: `/backend-agent` (API endpoint) + `/frontend-agent` (graph UI). Depends on 16A + 16B being complete — needs quality columns (access_count, importance, confidence) for node sizing/coloring, and multi-signal scores for edge weights. Visual design: force-directed web, color by type.*
+
+**Design spec (confirmed by user):**
+- **Layout**: Force-directed web — nodes float and cluster naturally by semantic similarity (like Obsidian graph view). Physics-based, slow organic drift.
+- **Nodes**: Small glowing orbs. Size = `access_count` (frequently recalled = bigger). Glow pulses if recalled in current session.
+  - Cyan = general facts
+  - Gold = high-importance facts (`importance > 0.7`)
+  - Red = contradictions / conflicting facts (`conflicting_fact_ids` non-null)
+  - Purple = people profiles (from `people` table)
+  - Green = open loops (from `open_loops` table)
+- **Edges**: Thin glowing `LineSegments`-style lines between facts with FAISS similarity > 0.5. Brightness = similarity strength.
+- **Interaction**: Click node → highlights all connections, dims rest. Hover → HUD tooltip with full fact text + metadata. Search bar filters graph live.
+- **Window**: 6th Tauri window — "Memory" — positioned at `x:780, y:760` (below orb, completing the layout).
+
+**What to build:**
+- [ ] **Backend `GET /api/memory/graph`** — returns `{nodes: [{id, text_preview, type, importance, access_count, confidence, last_recalled_at, conflicting_fact_ids}], edges: [{source_id, target_id, similarity}]}`. Query top-500 active facts from `memory_facts`; compute pairwise FAISS similarity for pairs above 0.5 threshold. Cap at 2000 edges for performance.
+- [ ] **New `frontend/src/windows/MemoryWindow.tsx`** — 6th Tauri window. Uses `react-force-graph-2d` (lightweight 2D canvas renderer, ~150KB). HUD-styled: `#080810` background, cyan/gold/red/purple/green node palette, glowing edges. Search input filters nodes live. Click-to-highlight interaction.
+- [ ] **Register MemoryWindow in Tauri config** — add to `tauri.conf.json` windows array at position `x:780, y:760`. Add navigation entry.
+- [ ] **WebSocket `memory_update` event** — emit from backend whenever a fact is added/updated/recalled. Frontend redraws affected node in real time (no full refresh needed).
+- [ ] Verify (debugger-agent): graph renders with real facts; node colors match types; edges connect semantically similar facts; clicking a node highlights connections; search filters correctly; `pnpm build` clean; `pytest backend/` passes.
+
 ---
 
 ## Phase 17 — Computer Eyes & Hands
@@ -285,6 +308,7 @@ Frontend (`websocket.ts`) handles 9 event types. Backend (`events.py` + `main.py
 | Phase 15 — Neural Intelligence Orb | `/frontend-agent` |
 | Phase 15B — WebSocket Event Wiring | `/backend-agent` |
 | Phase 16 (16A–16E) — Memory Intelligence | `/backend-agent` |
+| Phase 16F — Memory Graph Visualization | `/backend-agent` (API) + `/frontend-agent` (Window 6) |
 | Phase 17 (17A–17C) — Computer Eyes & Hands | `/backend-agent` (tools) + `/frontend-agent` (UI feedback) |
 
 ---
