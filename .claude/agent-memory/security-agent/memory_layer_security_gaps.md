@@ -34,6 +34,14 @@ it. Relevant if raw-payload / knowledge-graph / PII tables are ever added.
 **How to apply:** when reviewing any new table holding raw/PII content, flag
 backup inheritance; either exclude the table from the zip or accept documented
 plaintext-at-rest with restrictive ACLs. Keep backups local-only (no cloud).
+**Integrity sub-issue (confirmed 2026-06-16):** `_write_backup_zip` does
+`zf.write(db_path)` on the LIVE jarvis.db while the app holds it open with WAL
+writes (consolidation loop, audit hooks, voice turns all write concurrently).
+Copying a live SQLite file byte-for-byte can capture a torn page / mid-transaction
+state, and the `-wal`/`-shm` sidecars are NOT included, so the zipped .db may be
+missing the most recent committed transactions or be inconsistent on restore.
+Fix = use `sqlite3` `.backup()` API or `VACUUM INTO` a temp file, then zip that.
+Low likelihood per-run, but the backup is exactly what you rely on after a crash.
 
 **Also reaffirmed this review:** `database.py` is fully parameterized aiosqlite
 (no string-concat SQL) — this is the baseline any new memory code must not
