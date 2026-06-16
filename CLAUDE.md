@@ -20,10 +20,10 @@
   - Secret-scan failure is now **2 files**: `get_gmail_token.py:9` + `docs/TEST_HISTORY.md:110` — not 1 as previously recorded
   - **Phase 7 known gap**: Frontend handles 9 WS event types; backend only emits 6. `comms`, `tool_permissions`, `tool_call` never broadcast → Communications (Win3), Tools (Win5), and Reasoning tool cards (Win2) render skeletons
   - Memory system is **~60% to goal** — infrastructure solid, recall reliability weak (similarity-only, `last_recalled_at` dead column, rule-based extraction, no contradiction handling)
-- **Tier 0 progress (2026-06-16)**: ✅ Item 1 (Jarvis → Helix rename) complete & verified 5/5. Remaining Tier 0: scrub OAuth client ID from `get_gmail_token.py:9` + `docs/TEST_HISTORY.md:110` → 144/144 clean (items 2–3), fix SQLite WAL backup (item 4).
-- **Next Task**: **Tier 0 items 2–3** — scrub OAuth client ID from 2 files → 144/144 clean (`/security-agent`). Then item 4 (WAL backup, `/backend-agent`). Then **Phase 15B** (wire missing WebSocket events). Then **Phase 16** (Memory Intelligence).
+- **Tier 0 progress (2026-06-16)**: ✅ Item 1 (Jarvis → Helix rename) complete & verified 5/5. ✅ Items 2–3 (OAuth client ID scrub) complete → **suite now 144/144 green**. Remaining Tier 0: item 4 (SQLite WAL-safe backup).
+- **Next Task**: **Tier 0 item 4** — replace raw file-copy zip backup in `main.py:233` with `conn.backup()`/`VACUUM INTO` + `-wal`/`-shm` sidecars (`/backend-agent`). Then **Phase 15B** (wire missing WebSocket events). Then **Phase 16** (Memory Intelligence).
 - **Blockers**: Dedicated microphone not yet purchased — voice E2E tests deferred to Pending.
-- **Test State**: 143/144 passing · **2 files** failing secret-scan (`get_gmail_token.py` + `docs/TEST_HISTORY.md`) · `pnpm build` clean.
+- **Test State**: **144/144 passing** (secret-scan green as of 2026-06-16) · `pnpm build` clean.
 - **Build Started**: 2026-06-02
 
 ---
@@ -115,8 +115,8 @@ Dark theme `#080810` (updated 2026-06-04), electric blue/cyan accents `#00D4FF`,
   - `package.json` / `Cargo.toml` — update project name fields
   - Do NOT change `"hey_jarvis"` wake word string — that is the OpenWakeWord model filename and will break detection if changed. Add a code comment: `# wake phrase is "hey_jarvis" until custom "hey_helix" model is trained`
   - After rename: `pnpm build` clean, backend suite still passes.
-- [ ] **Scrub OAuth client ID** from `get_gmail_token.py:9` — delete or parameterize the hardcoded `client_id`. Script is one-time bootstrap, not imported at runtime; safe to delete body or replace with `input()` prompt.
-- [ ] **Scrub OAuth client ID** from `docs/TEST_HISTORY.md:110` (also present in `.claude/agent-memory/debugger-agent/` snapshot). Remove or redact from doc. Verify secret-scan passes on both files → **144/144 green**.
+- [x] **Scrub OAuth client ID** from `get_gmail_token.py:9` — *(Done 2026-06-16: rewritten to take the client-secret JSON path via `sys.argv[1]` or `GMAIL_CLIENT_SECRET_FILE` env var; literal ID removed from code & comments; still runnable as bootstrap.)*
+- [x] **Scrub OAuth client ID** from `docs/TEST_HISTORY.md:110` — *(Done 2026-06-16: redacted to `<REDACTED_OAUTH_CLIENT_ID>`. Repo-wide grep confirmed only these 2 files contained the ID — the `.claude/agent-memory/` snapshot did NOT. Secret-scan now passes → **144/144 green**. Residual: ID still in git history; optional `git filter-repo` follow-up if deemed sensitive, but it's a public client id, not a secret.)*
 - [ ] **Fix SQLite backup** in `main.py:233` — replace raw file-copy zip with `conn.backup()` (or `VACUUM INTO`) and include `-wal`/`-shm` sidecar files. Current approach can produce stale/torn backups under WAL mode with concurrent writers.
 
 ---
