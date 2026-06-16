@@ -30,15 +30,87 @@ which are fast and local) directly. This keeps the call site uniform for callers
 
 from __future__ import annotations
 
+import asyncio
 import inspect
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from backend.events import ToolCall, ToolPermissionsEvent
 from backend.logging_config import get_logger
 from backend.memory import database
 
 log = get_logger(__name__)
+
+# Maximum length of a broadcast preview (per arg value and for the whole result).
+# Keeps the Reasoning window's tool cards readable and, crucially, prevents a
+# large or sensitive tool payload (a base64 screenshot, a long email body) from
+# riding the WebSocket in full.
+_PREVIEW_LIMIT: int = 200
+
+# Substrings that, when present in an argument *key*, mark its value as a secret
+# that must never be broadcast (Security Rule 1). Matched case-insensitively.
+_SECRET_KEY_HINTS: tuple[str, ...] = (
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "credential",
+    "authorization",
+    "api_key",
+    "apikey",
+    "access_key",
+    "private_key",
+)
+
+_REDACTED: str = "***redacted***"
+
+
+def _scrub_args(args: dict[str, Any]) -> dict[str, Any]:
+    """Return a broadcast-safe copy of ``args``: secrets redacted, strings capped.
+
+    A value is redacted when its key looks like a credential (Security Rule 1).
+    Remaining string values are truncated to :data:`_PREVIEW_LIMIT` so a long
+    body never floods the UI; non-string scalars pass through unchanged and
+    nested structures are summarised to their truncated ``repr`` so the event
+    stays small and JSON-serialisable.
+    """
+    safe: dict[str, Any] = {}
+    for key, value in args.items():
+        if any(hint in key.lower() for hint in _SECRET_KEY_HINTS):
+            safe[key] = _REDACTED
+        elif isinstance(value, str):
+            safe[key] = _truncate(value)
+        elif isinstance(value, (int, float, bool)) or value is None:
+            safe[key] = value
+        else:
+            safe[key] = _truncate(repr(value))
+    return safe
+
+
+def _preview_result(result: Any) -> Any:
+    """Return a ≤200-char preview of a tool result for broadcast.
+
+    The result is rendered to a compact string (JSON when serialisable, else
+    ``str``) and truncated. Truncation doubles as a safety net: it keeps large
+    or sensitive payloads (image base64, long inbox dumps) from being broadcast
+    in full.
+    """
+    if result is None:
+        return None
+    if isinstance(result, str):
+        return _truncate(result)
+    try:
+        text = json.dumps(result, default=str, separators=(",", ":"))
+    except (TypeError, ValueError):
+        text = str(result)
+    return _truncate(text)
+
+
+def _truncate(text: str, limit: int = _PREVIEW_LIMIT) -> str:
+    """Truncate ``text`` to ``limit`` chars, appending an ellipsis when cut."""
+    return text if len(text) <= limit else text[:limit] + "…"
 
 # Tool name -> tool name groupings used to express the default matrix concisely.
 # Read-only tools never mutate external state; the Security agent is limited to
@@ -122,6 +194,12 @@ class ToolRegistry:
     db_path:
         Optional SQLite path override threaded through to the audit log (tests
         point this at a temp database).
+    hub:
+        Optional WebSocket hub. When supplied, the registry broadcasts a
+        :class:`~backend.events.ToolCall` after every successful call (Reasoning
+        window tool cards) and a :class:`~backend.events.ToolPermissionsEvent`
+        whenever the matrix changes (Tools window toggles). When ``None`` the
+        registry is silent — unit tests and headless callers need no hub.
     """
 
     def __init__(
@@ -129,6 +207,7 @@ class ToolRegistry:
         permissions: dict[str, set[str]] | None = None,
         *,
         db_path: Any | None = None,
+        hub: Any | None = None,
     ) -> None:
         self._tools: dict[str, _Tool] = {}
         source = permissions if permissions is not None else DEFAULT_PERMISSIONS
@@ -137,6 +216,7 @@ class ToolRegistry:
             agent: set(tools) for agent, tools in source.items()
         }
         self._db_path = db_path
+        self._hub = hub
 
     # --- Registration -------------------------------------------------------
 
@@ -176,16 +256,45 @@ class ToolRegistry:
     def grant(self, agent_id: str, tool_name: str) -> None:
         """Allow ``agent_id`` to use ``tool_name`` (live matrix edit)."""
         self._permissions.setdefault(agent_id, set()).add(tool_name)
+        self._emit_permissions()
 
     def revoke(self, agent_id: str, tool_name: str) -> None:
         """Disallow ``agent_id`` from using ``tool_name`` (live matrix edit)."""
         self._permissions.get(agent_id, set()).discard(tool_name)
+        self._emit_permissions()
 
     def permissions_matrix(self) -> dict[str, list[str]]:
         """Return a JSON-serialisable snapshot of the matrix (for the Tools UI)."""
         return {
             agent: sorted(tools) for agent, tools in self._permissions.items()
         }
+
+    def permissions_event(self) -> ToolPermissionsEvent:
+        """Build a :class:`ToolPermissionsEvent` from the current matrix.
+
+        Used by the WebSocket endpoint to push the live permission matrix to a
+        window the moment it connects (so the Tools window never renders a
+        skeleton), and internally by :meth:`_emit_permissions`.
+        """
+        return ToolPermissionsEvent(
+            permissions=self.permissions_matrix(), tools=self.list_tools()
+        )
+
+    def _emit_permissions(self) -> None:
+        """Broadcast the current permission matrix, if a hub and loop are present.
+
+        ``grant``/``revoke`` are synchronous, so the async broadcast is scheduled
+        onto the running event loop as a fire-and-forget task. When called
+        outside a running loop (e.g. a unit test mutating the matrix directly)
+        there is nothing to schedule onto, so this is a safe no-op.
+        """
+        if self._hub is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(self._hub.broadcast(self.permissions_event()))
 
     # --- Schema access for Claude requests ---------------------------------
 
@@ -249,7 +358,40 @@ class ToolRegistry:
             raise
 
         await self._audit(agent_id, tool_name, "ok")
+        # Broadcast a UI-safe preview to the Reasoning window (Phase 15B). The
+        # audit log stays metadata-only (Security Rule 6); the broadcast carries
+        # scrubbed args + a truncated result purely for live display.
+        await self._broadcast_tool_call(agent_id, tool_name, kwargs, result)
         return result
+
+    async def _broadcast_tool_call(
+        self,
+        agent_id: str,
+        tool_name: str,
+        args: dict[str, Any],
+        result: Any,
+    ) -> None:
+        """Emit a :class:`ToolCall` event with scrubbed args + truncated result.
+
+        Best-effort: a broadcast failure must never break the tool call itself,
+        so any error is logged and swallowed. Secrets are redacted and every
+        preview is length-capped before it leaves the process (Security Rule 1).
+        """
+        if self._hub is None:
+            return
+        try:
+            await self._hub.broadcast(
+                ToolCall(
+                    tool_name=tool_name,
+                    agent_id=agent_id,
+                    args=_scrub_args(args),
+                    result=_preview_result(result),
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 — broadcasting must not break a call
+            log.warning(
+                "tool_call_broadcast_failed", tool=tool_name, error=str(exc)
+            )
 
     async def _audit(self, agent_id: str, tool_name: str, outcome: str) -> None:
         """Write one metadata-only audit row for a tool call (best-effort)."""

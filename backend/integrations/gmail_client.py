@@ -41,6 +41,7 @@ import base64
 from email.message import EmailMessage
 from typing import Any
 
+from backend.events import CommsEvent
 from backend.logging_config import get_logger
 from backend.memory import database
 from backend.security import keystore
@@ -70,14 +71,22 @@ class GmailClient:
     underlying Google service is built lazily on first use, in a worker thread.
     This keeps imports/tests fast and lets the backend construct a ``GmailClient``
     even when Gmail is unconfigured (methods then degrade to no-ops).
+
+    Parameters
+    ----------
+    hub:
+        Optional WebSocket hub. When supplied, :meth:`get_inbox` broadcasts a
+        :class:`~backend.events.CommsEvent` Gmail snapshot so the Communications
+        window renders live inbox data. ``None`` keeps the client silent.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, hub: Any | None = None) -> None:
         # Lazily-built Google API service object. Typed Any to avoid importing the
         # SDK at module import time.
         self._service: Any | None = None
         # Guards lazy build so concurrent first calls don't race on construction.
         self._build_lock = asyncio.Lock()
+        self._hub = hub
 
     # --- Lazy service construction -----------------------------------------
 
@@ -142,7 +151,35 @@ class GmailClient:
         await database.log_audit(
             _AUDIT_AGENT_ID, "gmail_get_inbox", detail=str(len(messages))
         )
+        await self._broadcast_comms(messages)
         return messages
+
+    async def _broadcast_comms(self, messages: list[dict]) -> None:
+        """Broadcast a ``CommsEvent`` Gmail snapshot for the Communications window.
+
+        Maps the internal ``{id, from, subject, snippet}`` shape to the frontend
+        ``GmailMessage`` shape (``{id, sender, subject, snippet, unread,
+        timestamp}``). ``get_inbox`` reads only UNREAD messages, so ``unread`` is
+        ``True``. Best-effort: any failure is logged and swallowed so a UI
+        broadcast never breaks a read. Silent when no hub is configured.
+        """
+        if self._hub is None:
+            return
+        snapshot = [
+            {
+                "id": m.get("id") or "",
+                "sender": m.get("from", ""),
+                "subject": m.get("subject", ""),
+                "snippet": m.get("snippet", ""),
+                "unread": True,
+                "timestamp": m.get("date", ""),
+            }
+            for m in messages
+        ]
+        try:
+            await self._hub.broadcast(CommsEvent(gmail=snapshot))
+        except Exception as exc:  # noqa: BLE001 — UI broadcast must not break a read
+            log.warning("gmail_comms_broadcast_failed", error=str(exc))
 
     @staticmethod
     def _get_inbox_sync(service: Any, limit: int) -> list[dict]:
@@ -164,7 +201,7 @@ class GmailClient:
                     userId="me",
                     id=ref["id"],
                     format="metadata",
-                    metadataHeaders=["From", "Subject"],
+                    metadataHeaders=["From", "Subject", "Date"],
                 )
                 .execute()
             )
@@ -178,6 +215,7 @@ class GmailClient:
                     "from": headers.get("from", ""),
                     "subject": headers.get("subject", ""),
                     "snippet": msg.get("snippet", ""),
+                    "date": headers.get("date", ""),
                 }
             )
         return out

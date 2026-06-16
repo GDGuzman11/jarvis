@@ -21,9 +21,10 @@
   - **Phase 7 known gap**: Frontend handles 9 WS event types; backend only emits 6. `comms`, `tool_permissions`, `tool_call` never broadcast → Communications (Win3), Tools (Win5), and Reasoning tool cards (Win2) render skeletons
   - Memory system is **~60% to goal** — infrastructure solid, recall reliability weak (similarity-only, `last_recalled_at` dead column, rule-based extraction, no contradiction handling)
 - **Tier 0 COMPLETE (2026-06-16)** ✅: Item 1 (Jarvis → Helix rename, verified 5/5), Items 2–3 (OAuth client ID scrub), Item 4 (WAL-safe SQLite backup) all done. **Suite now 145/145 green.**
-- **Next Task**: **Phase 15B** — WebSocket Event Wiring (`/backend-agent`). Broadcast the 3 missing event types (`tool_call`, `comms`, `tool_permissions`) so Reasoning/Communications/Tools windows stop rendering skeletons; verify `shutdown` broadcast. Then **Phase 16** (Memory Intelligence).
+- **Phase 15B COMPLETE (2026-06-16)** ✅: All 3 missing WS events (`tool_call`, `comms`, `tool_permissions`) wired + `shutdown` verified; Reasoning/Communications/Tools windows now receive live data. Verified 6/6 by debugger-agent. Note: 3 of the 4 event classes didn't actually exist and were added.
+- **Next Task**: **Phase 16A** — Memory Intelligence Foundation + Safety (`/backend-agent`). Sanitize the recall→prompt injection boundary, activate the dead `last_recalled_at` column, add memory-quality columns (`confidence`, `created_by`, `source_turn_id`, `access_count`). Then 16B (multi-signal re-ranking) → 16C → 16D → 16F.
 - **Blockers**: Dedicated microphone not yet purchased — voice E2E tests deferred to Pending.
-- **Test State**: **145/145 passing** (secret-scan green; +1 WAL-backup regression test, 2026-06-16) · `pnpm build` clean.
+- **Test State**: **154/154 passing** (secret-scan green; +8 Phase 15B WS tests, 2026-06-16) · `pnpm build` clean.
 - **Build Started**: 2026-06-02
 
 ---
@@ -130,12 +131,14 @@ Frontend (`websocket.ts`) handles 9 event types. Backend (`events.py` + `main.py
 - **Window 3 (Communications)** — `comms` event never broadcast → Slack/Gmail inbox renders skeleton
 - **Window 5 (Tools)** — `tool_permissions` event never broadcast → permission toggles render skeleton
 
-### What to build (Phase 15B)
-- [ ] **Broadcast `tool_call` from registry** — in `registry.py` after successful `call_tool()`, emit `ToolCallEvent` via the WebSocket hub (already defined in `events.py`; hub already available via `app.state.hub`). Include `tool_name`, `agent_id`, `args` preview (truncated, no secrets), `result` preview (≤200 chars). Reasoning window tool cards will populate automatically.
-- [ ] **Broadcast `comms` event** — after each Slack/Gmail fetch in `backend/integrations/`, emit a `CommsEvent` with inbox snapshot (unread count, sender, subject/preview, timestamp). Communications window subscribes to this event type already.
-- [ ] **Broadcast `tool_permissions` event** — on startup and on any `grant()`/`revoke()` call in `registry.py`, emit current per-agent permission matrix as `ToolPermissionsEvent`. Tools window subscribes already.
-- [ ] **Wire `shutdown` broadcast** — confirm `shutdown` event fires to all connected windows when ⏻ is pressed (may already work via Tauri; verify and fix if not).
-- [ ] Verify (debugger-agent): Reasoning window shows tool call cards when an agent uses a tool; Communications window shows live Slack/Gmail data; Tools window shows live permission toggles; `pnpm build` clean; backend suite still 144/144.
+### What to build (Phase 15B) — ✅ COMPLETE & verified 6/6 (2026-06-16)
+> **Correction to the gap analysis above**: only `tool_call` actually had an event class in `events.py`. `comms`, `tool_permissions`, AND `shutdown` had NO event classes (the `EventType` literal listed only 6) — backend-agent added `CommsEvent`, `ToolPermissionsEvent`, `ShutdownEvent` with frontend-matching shapes. Hub is accessed per the existing emit pattern (async sites `await hub.broadcast`; sync sites fire-and-forget via `loop.create_task`, no-op when no loop/hub).
+- [x] **Broadcast `tool_call` from registry** — emitted at `registry.py:383` after successful `call_tool()`. Secret scrubbing via `_scrub_args` (redacts token/secret/password/api_key/etc. → `***redacted***`) + `_preview_result` (≤200 chars). Shape matches frontend `ToolCallEvent`. Reasoning window tool cards populate.
+- [x] **Broadcast `comms` event** — emitted after Slack fetches (`slack_client.py:188,245`) and Gmail fetch (`gmail_client.py:154`). `CommsEvent` carries `slack` OR `gmail` independently; item shapes match frontend `SlackMessage`/`GmailMessage`. (Added `Date` header to Gmail metadata for real timestamps — non-breaking, Phase 5 test asserts subset.)
+- [x] **Broadcast `tool_permissions` event** — on startup (`main.py:449`), on grant/revoke (`registry.py:283`), AND pushed per-window on connect (`main.py:807`) to beat connect-order races. Shape matches frontend.
+- [x] **Wire `shutdown` broadcast** — verified already working (⏻ → `POST /api/shutdown` → `hub.broadcast` → all windows); swapped raw dict for typed `ShutdownEvent()` (identical wire shape).
+- [x] Verified (debugger-agent 2026-06-16): all 3 events match frontend field-for-field incl. `type` string; secrets scrubbed (code + tests); emit-safe (failures swallowed, no-loop safe); shutdown reaches all windows; `pnpm build` clean; **backend suite 154/154** (+8 new Phase 15B tests).
+- **Out-of-scope observation (future)**: Slack live-listener inbound callback (`main.py` `_on_slack_message`) still broadcasts a raw payload with no `type` field (frontend ignores it). It's a push, not a fetch, so outside 15B scope — could emit a `CommsEvent` later.
 
 ---
 

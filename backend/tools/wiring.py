@@ -30,6 +30,7 @@ def build_tool_registry(
     slack_client: SlackClient | None = None,
     gmail_client: GmailClient | None = None,
     db_path: Any | None = None,
+    hub: Any | None = None,
 ) -> ToolRegistry:
     """Construct a :class:`ToolRegistry` with every tool registered.
 
@@ -38,8 +39,11 @@ def build_tool_registry(
     their respective clients are supplied — agents can still be granted those
     tools in the matrix, but a call will surface as not-found until the client
     exists (the integrations themselves no-op gracefully when unconfigured).
+
+    ``hub`` (optional) is the WebSocket hub; when supplied the registry
+    broadcasts ``tool_call`` and ``tool_permissions`` events for the live UI.
     """
-    registry = ToolRegistry(db_path=db_path)
+    registry = ToolRegistry(db_path=db_path, hub=hub)
 
     # Standalone tools — callable + schema, one register_tool each.
     registry.register_tool(

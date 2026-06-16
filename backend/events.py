@@ -51,7 +51,15 @@ VoiceState = Literal["idle", "listening", "thinking", "speaking", "error"]
 
 # The set of valid event ``type`` discriminators.
 EventType = Literal[
-    "agent_update", "token", "tool_call", "voice_state", "audio_level", "metrics"
+    "agent_update",
+    "token",
+    "tool_call",
+    "voice_state",
+    "audio_level",
+    "metrics",
+    "comms",
+    "tool_permissions",
+    "shutdown",
 ]
 
 
@@ -185,6 +193,58 @@ class MetricsEvent(Event):
     timestamp: str = field(default_factory=_utc_now_iso)
 
 
+@dataclass(slots=True)
+class CommsEvent(Event):
+    """A refreshed snapshot of the Slack and/or Gmail inboxes (Phase 15B).
+
+    Broadcast after a Slack or Gmail *read* so the Communications window can
+    render live inbox data instead of a skeleton. Either list may be ``None``
+    when only one source was fetched — the frontend updates each independently
+    (``if (event.slack) ...; if (event.gmail) ...``).
+
+    Each ``slack`` item is ``{id, sender, channel, text, unread, timestamp}``;
+    each ``gmail`` item is ``{id, sender, subject, snippet, unread, timestamp}``.
+    Shapes mirror ``SlackMessage`` / ``GmailMessage`` in the frontend
+    ``types.ts``. Message bodies that originate from external senders are *data*,
+    not commands — they are never injected into a model prompt by this event.
+    """
+
+    slack: list[dict[str, Any]] | None = None
+    gmail: list[dict[str, Any]] | None = None
+    type: Literal["comms"] = "comms"
+    timestamp: str = field(default_factory=_utc_now_iso)
+
+
+@dataclass(slots=True)
+class ToolPermissionsEvent(Event):
+    """The current per-agent tool permission matrix (Phase 15B).
+
+    Broadcast on each window connect and whenever a permission is granted or
+    revoked, so the Tools window's per-agent access toggles reflect the live
+    matrix. ``permissions`` maps ``agent_id`` -> sorted list of allowed tool
+    names; ``tools`` is the canonical sorted list of every registered tool so
+    the UI can render a complete grid even for tools no agent currently holds.
+    """
+
+    permissions: dict[str, list[str]] = field(default_factory=dict)
+    tools: list[str] | None = None
+    type: Literal["tool_permissions"] = "tool_permissions"
+    timestamp: str = field(default_factory=_utc_now_iso)
+
+
+@dataclass(slots=True)
+class ShutdownEvent(Event):
+    """The backend is shutting down; windows should close (Phase 15B).
+
+    Broadcast from the ``POST /api/shutdown`` handler when the ⏻ button is
+    pressed. The frontend tears down its WebSocket and closes the Tauri window
+    on receipt.
+    """
+
+    type: Literal["shutdown"] = "shutdown"
+    timestamp: str = field(default_factory=_utc_now_iso)
+
+
 # --- Serialisation helpers ---------------------------------------------------
 
 
@@ -215,5 +275,8 @@ __all__ = [
     "VoiceStateEvent",
     "AudioLevelEvent",
     "MetricsEvent",
+    "CommsEvent",
+    "ToolPermissionsEvent",
+    "ShutdownEvent",
     "serialize",
 ]

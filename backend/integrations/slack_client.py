@@ -38,6 +38,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from backend.events import CommsEvent
 from backend.logging_config import get_logger
 from backend.memory import database
 from backend.security import keystore
@@ -71,10 +72,21 @@ class SlackClient:
         Optional callback fired by the live listener for each inbound DM or
         mention. Receives a metadata dict: ``{"source": "slack", "kind":
         "dm"|"mention", "channel", "user", "text", "ts"}``. May be sync or async.
+    hub:
+        Optional WebSocket hub. When supplied, every successful read broadcasts a
+        :class:`~backend.events.CommsEvent` with a Slack inbox snapshot so the
+        Communications window renders live data. ``None`` keeps the client silent
+        (the default for unit tests and headless use).
     """
 
-    def __init__(self, on_notification: NotificationCallback | None = None) -> None:
+    def __init__(
+        self,
+        on_notification: NotificationCallback | None = None,
+        *,
+        hub: Any | None = None,
+    ) -> None:
         self._on_notification = on_notification
+        self._hub = hub
         # Lazily-built SDK objects. Typed as Any to avoid importing the SDK at
         # module import time (keeps import cheap and test mocking simple).
         self._web: Any | None = None
@@ -173,6 +185,7 @@ class SlackClient:
             target=user_id,
             detail=str(len(messages)),
         )
+        await self._broadcast_comms(messages, default_channel=channel_id)
         return messages
 
     async def get_unread_mentions(self, limit: int = 10) -> list[dict]:
@@ -229,7 +242,39 @@ class SlackClient:
             "slack_get_unread_mentions",
             detail=str(len(mentions)),
         )
+        await self._broadcast_comms(mentions)
         return mentions
+
+    # --- Communications-window broadcast -----------------------------------
+
+    async def _broadcast_comms(
+        self, messages: list[dict], *, default_channel: str = ""
+    ) -> None:
+        """Broadcast a ``CommsEvent`` Slack snapshot for the Communications window.
+
+        Maps the internal ``{user, text, ts}`` (DM) / ``{channel, user, text,
+        ts}`` (mention) shapes to the frontend ``SlackMessage`` shape
+        (``{id, sender, channel, text, unread, timestamp}``). Best-effort: any
+        failure is logged and swallowed so a UI broadcast never breaks a read.
+        Silent when no hub is configured.
+        """
+        if self._hub is None:
+            return
+        snapshot = [
+            {
+                "id": m.get("ts") or "",
+                "sender": m.get("user") or "",
+                "channel": m.get("channel") or default_channel,
+                "text": m.get("text", ""),
+                "unread": True,
+                "timestamp": m.get("ts") or "",
+            }
+            for m in messages
+        ]
+        try:
+            await self._hub.broadcast(CommsEvent(slack=snapshot))
+        except Exception as exc:  # noqa: BLE001 — UI broadcast must not break a read
+            log.warning("slack_comms_broadcast_failed", error=str(exc))
 
     # --- Live listener (Socket Mode) ---------------------------------------
 

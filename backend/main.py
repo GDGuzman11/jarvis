@@ -27,7 +27,7 @@ import tempfile
 import zipfile
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +35,7 @@ from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.agents.runtime import AgentRuntime
-from backend.events import AgentUpdate
+from backend.events import AgentUpdate, ShutdownEvent, serialize
 from backend.integrations.gmail_client import GmailClient
 from backend.integrations.slack_client import SlackClient
 from backend.logging_config import configure_logging, get_logger
@@ -422,12 +422,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         await hub.broadcast(payload)
 
-    slack_client = SlackClient(on_notification=_on_slack_message)
+    slack_client = SlackClient(on_notification=_on_slack_message, hub=hub)
     started = await slack_client.start_listener()
     app.state.slack_client = slack_client
     log.info("Slack integration ready", listener_running=started)
 
-    gmail_client = GmailClient()
+    gmail_client = GmailClient(hub=hub)
     app.state.gmail_client = gmail_client
     log.info("Gmail integration ready")
 
@@ -437,10 +437,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # so their tool wrappers share the same authenticated client. Exposed on
     # app.state for the agents and the Tools window (Phase 7) to consume.
     tool_registry = build_tool_registry(
-        slack_client=slack_client, gmail_client=gmail_client
+        slack_client=slack_client, gmail_client=gmail_client, hub=hub
     )
     app.state.tool_registry = tool_registry
     log.info("Tool registry ready", tools=len(tool_registry.list_tools()))
+
+    # Broadcast the initial tool-permission matrix so any window already
+    # connected populates its Tools grid (Phase 15B). Late-joining windows get
+    # the same snapshot pushed on connect by the /ws handler below, so the Tools
+    # window never renders a skeleton regardless of connect ordering.
+    await hub.broadcast(tool_registry.permissions_event())
 
     # Fire the startup greeting in the background — it waits for the first
     # window to connect, then has Helix speak a personalised hello + status,
@@ -562,9 +568,7 @@ async def shutdown_endpoint() -> dict[str, str]:
     every Tauri window. The backend itself exits via SIGINT after a short delay so
     the HTTP response is sent before the process terminates.
     """
-    await hub.broadcast(
-        {"type": "shutdown", "timestamp": datetime.now(timezone.utc).isoformat()}
-    )
+    await hub.broadcast(ShutdownEvent())
 
     async def _exit() -> None:
         await asyncio.sleep(0.8)
@@ -791,6 +795,19 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         return
 
     await hub.connect(websocket)
+
+    # Push the current tool-permission matrix to this window immediately on
+    # connect (Phase 15B). The startup broadcast only reaches windows already
+    # connected; sending a per-connection snapshot here means the Tools window
+    # populates its grid no matter when it joins. Best-effort — a send failure
+    # is handled by the disconnect path below.
+    registry = getattr(websocket.app.state, "tool_registry", None)
+    if registry is not None:
+        try:
+            await websocket.send_text(serialize(registry.permissions_event()))
+        except Exception:  # noqa: BLE001 — a failed initial push ends this connection
+            log.warning("websocket_initial_permissions_failed", exc_info=True)
+
     try:
         while True:
             # Block on inbound frames purely to detect disconnects. Clients are
