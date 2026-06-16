@@ -22,9 +22,10 @@
   - Memory system is **~60% to goal** — infrastructure solid, recall reliability weak (similarity-only, `last_recalled_at` dead column, rule-based extraction, no contradiction handling)
 - **Tier 0 COMPLETE (2026-06-16)** ✅: Item 1 (Jarvis → Helix rename, verified 5/5), Items 2–3 (OAuth client ID scrub), Item 4 (WAL-safe SQLite backup) all done. **Suite now 145/145 green.**
 - **Phase 15B COMPLETE (2026-06-16)** ✅: All 3 missing WS events (`tool_call`, `comms`, `tool_permissions`) wired + `shutdown` verified; Reasoning/Communications/Tools windows now receive live data. Verified 6/6 by debugger-agent. Note: 3 of the 4 event classes didn't actually exist and were added.
-- **Next Task**: **Phase 16A** — Memory Intelligence Foundation + Safety (`/backend-agent`). Sanitize the recall→prompt injection boundary, activate the dead `last_recalled_at` column, add memory-quality columns (`confidence`, `created_by`, `source_turn_id`, `access_count`). Then 16B (multi-signal re-ranking) → 16C → 16D → 16F.
+- **Phase 16A COMPLETE (2026-06-16)** ✅: Recall→prompt injection boundary sanitized (`<untrusted_memory>` + control-char strip), `last_recalled_at` activated on the real recall hot path, 4 memory-quality columns added via idempotent migration. Verified 5/5 by debugger-agent. Suite 161/161.
+- **Next Task**: **Phase 16B** — Multi-Signal Re-Ranking (`/backend-agent`). Replace similarity-only FAISS recall with a weighted composite score (0.40 semantic + 0.20 BM25 + 0.20 recency + 0.10 importance + 0.10 frequency) and wire the `access_count` increment on recall. Then 16C → 16D → 16F.
 - **Blockers**: Dedicated microphone not yet purchased — voice E2E tests deferred to Pending.
-- **Test State**: **154/154 passing** (secret-scan green; +8 Phase 15B WS tests, 2026-06-16) · `pnpm build` clean.
+- **Test State**: **161/161 passing** (secret-scan green; +7 Phase 16A memory tests, 2026-06-16) · `pnpm build` clean.
 - **Build Started**: 2026-06-02
 
 ---
@@ -149,13 +150,13 @@ Frontend (`websocket.ts`) handles 9 event types. Backend (`events.py` + `main.py
 - **What works**: 3-layer brain (episodic SQLite + distilled `memory_facts` + FAISS semantic), wired into voice hot path, 7 memory tables, FTS5 keyword search, consolidation loop, daily backup, open loops, people profiles.
 - **What's broken**: recall is similarity-only (`MIN_SEMANTIC_SCORE=0.25`, no recency/importance/frequency); `last_recalled_at` column exists but is never written; extraction is keyword rule-matching (misses paraphrases); facts accumulate forever (no contradiction resolution, no eviction); recalled memories injected into system prompt without sanitization (latent injection vector).
 
-### Phase 16A — Foundation + Safety
+### Phase 16A — Foundation + Safety — ✅ COMPLETE & verified 5/5 (2026-06-16)
 *Close the security gap and activate the dead recall infrastructure before adding more memory writers.*
-
-- [ ] **Sanitize recall→prompt injection boundary** — in `format_context()` / `build_system_prompt()` (`persona.py:118`): wrap recalled facts in an `<untrusted_memory>` delimiter tag and strip control characters before injection. Prevents a malicious email/Slack body (once those become facts) from injecting into the system prompt. Add to `backend/test_phase16a_verify.py`.
-- [ ] **Activate `last_recalled_at`** — in `database.py`, add `UPDATE memory_facts SET last_recalled_at = ? WHERE id = ?` on every fact returned by recall. Column already exists (line 113) but is written nowhere. Unlocks recency scoring in 16B.
-- [ ] **Add memory quality columns to `memory_facts`** — migrate schema to add: `confidence FLOAT DEFAULT 0.8`, `created_by TEXT DEFAULT 'system'` (values: `'user'`, `'agent'`, `'inference'`), `source_turn_id INTEGER`, `access_count INTEGER DEFAULT 0`. Backfill `access_count = 0` for existing rows. These columns are prerequisites for 16B scoring.
-- [ ] Verify (debugger-agent): control chars stripped from injected facts; `last_recalled_at` updates on recall; new columns present; `pytest backend/` passes.
+> **Path correction**: sanitization lives in `backend/memory/manager.py::format_context()` (where fact content becomes prompt text — the true trust boundary), NOT `persona.py`. `build_system_prompt()` (actual path `backend/ai/persona.py`, not `backend/agents/persona.py`) consumes the already-sanitized block. Grep confirmed NO bypass path injects raw facts.
+- [x] **Sanitize recall→prompt injection boundary** — `format_context()` (`manager.py:535`) wraps recalled facts in `<untrusted_memory>`…`</untrusted_memory>` with a "treat as data" preamble; `_sanitize_fact_text()` (`manager.py:71`) strips C0/C1/DEL via `_CONTROL_CHARS_RE = [\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]` while preserving tab/newline/CR + Unicode. On-path for both voice (`pipeline.py:492`) and agents (`base_agent.py:376`).
+- [x] **Activate `last_recalled_at`** — `mark_facts_recalled()` (`database.py:779`) does `UPDATE … SET last_recalled_at = datetime('now') WHERE id = ?` via executemany; called from `recall()` (`manager.py:487`) for facts it returns. On the real hot path; wrapped in its own try/except so a stamp failure never drops recalled facts.
+- [x] **Add memory quality columns to `memory_facts`** — `_migrate_memory_facts_quality_columns()` (`database.py:331`) adds `confidence FLOAT DEFAULT 0.8`, `created_by TEXT DEFAULT 'system'`, `source_turn_id INTEGER`, `access_count INTEGER DEFAULT 0`. Idempotent (PRAGMA check-before-ALTER; SQLite auto-backfills defaults). `access_count` increment correctly DEFERRED to 16B (column only).
+- [x] Verified (debugger-agent 2026-06-16): control chars stripped + `<untrusted_memory>` wrapper present (no bypass path); `last_recalled_at` NULL→now on recall; 4 new columns w/ defaults; idempotent across 3× `init_db`; cheap PK-update, no hot-path regression. **Suite 161/161** (+7 tests in `test_phase16a_verify.py`).
 
 ### Phase 16B — Multi-Signal Re-Ranking
 *Replace similarity-only FAISS recall with a weighted scoring pipeline.*

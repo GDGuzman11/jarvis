@@ -239,6 +239,9 @@ async def init_db(db_path: Path | str = DEFAULT_DB_PATH) -> None:
             await conn.execute(index)
         await conn.commit()
         await _migrate_conversations_channel(conn)
+        # Phase 16A: add memory-quality columns to memory_facts (idempotent,
+        # check-before-alter). Run after the base tables exist.
+        await _migrate_memory_facts_quality_columns(conn)
         # Phase 12E: FTS5 shadow tables + sync triggers. Created after the base
         # tables (and the channel migration) so the triggers reference the final
         # conversations table. Idempotent (all IF NOT EXISTS).
@@ -303,6 +306,57 @@ async def _migrate_conversations_channel(conn: aiosqlite.Connection) -> None:
         await conn.commit()
     finally:
         await conn.execute("PRAGMA foreign_keys = ON")
+
+
+# --- Phase 16A: memory_facts quality columns --------------------------------
+# Columns the multi-signal recall pipeline (Phase 16B) and the LLM extraction
+# pipeline (Phase 16C) depend on. ``memory_facts`` predates them, and
+# ``CREATE TABLE IF NOT EXISTS`` never alters an existing table, so they are
+# added here with ``ALTER TABLE ... ADD COLUMN``. In SQLite, ADD COLUMN with a
+# DEFAULT backfills every existing row with that default automatically, so no
+# separate backfill UPDATE is needed.
+#
+#   confidence FLOAT DEFAULT 0.8   — extractor's 0.0–1.0 confidence in the fact
+#   created_by TEXT DEFAULT 'system' — provenance: user|agent|inference|system
+#   source_turn_id INTEGER         — conversations.id the fact was distilled from
+#   access_count INTEGER DEFAULT 0 — times the fact has been recalled (16B)
+_MEMORY_FACTS_NEW_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("confidence", "FLOAT DEFAULT 0.8"),
+    ("created_by", "TEXT DEFAULT 'system'"),
+    ("source_turn_id", "INTEGER"),
+    ("access_count", "INTEGER DEFAULT 0"),
+)
+
+
+async def _migrate_memory_facts_quality_columns(conn: aiosqlite.Connection) -> None:
+    """Add Phase 16A quality columns to ``memory_facts`` if they are missing.
+
+    Check-before-alter via ``PRAGMA table_info`` so the migration is idempotent
+    and safe to run on every startup — already-present columns are skipped, and
+    a fresh DB (where the base CREATE already lacks them) gets them all added on
+    first run. A no-op once every column exists.
+    """
+    cursor = await conn.execute("PRAGMA table_info(memory_facts)")
+    rows = await cursor.fetchall()
+    if not rows:
+        # Table somehow absent (should not happen — base schema ran first).
+        return
+    existing = {row["name"] for row in rows}
+
+    added: list[str] = []
+    for name, decl in _MEMORY_FACTS_NEW_COLUMNS:
+        if name in existing:
+            continue
+        await conn.execute(
+            f"ALTER TABLE memory_facts ADD COLUMN {name} {decl}"
+        )
+        added.append(name)
+
+    if added:
+        await conn.commit()
+        logger.info(
+            "Added memory_facts quality columns: %s", ", ".join(added)
+        )
 
 
 # --- CRUD: conversations ----------------------------------------------------
@@ -720,6 +774,33 @@ async def get_memory_facts(
     finally:
         await conn.close()
     return [dict(row) for row in rows]
+
+
+async def mark_facts_recalled(
+    fact_ids: list[int],
+    *,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> None:
+    """Stamp ``last_recalled_at = now`` on each recalled fact (Phase 16A).
+
+    Activates the previously-dead ``last_recalled_at`` column so the recency
+    signal in the Phase 16B re-ranking pipeline has real data to score against.
+    Each row is keyed by primary key, so the write is cheap even on the recall
+    hot path. Uses ``datetime('now')`` to match how every other timestamp in
+    this schema is stored. A no-op on an empty list; never deduplicates the
+    caller's ids (the executemany simply re-stamps the same row, which is fine).
+    """
+    if not fact_ids:
+        return
+    conn = await connect(db_path)
+    try:
+        await conn.executemany(
+            "UPDATE memory_facts SET last_recalled_at = datetime('now') WHERE id = ?",
+            [(int(fid),) for fid in fact_ids],
+        )
+        await conn.commit()
+    finally:
+        await conn.close()
 
 
 # --- Phase 12: people (contact profiles) ------------------------------------
