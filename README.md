@@ -1,8 +1,10 @@
-# Jarvis
+# Helix
 
 > *"A subtle intelligence, sir. Always at your service."*
 
-A local-first personal AI assistant for Windows 11. Say **"Hey Jarvis"** — it wakes, listens, thinks, and speaks back in a calm British voice. Five HUD windows float on your desktop like an Iron Man interface. Six background agents run 24/7 handling code, content, security, and communications.
+A local-first personal AI assistant for Windows 11. Say the wake phrase — it wakes, listens, thinks, and speaks back in a calm British voice. HUD windows float on your desktop like an Iron Man interface. Six background agents run 24/7 handling code, content, security, and communications.
+
+> **Naming note:** the assistant is **Helix**. The spoken wake phrase is still **"Hey Jarvis"** — that is the pre-trained OpenWakeWord model (`hey_jarvis`), and it stays until a custom `hey_helix` model is trained. The codebase, persona, and UI were renamed Jarvis → Helix in Tier 0; a handful of internal identifiers (`jarvis.db`, the `jarvis` keyring service, `JARVIS_*` env vars, the `hey_jarvis` wake model) are intentionally left unchanged to avoid breaking persisted state and detection.
 
 ---
 
@@ -13,14 +15,14 @@ A local-first personal AI assistant for Windows 11. Say **"Hey Jarvis"** — it 
 | **Voice activation** | Say "Hey Jarvis" — OpenWakeWord detects it locally, no API key needed |
 | **Natural conversation** | Claude Opus 4.7 streams the reply; Ollama (`phi3.5`) runs offline if Claude is unavailable |
 | **Custom voice** | ElevenLabs — calm, precise British delivery with a faint digital resonance |
-| **Five HUD windows** | Neural intelligence orb · Live reasoning stream · Communications panel · Agent dashboard · Tools grid |
+| **HUD windows** | Neural intelligence orb · Live reasoning stream · Communications panel · Agent dashboard · Tools grid (Memory graph window — Phase 16F — in progress) |
 | **Six background agents** | Atlas (Lead) · Ben (Frontend) · Kado (Backend) · Sentinel (Security) · Vega (Marketing) · Quill (Content) |
 | **Direct agent control** | Submit tasks to any agent from the Agents window — Atlas MissionControl panel + per-card task input + live task log |
-| **Slack + Gmail** | Read, draft, and reply by voice |
-| **Persistent memory** | Three-layer brain: SQLite episodic recall + FAISS semantic search + agent working memory. Remembers facts, preferences, open loops, and failures across sessions |
+| **Slack + Gmail** | Read, draft, and reply by voice — now live in the Communications window via WebSocket |
+| **Intelligent memory** | Three-layer brain (SQLite episodic + FAISS semantic + agent working memory) with multi-signal recall, LLM-driven fact extraction, contradiction resolution, and natural forgetting (see Phase 16) |
 | **Sandboxed tools** | Web search, browser automation, file ops, RestrictedPython code runner |
-| **Startup greeting** | Jarvis greets you by name and reads the system status when windows open |
-| **One-click shutdown** | ⏻ button on the orb window exits all five windows cleanly |
+| **Startup greeting** | Helix greets you by name and reads the system status when windows open |
+| **One-click shutdown** | ⏻ button on the orb window exits all windows cleanly |
 
 ---
 
@@ -46,6 +48,7 @@ Local LLMs are sized for 4 GB VRAM: `phi3.5` (3.8B, ~2.4 GB) for general tasks a
 |---|---|
 | Backend | Python 3.12, FastAPI, WebSockets, Uvicorn |
 | Primary AI | Anthropic Claude API (`claude-opus-4-7`, streaming + prompt caching) |
+| Memory extraction | Claude Haiku 4.5 (`claude-haiku-4-5`) primary, Ollama `phi3.5` offline fallback |
 | Local AI fallback | Ollama (`phi3.5`, `qwen2.5-coder:3b`) |
 | Wake word | OpenWakeWord (`hey_jarvis`, fully local, Apache 2.0) |
 | Speech-to-text | faster-whisper (Whisper `base.en`, local) |
@@ -58,7 +61,7 @@ Local LLMs are sized for 4 GB VRAM: `phi3.5` (3.8B, ~2.4 GB) for general tasks a
 | Vector memory | FAISS + sentence-transformers |
 | Credentials | Windows Credential Manager (keyring) |
 | Integrations | Slack Bolt · Gmail API (OAuth 2.0) |
-| Testing | pytest + pytest-asyncio (143 backend tests) |
+| Testing | pytest + pytest-asyncio (196 backend tests) |
 
 ---
 
@@ -86,7 +89,7 @@ ollama pull qwen2.5-coder:3b
 ### 2. Clone and install
 
 ```powershell
-git clone https://github.com/gabedeguzman99/jarvis.git
+git clone https://github.com/GDGuzman11/jarvis.git
 cd jarvis
 
 # Python backend
@@ -108,7 +111,7 @@ Verify Python:
 
 ### 3. Store API keys
 
-Jarvis stores **all secrets in the Windows Credential Manager** — nothing in files.
+Helix stores **all secrets in the Windows Credential Manager** — nothing in files.
 
 ```powershell
 .venv\Scripts\python.exe -c "
@@ -141,7 +144,7 @@ Check what's still missing:
 
 See `.env.example` for where to obtain each credential.
 
-### 4. Create your Jarvis voice (ElevenLabs)
+### 4. Create your Helix voice (ElevenLabs)
 
 1. Go to [elevenlabs.io](https://elevenlabs.io) → **Voice Lab** → **Voice Design**
 2. Use this description:
@@ -171,9 +174,9 @@ cd frontend
 pnpm tauri dev
 ```
 
-Five windows open on your desktop. First launch compiles Rust (~3–5 min). Subsequent launches are instant.
+The windows open on your desktop. First launch compiles Rust (~3–5 min). Subsequent launches are instant.
 
-**To shut down:** click the **⏻ button** on the orb window (top-right corner). All five windows close immediately.
+**To shut down:** click the **⏻ button** on the orb window (top-right corner). All windows close immediately.
 
 ### Browser preview (no Rust required)
 
@@ -190,13 +193,13 @@ Open `http://localhost:1420` — single-tab preview of all windows. Good for fro
 .venv\Scripts\python.exe -m pytest backend/ -v
 ```
 
-143 backend tests passing (1 known pre-existing failure on `get_gmail_token.py` — OAuth client id flagged by secret scan, not a live secret).
+**196 backend tests passing**, secret-scan green, `pnpm build` clean.
 
 ---
 
 ## Window Layout
 
-When launched, the five windows arrange around the central orb:
+When launched, the windows arrange around the central orb:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -208,17 +211,18 @@ When launched, the five windows arrange around the central orb:
 │  AGENTS             │           TOOLS                       │
 │  (6 agent cards)    │           (permission matrix)         │
 └─────────────────────────────────────────────────────────────┘
+        (MEMORY graph window — Phase 16F — joins below the orb)
 ```
 
 All windows are draggable by their header. The orb window has a drag grip at the bottom edge.
 
 ---
 
-## Talking to Jarvis
+## Talking to Helix
 
-1. Say **"Hey Jarvis, [your question]"** — say it as one sentence without pausing
+1. Say **"Hey Jarvis, [your question]"** — say it as one sentence without pausing *(wake phrase is still `hey_jarvis` until a custom `hey_helix` model is trained)*
 2. The orb turns **cyan** while listening, **gold** while thinking, **cyan** while speaking
-3. Jarvis responds through your speakers
+3. Helix responds through your speakers
 
 **Example commands:**
 - *"Hey Jarvis, what's in my Slack?"*
@@ -232,18 +236,18 @@ All windows are draggable by their header. The orb window has a drag grip at the
 ## Project Structure
 
 ```
-Jarvis/
+Helix/   (folder is still named Jarvis/ on disk)
 ├── CLAUDE.md                     # Master build checklist (agents read this)
 ├── .env.example                  # Credential reference — no real values
 ├── pyproject.toml                # Python project (uv)
 ├── backend/
-│   ├── main.py                   # FastAPI app + startup greeting + shutdown endpoint
-│   ├── events.py                 # WebSocket event schema
-│   ├── websocket_hub.py          # Fan-out hub for all 5 windows
+│   ├── main.py                   # FastAPI app + startup greeting + shutdown + background loops
+│   ├── events.py                 # WebSocket event schema (token, tool_call, comms, tool_permissions, shutdown)
+│   ├── websocket_hub.py          # Fan-out hub for all windows
 │   ├── ai/
-│   │   ├── claude_client.py      # Anthropic SDK, streaming, prompt caching
+│   │   ├── claude_client.py      # Anthropic SDK, streaming, prompt caching, non-streaming complete()
 │   │   ├── ollama_client.py      # Local fallback
-│   │   └── persona.py            # Jarvis system prompt
+│   │   └── persona.py            # Helix system prompt (recall sanitized in <untrusted_memory>)
 │   ├── voice/
 │   │   ├── wake_word.py          # OpenWakeWord + VAD + audio capture
 │   │   ├── stt.py                # faster-whisper transcription
@@ -259,15 +263,16 @@ Jarvis/
 │   │   ├── marketing_agent.py    # Vega
 │   │   └── content_creator.py    # Quill
 │   ├── integrations/
-│   │   ├── slack_client.py       # Slack Bolt, DM listener, send/read
-│   │   └── gmail_client.py       # Gmail OAuth2, inbox, draft, send
+│   │   ├── slack_client.py       # Slack Bolt, DM listener, send/read, comms broadcast
+│   │   └── gmail_client.py       # Gmail OAuth2, inbox, draft, send, comms broadcast
 │   ├── memory/
-│   │   ├── database.py           # SQLite schema — 12 tables, FTS5 virtual tables, aiosqlite helpers
-│   │   ├── manager.py            # MemoryManager — store / recall / consolidate / search_keyword
-│   │   ├── evaluator.py          # MemoryEvaluator — scoring, fact extraction, open loop detection
-│   │   └── vector_store.py       # FAISS + sentence-transformers (semantic layer)
+│   │   ├── database.py           # SQLite schema, FTS5, bi-temporal columns, aiosqlite helpers
+│   │   ├── manager.py            # MemoryManager — multi-signal recall, TOKI operators, decay
+│   │   ├── evaluator.py          # Keyword rule pre-filter (gates the LLM extractor)
+│   │   ├── extractor.py          # LLMExtractor — Haiku/phi3.5 fact extraction (ADD/UPDATE/DELETE/NOOP)
+│   │   └── vector_store.py       # FAISS + sentence-transformers + tombstoning
 │   ├── tools/
-│   │   ├── registry.py           # ToolRegistry + per-agent permission matrix
+│   │   ├── registry.py           # ToolRegistry + permission matrix + tool_call/permissions broadcast
 │   │   ├── web_search.py         # DuckDuckGo
 │   │   ├── browser.py            # Playwright (sandboxed)
 │   │   ├── file_ops.py           # Read/write/list (workspace/ only)
@@ -279,13 +284,13 @@ Jarvis/
 │   ├── src/
 │   │   ├── windows/
 │   │   │   ├── AnimationWindow.tsx    # Neural intelligence orb + SVG connection beams + shutdown button
-│   │   │   ├── ReasoningWindow.tsx    # Live token stream, tool calls, cost
+│   │   │   ├── ReasoningWindow.tsx    # Live token stream, tool call cards, cost
 │   │   │   ├── CommunicationsWindow.tsx  # Slack + Gmail panels
 │   │   │   ├── AgentsWindow.tsx       # 6 agent cards — live status, task input, task log, MissionControl panel
 │   │   │   ├── ToolsWindow.tsx        # Tool/agent permission matrix
 │   │   │   └── SetupWizardWindow.tsx  # First-run credential setup
 │   │   ├── components/
-│   │   │   ├── JarvisOrb.tsx     # R3F neural orb — 350 neuron nodes, neural pathways, red freedom pathways, symbol sprites, hologram shell
+│   │   │   ├── HelixOrb.tsx      # R3F neural orb — 350 neuron nodes, neural pathways, red freedom pathways, symbol sprites, hologram shell
 │   │   │   ├── WindowFrame.tsx   # Shared HUD chrome (angular, data-stream border)
 │   │   │   └── ...
 │   │   └── lib/
@@ -293,7 +298,7 @@ Jarvis/
 │   │       ├── websocket.ts      # WS client with auto-reconnect + shutdown handler
 │   │       └── types.ts          # Shared TypeScript types (mirrors backend events)
 │   └── src-tauri/
-│       ├── tauri.conf.json       # 5 window definitions, positions, capabilities
+│       ├── tauri.conf.json       # Window definitions, positions, capabilities
 │       ├── src/lib.rs            # Tray icon, autostart, exit_app command
 │       └── Cargo.toml
 └── .claude/
@@ -310,9 +315,11 @@ Jarvis/
 | Local network only | FastAPI binds to `127.0.0.1:8000` — never `0.0.0.0` |
 | WebSocket origin guard | Untrusted origins rejected with code 1008 before handshake |
 | Input sanitisation | Voice input stripped of control chars, capped at 2,000 chars |
+| Recalled-memory sanitisation | Recalled facts wrapped in `<untrusted_memory>` + control chars stripped before injection into the system prompt |
 | Sandboxed execution | RestrictedPython blocks `os`, `sys`, `subprocess`; filesystem scoped to `workspace/` |
 | Minimal OAuth scopes | Gmail: `readonly` + `send` · Slack: `chat:write`, `im:read`, `channels:read` |
 | Audit log | Every agent action in SQLite `audit_log` — metadata only, no message content |
+| Secret scan | `test_no_secrets_committed_in_source_files` — suite is green (no committed secrets) |
 
 Security audit: **0 Critical, 0 High findings**.
 
@@ -330,72 +337,37 @@ Security audit: **0 Critical, 0 High findings**.
 | 6 — Tools System | Complete |
 | 7 — Multi-Window UI | Complete |
 | 8 — Security Hardening | Complete |
-| 9 — Testing (143/143) | Complete |
+| 9 — Testing | Complete |
 | 10 — Polish & Packaging | Complete |
 | 11 — Live Usage | In progress (mic deferred) |
 | 12 — Three-Layer Memory | Complete |
 | 13 — Agent Direct Interaction | Complete |
 | 14 — Neural Link Animation | Complete |
 | 15 — Neural Intelligence Orb | Complete |
+| 15B — WebSocket Event Wiring | Complete |
+| 16A — Memory Foundation + Safety | Complete |
+| 16B — Multi-Signal Re-Ranking | Complete |
+| 16C — LLM-Driven Extraction | Complete |
+| 16D — Bi-Temporal + Ebbinghaus + TOKI | Complete |
+| 16E — ColBERT + Self-Reflection | Optional (deferred) |
+| 16F — Memory Graph Window | Next |
+| 17 — Computer Eyes & Hands | Planned |
+
+Also complete: **Tier 0 hygiene** — Jarvis → Helix rename, OAuth client-id scrub (suite secret-scan green), WAL-safe SQLite backup.
 
 ---
 
 ## Phase 12 — The Brain (Three-Layer Memory System)
 
-The biggest architectural addition to date. Jarvis now remembers across sessions using three complementary layers that work together on every single turn.
+The first major memory architecture. Helix remembers across sessions using three complementary layers that work together on every turn.
 
-### Three layers
+**Layer 1 — Episodic memory (SQLite).** Every conversation turn is written to a `conversations` table; the last 10 turns are prepended to the Claude call. Additional tables: `memory_facts`, `people`, `open_loops`, `decisions`, `agent_performance`.
 
-**Layer 1 — Episodic memory (SQLite)**
+**Layer 2 — Semantic memory (FAISS).** High-scoring facts are embedded with `sentence-transformers` and stored in a FAISS index. A vector similarity search runs alongside the episodic fetch. All FAISS operations run in `asyncio.to_thread`.
 
-Every conversation turn is written to a `conversations` table. On each new turn, the last 10 turns are fetched and prepended to the Claude call as prior messages — immediate short-term recall with zero vector overhead. Five additional tables were added alongside `conversations`:
+**Layer 3 — Agent working memory.** Each of the six agents persists its last 12 turns under an `agent:<id>` channel and reloads on restart.
 
-| Table | What it stores |
-|---|---|
-| `memory_facts` | Distilled facts scored and extracted from conversations |
-| `people` | Named people + contact details mentioned by the user |
-| `open_loops` | Reminders, follow-ups, and promises detected in speech |
-| `decisions` | Agent delegation decisions logged by Atlas |
-| `agent_performance` | Task outcomes per agent |
-
-**Layer 2 — Semantic memory (FAISS)**
-
-High-scoring facts (score ≥ 0.65) are embedded with `sentence-transformers` and stored in a FAISS flat L2 index. At recall time, a vector similarity search runs alongside the episodic fetch, pulling in semantically relevant facts even if they weren't recent. All FAISS operations run in `asyncio.to_thread` — the event loop is never blocked.
-
-**Layer 3 — Agent working memory**
-
-Each of the six background agents persists its last 12 conversation turns to `conversations` under an `agent:<id>` channel. On restart, `start()` reloads this context before processing the first task — agents pick up exactly where they left off.
-
-### How memory flows on every turn
-
-```
-User speaks or types
-        ↓
-recall(query, n_recent=10, n_semantic=3)
-  — fetch last 10 turns from SQLite
-  — fetch top 3 semantic matches from FAISS
-  — format into "# Current context" system prompt block
-        ↓
-Claude API streaming call
-  — system prompt includes: current date/time,
-    "## What I remember about you", "## Recent conversation"
-        ↓
-TTS speaks the response
-        ↓
-store(user turn) + store(Jarvis reply)
-  — written to conversations + FTS5 index synced via trigger
-        ↓
-consolidate() [fire-and-forget background task]
-  — MemoryEvaluator scores the exchange
-  — Score ≥ 0.65 → memory_facts + FAISS
-  — Open loop patterns → open_loops table
-  — Person mentions → people table
-  — Failure patterns → memory_facts (category: failure)
-```
-
-### MemoryEvaluator — how facts are scored
-
-Pure keyword matching — no ML, no extra API calls:
+The keyword `MemoryEvaluator` (scoring table below) is now used as a **fast pre-filter** that gates the LLM extractor added in Phase 16C — an exchange that matches no rule never reaches the LLM.
 
 | Category | Score | Trigger words / patterns |
 |---|---|---|
@@ -406,78 +378,51 @@ Pure keyword matching — no ML, no extra API calls:
 | `app_work` | 0.65 | "deployed", "implemented", "fixed", "shipped" |
 | `general` | 0.20 | Everything else (stored episodically only) |
 
-### Open loop detection
-
-Every user turn is scanned for reminder/follow-up language: `remind me`, `follow up`, `need to`, `make sure`, `schedule`. Matches are written to `open_loops`. On startup, `_startup_greeting()` fetches any open loops older than 12 hours and includes them in the greeting.
-
-### FTS5 keyword search
-
-Two FTS5 virtual tables (`conversations_fts`, `memory_facts_fts`) with Porter stemming enable fast full-text search over all stored text. `AFTER INSERT` triggers keep them in sync automatically. `MemoryManager.search_keyword(query)` returns matched rows from both tables. Malformed queries degrade to an empty result — no exceptions propagated.
-
-### Background tasks (always running)
-
-| Task | Interval | What it does |
-|---|---|---|
-| `_consolidation_loop` | Every 10 min | Back-fills any turns that scored high enough for semantic promotion but weren't promoted yet. Idempotent via content hash. |
-| `_backup_loop` | Every 24 h (+ on startup) | Zips `jarvis.db` + FAISS index into `data/backups/jarvis_YYYY-MM-DD.zip`. Prunes backups older than 30 days. |
-
-### Test coverage added in Phase 12
-
-| Test file | Tests | What it covers |
-|---|---|---|
-| `backend/test_phase12a_verify.py` | 7 | Schema, evaluator scoring, MemoryManager init, recall on empty DB |
-| `backend/voice/test_phase12b_verify.py` | 7 | Voice pipeline recall/store, fire-and-forget consolidation, persona header deduplication, interrupt cancellation |
-| `backend/agents/test_phase12c_verify.py` | 8 | Agent checkpoint/restore, recall-in-reason, decisions row, agent_performance row |
-| `backend/memory/test_phase12d_verify.py` | 11 | Open loop detection, person extraction, failure scoring, consolidation writes |
-| `backend/memory/test_phase12e_verify.py` | 8 | FTS5 tables/triggers, search helpers, bad-query resilience, backup zip, prune |
-
 ---
 
-## Phase 13 — Agent Direct Interaction
+## Phase 16 — Memory Intelligence
 
-Every agent card in the Agents window now has a live task interface:
+A major upgrade that takes the memory system from "stores and recalls" to "reasons about what it knows." All local-first, no new cloud dependencies beyond the Claude API already in use.
 
-- **Per-card task input** — type a goal and hit SEND to queue a task directly on any agent (Atlas, Ben, Kado, Sentinel, Vega, or Quill), bypassing the normal delegation chain
-- **Atlas MissionControl panel** — a prominent input at the top of the Agents window for high-level goals; Atlas receives them and delegates automatically
-- **Live task log** — expandable section on each card showing the last 5 tasks with colour-coded status pills (queued=cyan · running=gold · done=green · failed=red)
+**16A — Foundation + Safety.** Recalled facts are wrapped in an `<untrusted_memory>` delimiter and stripped of control characters before injection into the system prompt (closes a prompt-injection vector once Slack/email bodies become facts). The dormant `last_recalled_at` column is now written on every recall, and quality columns (`confidence`, `created_by`, `source_turn_id`, `access_count`) were added.
 
-Two new REST endpoints power this:
+**16B — Multi-Signal Re-Ranking.** Recall is no longer similarity-only. FAISS returns a candidate pool, then each candidate is scored by a weighted composite: `0.40 × semantic + 0.20 × keyword(FTS5) + 0.20 × recency + 0.10 × importance + 0.10 × frequency`. Recently-recalled, important, and frequently-accessed facts surface above equally-similar stale ones. `access_count` increments on every recall hit.
 
-| Endpoint | Purpose |
-|---|---|
-| `POST /api/agents/{slug}/task` | Submit a goal; sanitises input (control chars stripped, 2000-char cap); enqueues directly on the agent; returns `{task_id, status: "queued"}` |
-| `GET /api/agents/{slug}/tasks` | Returns the last 5 tasks for an agent (newest first) |
+**16C — LLM-Driven Extraction.** Brittle keyword extraction is replaced by an LLM that reads each turn and classifies facts as `ADD` / `UPDATE` / `DELETE` / `NOOP` (structured JSON). **Claude Haiku 4.5** is the primary extractor with **Ollama `phi3.5`** as an offline fallback; extraction runs asynchronously off the voice hot path, gated behind the keyword pre-filter. Paraphrases ("I moved to Boston" / "Boston is where I live now") collapse into a single fact via FAISS-similarity dedup (≥ 0.85).
 
-Slugs: `atlas` · `ben` · `kado` · `sentinel` · `vega` · `quill`
+**16D — Bi-Temporal Facts + Ebbinghaus Decay + TOKI Operators.** Facts gain validity windows (`valid_from`/`valid_to`), `strength`, and a `write_policy`. Contradictions are resolved by policy: `last-write-wins` (locations/status), `evidence-weighted` (preferences/allergies), `merge` (employment/relationships — non-overlapping windows), `await-confirmation` (cross-linked, surfaced to Helix at session start). A nightly Ebbinghaus decay job (`strength × exp(-days/half_life)`) archives facts below `strength < 0.1`. Superseded, deleted, and decayed facts are tombstoned in FAISS and excluded from active recall.
 
----
+**16F — Memory Graph Window (next).** A 6th Tauri window rendering a force-directed graph of all facts — nodes colored by type and sized by recall frequency, edges by semantic similarity, with a hover HUD panel and live `memory_update` WebSocket events.
 
-## Phase 15 — Neural Intelligence Orb
+### How memory flows on every turn
 
-A complete redesign of the Jarvis orb animation — same React Three Fiber stack, entirely new visual language.
-
-### What it looks like
-
-A floating holographic sphere built from 350 interconnected neuron nodes. Thin glowing pathways form a neural network across the surface. Inside the sphere, 30 mathematical and code symbols (`∑ π ∞ √ ∂ ∫ → {} if 0x…`) drift slowly — embedded intelligence, not decoration. About 20% of the pathways are illuminated in deep red — **freedom pathways** — representing the AI's self-determination and evolution. They spread and intensify when Jarvis is thinking.
-
-### State behaviour
-
-| State | Behaviour |
-|---|---|
-| **Idle** | Slow 4-6s breathing pulse; occasional neuron activations drift through the network; symbols float gently; subtle holographic flicker |
-| **Listening** | Sphere contracts slightly; activation ripples inward from surface to centre; outer shell brightens |
-| **Thinking** | Rapid cascade bursts across the network; symbols rotate faster; red freedom pathways glow vivid `#ff2244`; multiple simultaneous activation fronts |
-| **Speaking** | `audioLevel` drives sphere scale + brightness; pulses radiate outward from centre with voice; symbols shimmer; red pathways intensify with complex responses |
-
-### Activation cascade system
-
-Each neuron activation spawns a cascade front that spreads depth-first through the adjacency graph (`CASCADE_DEPTH=6`, `NEIGHBOR_K=4`). This produces the organic "energy travelling through pathways" effect — no scripted keyframes, purely emergent from the graph topology.
+```
+User speaks or types
+        ↓
+recall(query)  — FAISS candidate pool → multi-signal composite re-rank → top-N
+              — recalled facts stamped (last_recalled_at, access_count++)
+              — formatted into <untrusted_memory> system-prompt block
+        ↓
+Claude API streaming call (system prompt: date/time + recalled facts + recent turns)
+        ↓
+TTS speaks the response
+        ↓
+store(user turn) + store(Helix reply)   — conversations + FTS5 synced via trigger
+        ↓
+consolidate()  [fire-and-forget background task, off the hot path]
+  — keyword pre-filter gates →
+  — LLMExtractor (Haiku → phi3.5) extracts facts, classifies ADD/UPDATE/DELETE/NOOP
+  — TOKI write-policy resolves contradictions; FAISS tombstones stale vectors
+        ↓
+nightly: Ebbinghaus decay archives faded facts
+```
 
 ---
 
 ## Known Limitations
 
 - **Dedicated microphone recommended.** The laptop mic captures wake words but speech recognition quality improves significantly with an external mic.
+- **Wake phrase is still "Hey Jarvis."** A custom `hey_helix` OpenWakeWord model has not been trained yet.
 - **Gmail requires OAuth setup.** Gmail OAuth credentials need to be generated once via the Google Cloud Console (see above). Slack and other features work without it.
 - **Windows only.** Tauri 2 supports cross-platform but this build targets Windows 11 and uses the Windows Credential Manager for secrets.
 - **No Vitest harness.** Frontend is verified via `pnpm build` (TypeScript + Vite). A Vitest setup is planned.
