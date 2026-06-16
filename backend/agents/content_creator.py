@@ -6,7 +6,7 @@ something, it routes here. (Strategy and the brief come from the Marketing
 agent; this agent produces the prose.)
 
 Reasoning uses the shared Claude client (inherited Ollama fallback) under a
-copywriting-flavoured system prompt layered on the Jarvis persona base.
+copywriting-flavoured system prompt layered on the Helix persona base.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ AGENT_ROLE = "Content creator — drafts posts, emails, copy, and documentation"
 DEFAULT_TOOLS: list[str] = ["web_search", "file_ops"]
 
 _EXPERTISE = """\
-You are acting as Quill, Jarvis's content creator agent.
+You are acting as Quill, Helix's content creator agent.
 Your domain is the written word: social posts, emails, landing-page and ad copy, and product \
 documentation. You adapt tone and length to the medium and audience, write clear and \
 compelling prose, and keep a consistent brand voice. When given a task — usually a brief from \

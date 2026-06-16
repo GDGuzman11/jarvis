@@ -1,11 +1,11 @@
-"""MemoryManager — the single coordinator for Jarvis's three memory layers.
+"""MemoryManager — the single coordinator for Helix's three memory layers.
 
 Phase 12 introduces a tiered memory architecture:
 
 * **Layer 1 — Working memory**  (per-turn, in-RAM): the live exchange. Owned by
   the caller (voice pipeline / agents); this manager *feeds* it via :meth:`recall`.
 * **Layer 2 — Episodic memory** (SQLite ``conversations``): the raw diary. Every
-  user utterance and Jarvis reply is written here, time-indexed.
+  user utterance and Helix reply is written here, time-indexed.
 * **Layer 3 — Semantic memory** (FAISS + ``memory_facts``): distilled, high-value
   facts searched by meaning, not time.
 
@@ -80,7 +80,7 @@ class RecallResult:
 
 
 class MemoryManager:
-    """Coordinates episodic (SQLite) and semantic (FAISS) memory for Jarvis.
+    """Coordinates episodic (SQLite) and semantic (FAISS) memory for Helix.
 
     Parameters
     ----------
@@ -499,7 +499,7 @@ class MemoryManager:
         """Render recalled memory into the ``# Current context`` block.
 
         Produces the structured string injected into the system prompt: the
-        current date/time, the distilled facts Jarvis "remembers about you", and
+        current date/time, the distilled facts Helix "remembers about you", and
         a compact transcript of the recent conversation. Returns an empty string
         when there is nothing to inject (so the cached stable prefix of the
         system prompt stays byte-identical on a cold first turn).
@@ -515,7 +515,7 @@ class MemoryManager:
         if recalled.episodic_messages:
             turns: list[str] = []
             for msg in recalled.episodic_messages:
-                speaker = "Jarvis" if msg["role"] == "assistant" else "User"
+                speaker = "Helix" if msg["role"] == "assistant" else "User"
                 turns.append(f"[{speaker}]: {msg['content']}")
             sections.append("## Recent conversation\n" + "\n".join(turns))
 

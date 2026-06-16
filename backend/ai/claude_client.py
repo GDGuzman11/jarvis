@@ -1,10 +1,10 @@
-"""Claude API client for Jarvis — streaming + prompt caching.
+"""Claude API client for Helix — streaming + prompt caching.
 
-Wraps the Anthropic async SDK so the rest of the backend can stream a Jarvis
+Wraps the Anthropic async SDK so the rest of the backend can stream a Helix
 response token-by-token without touching SDK internals. Two design rules from
 the project spec drive this module:
 
-* **Model** — ``claude-opus-4-7`` (the Jarvis spec pins 4-7, not the SDK's
+* **Model** — ``claude-opus-4-7`` (the Helix spec pins 4-7, not the SDK's
   newer default). Override per call only if you have a deliberate reason.
 * **Prompt caching** — the system prompt is wrapped in a ``cache_control:
   ephemeral`` block so repeated turns in a conversation re-read the cached
@@ -48,7 +48,7 @@ from backend.websocket_hub import hub
 
 log = get_logger(__name__)
 
-# Model pinned by the Jarvis spec. The Anthropic SDK defaults to a newer model;
+# Model pinned by the Helix spec. The Anthropic SDK defaults to a newer model;
 # the project explicitly wants 4-7, so this constant is the single source of
 # truth and must not silently drift to 4-8.
 DEFAULT_MODEL: str = "claude-opus-4-7"
@@ -94,7 +94,7 @@ class ClaudeAPIError(RuntimeError):
     """Raised when a Claude API call fails after logging.
 
     Wraps the underlying :class:`anthropic.APIError` so callers can catch a
-    single Jarvis-specific type and decide whether to fall back to Ollama,
+    single Helix-specific type and decide whether to fall back to Ollama,
     without importing the SDK's exception hierarchy.
     """
 
@@ -178,7 +178,7 @@ class ClaudeClient:
             (``[{"role": "user", "content": "..."}, ...]``). The volatile part
             of the prompt — placed after the cached system prompt.
         system_prompt:
-            The Jarvis persona / instructions. Wrapped in an ephemeral
+            The Helix persona / instructions. Wrapped in an ephemeral
             ``cache_control`` block (see :func:`_system_blocks`).
         tools:
             Optional Claude tool definitions (``tool_use`` JSON schemas). Passed
@@ -269,7 +269,7 @@ class ClaudeClient:
             )
         except anthropic.APIError as exc:
             # Log with the SDK request id (when present) for traceability, then
-            # re-raise as a Jarvis error so the caller can fall back to Ollama.
+            # re-raise as a Helix error so the caller can fall back to Ollama.
             log.error(
                 "claude_api_error",
                 model=self.model,

@@ -1,6 +1,6 @@
 """Memory importance evaluator (Phase 12A).
 
-The :class:`MemoryEvaluator` decides whether a single user<->Jarvis exchange is
+The :class:`MemoryEvaluator` decides whether a single user<->Helix exchange is
 worth promoting to long-term semantic memory, and — if so — distils it into a
 compact declarative fact. It runs after every turn, so it is deliberately cheap:
 a fast, rule-based keyword pass, *not* an ML model or an API call.
@@ -190,7 +190,7 @@ class MemoryEvaluator:
     # --- Scoring ------------------------------------------------------------
 
     def score(self, user_text: str, reply: str) -> tuple[float, str]:
-        """Return ``(score, category)`` for a user/Jarvis exchange.
+        """Return ``(score, category)`` for a user/Helix exchange.
 
         Runs the fast rule-based pass over the combined text. The first matching
         category (in significance order) wins. When nothing matches, the
@@ -405,7 +405,7 @@ class MemoryEvaluator:
             return f"Standing instruction: {self._as_user_statement(user)} (noted {stamp})."
         if category == "correction":
             return (
-                f"User corrected Jarvis: {user} "
+                f"User corrected Helix: {user} "
                 f"(corrected {stamp})."
             )
         if category == "decision":
@@ -466,8 +466,8 @@ class MemoryEvaluator:
             ("i like ", "User likes "),
             ("i love ", "User likes "),
             ("i hate ", "User dislikes "),
-            ("i want you to ", "User wants Jarvis to "),
-            ("i need you to ", "User wants Jarvis to "),
+            ("i want you to ", "User wants Helix to "),
+            ("i need you to ", "User wants Helix to "),
             ("call me ", "User is called "),
         )
         for prefix, repl in replacements:

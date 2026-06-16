@@ -1,1 +1,1 @@
-"""AI clients: Claude API, Ollama fallback, Jarvis persona."""
+"""AI clients: Claude API, Ollama fallback, Helix persona."""

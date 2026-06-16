@@ -1,1 +1,1 @@
-"""Jarvis backend package."""
+"""Helix backend package."""

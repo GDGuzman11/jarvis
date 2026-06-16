@@ -1,5 +1,5 @@
 /**
- * JarvisOrb — the Neural Intelligence Orb.
+ * HelixOrb — the Neural Intelligence Orb.
  *
  * A floating holographic sphere built from ~350 interconnected neuron nodes.
  * Thin glowing pathways (LineSegments) form a neural-network graph across the
@@ -13,7 +13,7 @@
  * intensity, colour tint, symbol speed and red-pathway glow all vary by
  * voiceState and lerp smoothly between states inside `useFrame`.
  *
- * The `JarvisOrb({ voiceState, audioLevel })` signature, `BASE_RADIUS = 1.2`,
+ * The `HelixOrb({ voiceState, audioLevel })` signature, `BASE_RADIUS = 1.2`,
  * golden-spiral node distribution, AdditiveBlending + depthWrite:false on every
  * material, and the speaking-state audioLevel pulse are all preserved from the
  * previous orb. Everything else (the 2500-particle cloud, synaptic bezier arcs,
@@ -127,7 +127,7 @@ function makeSymbolTexture(symbol: string): CanvasTexture {
   return tex;
 }
 
-export function JarvisOrb({ voiceState, audioLevel }: OrbProps) {
+export function HelixOrb({ voiceState, audioLevel }: OrbProps) {
   // --- Layer refs -----------------------------------------------------------
   const neuronRef = useRef<ThreePoints>(null);
   const normalConnRef = useRef<ThreeLineSegments>(null);
@@ -684,4 +684,4 @@ export function JarvisOrb({ voiceState, audioLevel }: OrbProps) {
   );
 }
 
-export default JarvisOrb;
+export default HelixOrb;

@@ -1,4 +1,4 @@
-"""WebSocket event schema for the Jarvis backend.
+"""WebSocket event schema for the Helix backend.
 
 Every one of the 5 Tauri windows connects to the single WebSocket hub at
 ``ws://127.0.0.1:8000/ws`` and receives a stream of JSON events. This module is
@@ -151,7 +151,7 @@ class VoiceStateEvent(Event):
 class AudioLevelEvent(Event):
     """A sampled audio amplitude during TTS playback (Phase 2 / Phase 10).
 
-    Broadcast every ~50 ms while Jarvis is speaking so the Animation window's
+    Broadcast every ~50 ms while Helix is speaking so the Animation window's
     orb can pulse in time with the audio. ``level`` is the RMS amplitude of the
     playback buffer normalised to the ``0.0``-``1.0`` range (clipped at ``1.0``).
     A final event with ``level=0.0`` is broadcast when playback stops so the orb

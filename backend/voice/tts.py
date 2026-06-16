@@ -1,6 +1,6 @@
 """Text-to-speech via ElevenLabs (Phase 3).
 
-The *speaking* end of the Jarvis voice pipeline. It turns Claude's response text
+The *speaking* end of the Helix voice pipeline. It turns Claude's response text
 into spoken audio in the custom "Tom Hardy x Avengers Jarvis" voice configured
 in the ElevenLabs dashboard, and plays it back on the local speakers.
 
@@ -173,7 +173,7 @@ async def _convert(text: str, output_format: str) -> bytes:
 
 
 async def speak(text: str) -> bytes:
-    """Synthesize ``text`` to MP3 audio bytes in the Jarvis voice.
+    """Synthesize ``text`` to MP3 audio bytes in the Helix voice.
 
     Returns the full MP3 as ``bytes``. Returns empty ``bytes`` (and logs a
     warning) when the ElevenLabs API key or voice id is missing — callers should
@@ -278,7 +278,7 @@ async def speak_and_play(text: str) -> bytes:
     While the audio plays, the buffer is sliced into ~50 ms blocks (see
     :data:`AUDIO_LEVEL_INTERVAL_S`); each block is played in the thread executor
     and its RMS amplitude is broadcast as an :class:`~backend.events.AudioLevelEvent`
-    on the event loop so the Animation window's orb pulses in time with Jarvis's
+    on the event loop so the Animation window's orb pulses in time with Helix's
     voice. A final ``level=0.0`` event is always broadcast when playback ends so
     the orb settles back to rest, even if playback failed midway.
     """

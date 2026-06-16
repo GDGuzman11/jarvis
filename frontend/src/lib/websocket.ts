@@ -9,7 +9,7 @@
  */
 
 import { useStore } from "./store";
-import type { JarvisEvent } from "./types";
+import type { HelixEvent } from "./types";
 
 const WS_URL = "ws://127.0.0.1:8000/ws";
 const MAX_BACKOFF_MS = 10_000;
@@ -20,7 +20,7 @@ let reconnectAttempts = 0;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let started = false;
 
-function dispatch(event: JarvisEvent): void {
+function dispatch(event: HelixEvent): void {
   const s = useStore.getState();
   switch (event.type) {
     case "agent_update":
@@ -33,7 +33,7 @@ function dispatch(event: JarvisEvent): void {
       break;
     case "token":
       s.appendToken(event.content, event.model, event.is_final);
-      s.appendJarvisToken(event.content, event.is_final);
+      s.appendHelixToken(event.content, event.is_final);
       break;
     case "tool_call":
       s.applyToolCall({
@@ -117,7 +117,7 @@ function open(): void {
 
   socket.onmessage = (ev) => {
     try {
-      const data = JSON.parse(ev.data as string) as JarvisEvent;
+      const data = JSON.parse(ev.data as string) as HelixEvent;
       dispatch(data);
     } catch {
       // Malformed frame — drop it silently.

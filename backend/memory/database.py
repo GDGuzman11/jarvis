@@ -1,8 +1,8 @@
-"""Async SQLite persistence layer for Jarvis.
+"""Async SQLite persistence layer for Helix.
 
-This module owns the five core tables that back Jarvis's state:
+This module owns the five core tables that back Helix's state:
 
-* ``conversations`` — voice/text exchanges between the user and Jarvis.
+* ``conversations`` — voice/text exchanges between the user and Helix.
 * ``agents``        — the 6 background agents and their live status.
 * ``tasks``         — agent-to-agent delegated work (the task queue).
 * ``tools``         — the tool registry and per-tool metadata.
@@ -27,7 +27,7 @@ import aiosqlite
 
 logger = logging.getLogger(__name__)
 
-# Default on-disk location for the Jarvis database. Resolves to
+# Default on-disk location for the Helix database. Resolves to
 # ``<project root>/data/jarvis.db``. The directory is created on init.
 DEFAULT_DB_PATH: Path = Path(__file__).resolve().parents[2] / "data" / "jarvis.db"
 
@@ -35,7 +35,7 @@ DEFAULT_DB_PATH: Path = Path(__file__).resolve().parents[2] / "data" / "jarvis.d
 # One CREATE TABLE statement per table. Executed in order by init_db().
 
 _SCHEMA: tuple[str, ...] = (
-    # conversations: one row per user<->Jarvis exchange (voice or text).
+    # conversations: one row per user<->Helix exchange (voice or text).
     """
     CREATE TABLE IF NOT EXISTS conversations (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -126,7 +126,7 @@ _SCHEMA: tuple[str, ...] = (
         created_at       TEXT    NOT NULL DEFAULT (datetime('now'))
     )
     """,
-    # open_loops: promises / reminders / follow-ups Jarvis must surface later.
+    # open_loops: promises / reminders / follow-ups Helix must surface later.
     """
     CREATE TABLE IF NOT EXISTS open_loops (
         id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -230,7 +230,7 @@ async def init_db(db_path: Path | str = DEFAULT_DB_PATH) -> None:
     connection, applies the schema, commits, and closes.
     """
     path = Path(db_path)
-    logger.info("Initializing Jarvis database at %s", path)
+    logger.info("Initializing Helix database at %s", path)
     conn = await connect(path)
     try:
         for statement in _SCHEMA:

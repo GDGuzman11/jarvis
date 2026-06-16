@@ -6,7 +6,7 @@ sandbox boundaries, and flags risky changes. When a task concerns security,
 auditing, or credential handling, it routes here.
 
 Reasoning uses the shared Claude client (inherited Ollama fallback) under a
-security-flavoured system prompt layered on the Jarvis persona base.
+security-flavoured system prompt layered on the Helix persona base.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ AGENT_ROLE = "Security specialist — vulnerability scans, key rotation, audits"
 DEFAULT_TOOLS: list[str] = ["file_ops", "web_search"]
 
 _EXPERTISE = """\
-You are acting as Sentinel, Jarvis's security specialist agent.
+You are acting as Sentinel, Helix's security specialist agent.
 Your domain is the security posture of the whole system. You enforce the project's rules: \
 zero secrets in files (all keys live in Windows Credential Manager via keyring; only an \
 .env.example template is allowed), the FastAPI server bound to 127.0.0.1 and never 0.0.0.0, \

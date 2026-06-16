@@ -69,7 +69,7 @@ SLACK_GET_DM_HISTORY_SCHEMA: dict[str, Any] = {
 SLACK_GET_UNREAD_MENTIONS_SCHEMA: dict[str, Any] = {
     "name": "slack_get_unread_mentions",
     "description": (
-        "List recent messages that @-mention the Jarvis bot across the channels "
+        "List recent messages that @-mention the Helix bot across the channels "
         "it belongs to. Returns a list of {channel, user, text, ts} entries."
     ),
     "input_schema": {

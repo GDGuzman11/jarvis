@@ -1,4 +1,4 @@
-"""Typed credential access for Jarvis via the Windows Credential Manager.
+"""Typed credential access for Helix via the Windows Credential Manager.
 
 Per Security Rule 1 ("Zero secrets in files") all real API keys and OAuth
 secrets live in the OS keyring (Windows Credential Manager) under the service
@@ -68,7 +68,7 @@ class MissingCredentialError(RuntimeError):
             f"Credential '{username}' is not set in the Windows Credential "
             f"Manager under service '{SERVICE_NAME}'. Store it via "
             f"backend.security.keystore (e.g. set_{username.lower()}(...)) or "
-            f"the first-run setup wizard before starting Jarvis."
+            f"the first-run setup wizard before starting Helix."
         )
 
 

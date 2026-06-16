@@ -1,8 +1,8 @@
-// Jarvis Tauri native shell.
+// Helix Tauri native shell.
 //
 // Sets up:
-//   * the autostart plugin (launch Jarvis on Windows login),
-//   * a system-tray icon with an "Open Jarvis" / "Quit" menu,
+//   * the autostart plugin (launch Helix on Windows login),
+//   * a system-tray icon with an "Open Helix" / "Quit" menu,
 //   * showing every window when the tray icon is left-clicked.
 //
 // The 5 windows themselves are declared statically in tauri.conf.json (labels:
@@ -15,7 +15,7 @@ use tauri::{
 };
 use tauri_plugin_autostart::MacosLauncher;
 
-/// Show and focus every Jarvis window.
+/// Show and focus every Helix window.
 fn show_all_windows(app: &tauri::AppHandle) {
     for (_label, window) in app.webview_windows() {
         let _ = window.show();
@@ -39,14 +39,14 @@ pub fn run() {
             Some(vec![]),
         ))
         .setup(|app| {
-            // --- System tray menu: Open Jarvis / Quit ---
-            let open_item = MenuItem::with_id(app, "open", "Open Jarvis", true, None::<&str>)?;
+            // --- System tray menu: Open Helix / Quit ---
+            let open_item = MenuItem::with_id(app, "open", "Open Helix", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open_item, &quit_item])?;
 
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
-                .tooltip("Jarvis")
+                .tooltip("Helix")
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open" => show_all_windows(app),

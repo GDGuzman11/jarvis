@@ -1,4 +1,4 @@
-"""Gmail integration for Jarvis — read inbox, send and draft email.
+"""Gmail integration for Helix — read inbox, send and draft email.
 
 This module wraps the Google Gmail API (v1) behind a small async facade so the
 voice pipeline and agents can read and write mail without touching Google's
@@ -25,7 +25,7 @@ Graceful degradation
 ---------------------
 If any credential is missing the client logs a warning and degrades to a safe
 no-op: :meth:`get_inbox` returns ``[]``, :meth:`send_email` returns ``False``,
-and :meth:`draft_email` returns ``""``. Jarvis must boot and run with Gmail
+and :meth:`draft_email` returns ``""``. Helix must boot and run with Gmail
 unconfigured.
 
 Minimal scopes (Security Rule 5)

@@ -1,6 +1,6 @@
 """Speech-to-text via faster-whisper (Phase 3).
 
-This module is the *transcription* stage of the Jarvis voice pipeline. It takes
+This module is the *transcription* stage of the Helix voice pipeline. It takes
 the raw int16 PCM utterance captured by ``backend.voice.wake_word`` (after the
 wake word fires and ``record_until_silence`` returns) and turns it into clean,
 sanitised text ready to hand to Claude.

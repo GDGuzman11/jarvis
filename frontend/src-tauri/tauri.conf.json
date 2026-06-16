@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Jarvis",
+  "productName": "Helix",
   "version": "0.1.0",
   "identifier": "com.jarvis.hud",
   "build": {
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "animation",
-        "title": "Jarvis — Animation",
+        "title": "Helix — Animation",
         "url": "index.html?window=animation",
         "width": 360,
         "height": 360,
@@ -29,7 +29,7 @@
       },
       {
         "label": "reasoning",
-        "title": "Jarvis — Reasoning",
+        "title": "Helix — Reasoning",
         "url": "index.html?window=reasoning",
         "width": 520,
         "height": 640,
@@ -41,7 +41,7 @@
       },
       {
         "label": "communications",
-        "title": "Jarvis — Communications",
+        "title": "Helix — Communications",
         "url": "index.html?window=communications",
         "width": 700,
         "height": 440,
@@ -53,7 +53,7 @@
       },
       {
         "label": "agents",
-        "title": "Jarvis — Agents",
+        "title": "Helix — Agents",
         "url": "index.html?window=agents",
         "width": 870,
         "height": 280,
@@ -65,7 +65,7 @@
       },
       {
         "label": "tools",
-        "title": "Jarvis — Tools",
+        "title": "Helix — Tools",
         "url": "index.html?window=tools",
         "width": 700,
         "height": 460,

@@ -1,6 +1,6 @@
-"""FAISS-backed vector memory for Jarvis (Phase 1 skeleton).
+"""FAISS-backed vector memory for Helix (Phase 1 skeleton).
 
-This module provides Jarvis's long-term semantic memory: arbitrary text plus
+This module provides Helix's long-term semantic memory: arbitrary text plus
 attached metadata is embedded with a small sentence-transformers model and
 stored in a FAISS index so it can later be recalled by semantic similarity.
 

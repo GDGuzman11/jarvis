@@ -1,4 +1,4 @@
-"""DuckDuckGo web search tool for Jarvis.
+"""DuckDuckGo web search tool for Helix.
 
 A read-only, side-effect-free tool that queries DuckDuckGo via the
 ``duckduckgo-search`` (``ddgs``) library and returns a small list of result

@@ -1,4 +1,4 @@
-"""Playwright browser-automation tool for Jarvis.
+"""Playwright browser-automation tool for Helix.
 
 Fetches a URL with a real (headless Chromium) browser so JavaScript-rendered
 pages resolve, then returns the page's visible text with ``<script>`` and

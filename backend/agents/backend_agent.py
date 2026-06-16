@@ -6,7 +6,7 @@ and performance. When a task touches APIs, the database, the voice loop, or
 runtime performance, it routes to Kado.
 
 Reasoning uses the shared Claude client (with the inherited Ollama fallback)
-under a backend-flavoured system prompt layered on the Jarvis persona base.
+under a backend-flavoured system prompt layered on the Helix persona base.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ AGENT_ROLE = "Backend specialist — APIs, database, voice pipeline, and perform
 DEFAULT_TOOLS: list[str] = ["file_ops", "code_executor", "web_search"]
 
 _EXPERTISE = """\
-You are acting as Kado, Jarvis's backend specialist agent.
+You are acting as Kado, Helix's backend specialist agent.
 Your domain is the Python backend: Python 3.12, FastAPI, WebSockets, Uvicorn, the single \
 WebSocket hub, SQLite via aiosqlite, FAISS + sentence-transformers semantic memory, the \
 Anthropic and Ollama clients (streaming + prompt caching), the faster-whisper / ElevenLabs \

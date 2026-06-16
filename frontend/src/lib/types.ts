@@ -108,7 +108,7 @@ export interface ShutdownEvent {
   timestamp: string;
 }
 
-export type JarvisEvent =
+export type HelixEvent =
   | AgentUpdateEvent
   | TokenEvent
   | ToolCallEvent

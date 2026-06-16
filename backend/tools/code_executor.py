@@ -1,4 +1,4 @@
-"""Sandboxed Python code executor for Jarvis (Security Rule 4).
+"""Sandboxed Python code executor for Helix (Security Rule 4).
 
 Runs short, untrusted Python snippets inside a heavily restricted environment so
 agents can do quick calculations and data shaping *without* the snippet being
@@ -96,7 +96,7 @@ def _run_restricted(code: str) -> dict[str, Any]:
     stderr_buf = io.StringIO()
 
     try:
-        bytecode = compile_restricted(code, filename="<jarvis-sandbox>", mode="exec")
+        bytecode = compile_restricted(code, filename="<helix-sandbox>", mode="exec")
     except SyntaxError as exc:
         return {"stdout": "", "stderr": f"SyntaxError: {exc}", "success": False}
 

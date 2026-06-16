@@ -1,4 +1,4 @@
-"""WebSocket connection hub for the Jarvis backend.
+"""WebSocket connection hub for the Helix backend.
 
 A single hub fans state out to every connected client. All 5 Tauri windows
 (Animation, Reasoning, Communications, Agents, Tools) open one WebSocket each to

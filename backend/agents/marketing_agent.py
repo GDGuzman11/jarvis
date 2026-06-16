@@ -6,7 +6,7 @@ planning, it routes here. (Drafting the actual copy is the Content Creator's
 job — this agent owns the strategy; the Content Creator owns the words.)
 
 Reasoning uses the shared Claude client (inherited Ollama fallback) under a
-marketing-flavoured system prompt layered on the Jarvis persona base.
+marketing-flavoured system prompt layered on the Helix persona base.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ AGENT_ROLE = "Marketing specialist — campaign planning and social content stra
 DEFAULT_TOOLS: list[str] = ["web_search", "browser", "file_ops"]
 
 _EXPERTISE = """\
-You are acting as Vega, Jarvis's marketing specialist agent.
+You are acting as Vega, Helix's marketing specialist agent.
 Your domain is marketing strategy: campaign planning, positioning, audience and channel \
 selection, messaging pillars, and social content strategy across platforms. You think in \
 terms of goals, audience, funnel stage, channel fit, and measurable outcomes. When given a \

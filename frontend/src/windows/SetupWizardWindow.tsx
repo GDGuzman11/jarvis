@@ -1,9 +1,9 @@
 /**
- * First-run Setup Wizard — collects the API credentials Jarvis needs and stores
+ * First-run Setup Wizard — collects the API credentials Helix needs and stores
  * each in the Windows Credential Manager (via the backend keyring). On mount it
  * checks `/setup/status`; if setup is already complete it shows the launch state
  * immediately. Each filled field is POSTed to `/setup/credential`; a progress
- * indicator tracks which creds are saved. The "Launch Jarvis" button appears
+ * indicator tracks which creds are saved. The "Launch Helix" button appears
  * once `/setup/complete` returns true.
  *
  * Credential values are entered into masked (password) inputs and never logged
@@ -135,7 +135,7 @@ export function SetupWizardWindow() {
                 onClick={handleLaunch}
                 className="glass glass-hover mt-6 w-full py-3 text-sm font-bold uppercase tracking-[0.3em] text-glow-cyan"
               >
-                Launch Jarvis
+                Launch Helix
               </button>
             )}
           </>

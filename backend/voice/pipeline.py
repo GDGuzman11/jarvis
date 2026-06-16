@@ -2,7 +2,7 @@
 
 This module ties together the individual voice stages built earlier in Phase 3
 into one continuous, long-lived loop — the thing that actually *is* "talking to
-Jarvis":
+Helix":
 
     wake word -> listen -> transcribe -> reason (Claude) -> speak -> idle
 
@@ -22,7 +22,7 @@ The pipeline emits exactly these states over the WebSocket hub (Task 3):
 * ``idle``      — at rest, waiting for the wake word (orb blue).
 * ``listening`` — wake word fired; capturing the user's utterance (orb cyan).
 * ``thinking``  — utterance captured; transcribing + streaming from Claude (gold).
-* ``speaking``  — synthesising and playing Jarvis's reply (cyan).
+* ``speaking``  — synthesising and playing Helix's reply (cyan).
 
 Every turn ends back at ``idle`` — whether it completed, was interrupted, found
 nothing to transcribe, or errored — so the orb never gets stuck mid-state.
@@ -37,10 +37,10 @@ metric that makes the assistant feel responsive (Phase 3 latency target <3 s).
 
 Interrupt ("stop") — Task 2
 ---------------------------
-While Jarvis is thinking or speaking, a secondary listener keeps capturing from
+While Helix is thinking or speaking, a secondary listener keeps capturing from
 the *same* audio stream. If it transcribes the word "stop" (a plain keyword match
 on a short STT window), it cancels the in-flight response coroutine, halts
-playback, and returns the pipeline to ``idle``. This lets the user cut Jarvis off
+playback, and returns the pipeline to ``idle``. This lets the user cut Helix off
 mid-sentence the way you would a person.
 
 Resilience
@@ -87,7 +87,7 @@ INTERRUPT_KEYWORD: str = "stop"
 
 # How long each interrupt-listening window records before we transcribe it and
 # check for the keyword. Short so a "stop" is acted on quickly, but long enough
-# to catch the whole word. We re-arm the window repeatedly while Jarvis is busy.
+# to catch the whole word. We re-arm the window repeatedly while Helix is busy.
 INTERRUPT_WINDOW_S: float = 1.2
 
 # --- Crash-recovery configuration (Phase 10) ---------------------------------
@@ -387,7 +387,7 @@ class VoicePipeline:
 
         await self._set_state("idle")
 
-    # --- Text input (type-to-Jarvis) ----------------------------------------
+    # --- Text input (type-to-Helix) ----------------------------------------
 
     async def process_text(self, text: str) -> bool:
         """Process a typed message exactly like a voice turn, without wake-word.
@@ -545,7 +545,7 @@ class VoicePipeline:
         * :class:`ClaudeAPIError` — the API call failed (network down, rate
           limited, server error), or
         * :class:`MissingCredentialError` — the Anthropic API key is not set in
-          the keyring, so the SDK client can't even be built. Jarvis simply
+          the keyring, so the SDK client can't even be built. Helix simply
           speaks using Ollama instead (graceful degradation — CLAUDE.md Phase 10
           / Phase 9 fallback test).
 
@@ -625,7 +625,7 @@ class VoicePipeline:
 
         Unlike :func:`record_until_silence` (which waits for the user to stop),
         this grabs a bounded slice so the keyword check happens on a predictable
-        cadence even while Jarvis's own playback may be ongoing.
+        cadence even while Helix's own playback may be ongoing.
         """
         frames: list[np.ndarray] = []
         captured_s = 0.0

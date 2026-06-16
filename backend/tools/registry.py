@@ -1,4 +1,4 @@
-"""ToolRegistry — the per-agent tool permission matrix for Jarvis.
+"""ToolRegistry — the per-agent tool permission matrix for Helix.
 
 The registry is the single gatekeeper between the 6 agents and every tool. It:
 

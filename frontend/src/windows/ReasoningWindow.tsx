@@ -1,7 +1,7 @@
 /**
  * Window 2 — ReasoningWindow. A proper chat interface: model + cost/latency
  * header bar, a scrollable conversation history (user turns right-aligned,
- * Jarvis turns left-aligned with live token streaming), the tool-call cards,
+ * Helix turns left-aligned with live token streaming), the tool-call cards,
  * and a text input. All data is store-driven; nothing is hardcoded except the
  * "Claude Opus 4.7" default until a `token`/`metrics` event overrides it.
  */
@@ -50,7 +50,7 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
           isUser ? "text-jarvis-muted" : "text-jarvis-cyan/70"
         }`}
       >
-        {isUser ? "You" : "Jarvis"}
+        {isUser ? "You" : "Helix"}
       </span>
       <div
         className={`max-w-[80%] whitespace-pre-wrap break-words px-3 py-2 text-xs leading-relaxed ${
@@ -60,7 +60,7 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
         }`}
       >
         {msg.content}
-        {msg.role === "jarvis" && !msg.complete && (
+        {msg.role === "helix" && !msg.complete && (
           <span className="ml-0.5 inline-block h-3 w-1.5 animate-pulse-glow bg-jarvis-cyan align-middle" />
         )}
       </div>
@@ -154,6 +154,9 @@ export function ReasoningWindow() {
         <div ref={scrollRef} className="hud-scroll glass min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
           {chatHistory.length === 0 ? (
             <p className="text-xs italic text-jarvis-muted">
+              {/* Wake phrase stays "Hey Jarvis": the OpenWakeWord model is
+                  trained on "hey_jarvis" and only wakes on that phrase until a
+                  custom "hey_helix" model is trained. Do not rename here. */}
               No conversation yet. Say "Hey Jarvis" or type a message below.
             </p>
           ) : (
@@ -186,7 +189,7 @@ export function ReasoningWindow() {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKey}
               disabled={busy || sending}
-              placeholder={busy ? "Jarvis is busy…" : "Ask Jarvis anything…"}
+              placeholder={busy ? "Helix is busy…" : "Ask Helix anything…"}
               className="flex-1 border border-jarvis-cyan/30 bg-jarvis-bg/60 px-3 py-2 text-xs text-jarvis-text placeholder:text-jarvis-muted/50 outline-none transition-colors focus:border-jarvis-cyan/70 disabled:opacity-40"
             />
             <button

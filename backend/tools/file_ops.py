@@ -1,4 +1,4 @@
-"""Sandboxed file read/write/list tool for Jarvis.
+"""Sandboxed file read/write/list tool for Helix.
 
 Gives agents the ability to read, write, and list files — but **only inside a
 single workspace directory** (Security Rule 4: workspace-only filesystem). Every
@@ -142,7 +142,7 @@ def list_files(directory: str = ".") -> list[str]:
 READ_FILE_SCHEMA: dict[str, Any] = {
     "name": "read_file",
     "description": (
-        "Read a UTF-8 text file from the Jarvis workspace and return its "
+        "Read a UTF-8 text file from the Helix workspace and return its "
         "contents. Paths are relative to the workspace root; reading outside "
         "the workspace is not permitted."
     ),
@@ -161,7 +161,7 @@ READ_FILE_SCHEMA: dict[str, Any] = {
 WRITE_FILE_SCHEMA: dict[str, Any] = {
     "name": "write_file",
     "description": (
-        "Write text to a file in the Jarvis workspace, creating or overwriting "
+        "Write text to a file in the Helix workspace, creating or overwriting "
         "it. Paths are relative to the workspace root; writing outside the "
         "workspace is not permitted."
     ),
@@ -184,7 +184,7 @@ WRITE_FILE_SCHEMA: dict[str, Any] = {
 LIST_FILES_SCHEMA: dict[str, Any] = {
     "name": "list_files",
     "description": (
-        "List the files and sub-directories inside a Jarvis workspace directory. "
+        "List the files and sub-directories inside a Helix workspace directory. "
         "Paths are relative to the workspace root; directories end with '/'."
     ),
     "input_schema": {

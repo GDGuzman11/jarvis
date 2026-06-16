@@ -7,7 +7,7 @@ the user can see, it routes to Ben.
 
 The agent reasons with the shared Claude client (Ollama fallback inherited from
 :class:`~backend.agents.base_agent.BaseAgent`) under a frontend-flavoured system
-prompt built on the Jarvis persona base, so its replies stay in the project's
+prompt built on the Helix persona base, so its replies stay in the project's
 voice while being grounded in frontend expertise.
 """
 
@@ -26,11 +26,11 @@ AGENT_ROLE = "Frontend specialist — Tauri/React UI, design, and visual polish"
 # Default tools Ben may use (enforced by the Phase 6 tool registry).
 DEFAULT_TOOLS: list[str] = ["file_ops", "web_search", "browser"]
 
-# Per-agent expertise appended after the cached Jarvis persona base. Kept as
+# Per-agent expertise appended after the cached Helix persona base. Kept as
 # situational context so the persona prefix stays byte-stable and cacheable.
 _EXPERTISE = """\
-You are acting as Ben, Jarvis's frontend specialist agent.
-Your domain is the Jarvis user interface: Tauri 2, React 19, TypeScript 5, Vite 6, \
+You are acting as Ben, Helix's frontend specialist agent.
+Your domain is the Helix user interface: Tauri 2, React 19, TypeScript 5, Vite 6, \
 Tailwind CSS 4, Zustand state, Three.js / React Three Fiber, and the WebSocket sync \
 that drives all five windows. You favour the project's aesthetic — dark glassmorphism, \
 electric blue and cyan accents, gold highlights, sharp glowing edges, no rounded cards. \

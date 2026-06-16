@@ -2,7 +2,7 @@
  * MissionControl — the prominent header panel of the AgentsWindow for handing
  * high-level goals to Atlas (the Production Lead). Atlas classifies the goal and
  * delegates to the right specialist agent automatically, so this is the "just
- * tell Jarvis what you want done" entry point.
+ * tell Helix what you want done" entry point.
  *
  * Submits to the same direct-task endpoint as the per-card inputs, targeting the
  * `production_lead` agent (slug `atlas`). Local state only — no store coupling.

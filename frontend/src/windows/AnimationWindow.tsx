@@ -8,7 +8,7 @@ import type { MouseEvent } from "react";
 import { Canvas } from "@react-three/fiber";
 import { useStore } from "../lib/store";
 import { useBootSound } from "../lib/useBootSound";
-import JarvisOrb from "../components/JarvisOrb";
+import HelixOrb from "../components/HelixOrb";
 
 async function startDrag(e: MouseEvent) {
   if (e.button !== 0) return;
@@ -48,7 +48,7 @@ export function AnimationWindow() {
   return (
     <div className="relative h-screen w-screen bg-transparent">
       <Canvas camera={{ position: [0, 0, 4], fov: 50 }} dpr={[1, 2]}>
-        <JarvisOrb voiceState={voiceState} audioLevel={audioLevel} />
+        <HelixOrb voiceState={voiceState} audioLevel={audioLevel} />
       </Canvas>
       {/* Connection beams — radiating from orb centre to the other windows. */}
       <svg
@@ -86,7 +86,7 @@ export function AnimationWindow() {
       {/* Shutdown button — top-right corner, above the Canvas so it stays clickable. */}
       <button
         type="button"
-        title="Shutdown Jarvis"
+        title="Shutdown Helix"
         onClick={requestShutdown}
         className="absolute right-3 top-3 z-20 flex h-8 w-8 items-center justify-center border border-red-500/50 text-red-400 text-base transition-all duration-200 hover:border-red-400 hover:text-red-300 hover:shadow-[0_0_12px_rgba(255,59,92,0.6)]"
       >

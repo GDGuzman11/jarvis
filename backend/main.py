@@ -1,4 +1,4 @@
-"""FastAPI application entry point for the Jarvis backend.
+"""FastAPI application entry point for the Helix backend.
 
 This module wires together the core HTTP application: a modern
 :func:`contextlib.asynccontextmanager` lifespan that initialises the SQLite
@@ -76,7 +76,7 @@ ALLOWED_ORIGINS: list[str] = [
 # above only governs HTTP requests — it does NOT protect the WebSocket
 # handshake, which browsers exempt from the same-origin policy. Without an
 # explicit check, any local page (or a malicious site loaded in the user's
-# browser) could open ``ws://127.0.0.1:8000/ws`` and read Jarvis's live event
+# browser) could open ``ws://127.0.0.1:8000/ws`` and read Helix's live event
 # stream. We therefore validate the ``Origin`` header on every WS connection and
 # accept only the local Tauri frontend's origins. This mirrors ALLOWED_ORIGINS
 # but is enforced independently inside the /ws handler.
@@ -90,7 +90,7 @@ async def _startup_greeting(memory_manager: MemoryManager | None = None) -> None
 
     When a :class:`MemoryManager` is supplied (Phase 12D), the greeting also
     surfaces *overdue* open loops — promises/reminders created more than 12 hours
-    ago that are still open — so Jarvis proactively reminds the user of
+    ago that are still open — so Helix proactively reminds the user of
     unfinished follow-ups at session start. Every memory access is guarded so the
     greeting still works when ``memory_manager is None`` or the query fails.
     """
@@ -148,7 +148,7 @@ async def _startup_greeting(memory_manager: MemoryManager | None = None) -> None
 
     spoken = reply.strip() if reply.strip() else fallback
 
-    # Surface overdue open loops (created > 12 hours ago, still open) so Jarvis
+    # Surface overdue open loops (created > 12 hours ago, still open) so Helix
     # proactively reminds the user of unfinished follow-ups (Phase 12D). Guarded:
     # a missing manager or a query failure simply skips the reminder.
     if memory_manager is not None:
@@ -297,7 +297,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Logging first so every subsequent startup event flows through the
     # structured pipeline.
     configure_logging()
-    log.info("Jarvis backend starting", host=HOST, port=PORT, version=APP_VERSION)
+    log.info("Helix backend starting", host=HOST, port=PORT, version=APP_VERSION)
 
     # Ensure the database and its schema exist before serving any request.
     await init_db()
@@ -384,7 +384,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     log.info("Tool registry ready", tools=len(tool_registry.list_tools()))
 
     # Fire the startup greeting in the background — it waits for the first
-    # window to connect, then has Jarvis speak a personalised hello + status,
+    # window to connect, then has Helix speak a personalised hello + status,
     # surfacing any overdue open loops (Phase 12D).
     asyncio.create_task(
         _startup_greeting(memory_manager), name="startup-greeting"
@@ -435,11 +435,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             vector_store.save()
             log.info("Vector store saved", entries=len(vector_store))
         await hub.disconnect_all()
-        log.info("Jarvis backend shutting down")
+        log.info("Helix backend shutting down")
 
 
 app = FastAPI(
-    title="Jarvis Backend",
+    title="Helix Backend",
     version=APP_VERSION,
     summary="Local-first AI assistant backend — voice pipeline, agents, and tools.",
     lifespan=lifespan,
@@ -470,7 +470,7 @@ async def health() -> dict[str, str]:
 
 @app.post("/api/chat", tags=["voice"])
 async def chat_endpoint(message: str = Body(..., embed=True)) -> dict[str, str]:
-    """Accept a typed message and process it through the full Jarvis pipeline.
+    """Accept a typed message and process it through the full Helix pipeline.
 
     Identical to a voice turn — Claude streams a reply, tokens are broadcast to
     the Reasoning window, and TTS speaks the response. The turn runs in the
@@ -487,7 +487,7 @@ async def chat_endpoint(message: str = Body(..., embed=True)) -> dict[str, str]:
 
     if pipeline.state != "idle":
         raise HTTPException(
-            status_code=409, detail="Jarvis is busy — try again in a moment."
+            status_code=409, detail="Helix is busy — try again in a moment."
         )
 
     asyncio.create_task(pipeline.process_text(text))

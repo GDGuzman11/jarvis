@@ -1,4 +1,4 @@
-"""structlog logging configuration for the Jarvis backend (Phase 1).
+"""structlog logging configuration for the Helix backend (Phase 1).
 
 This module centralises log setup so every part of the backend — the FastAPI
 app, the voice pipeline, the agent runtime — emits structured logs through a

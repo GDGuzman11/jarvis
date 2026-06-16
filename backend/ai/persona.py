@@ -1,7 +1,7 @@
-"""Jarvis persona system prompt — the stable, cached prefix for every Claude call.
+"""Helix persona system prompt — the stable, cached prefix for every Claude call.
 
-This module is the single source of truth for *who Jarvis is*. The
-:data:`JARVIS_SYSTEM_PROMPT` string defines the character (a measured British
+This module is the single source of truth for *who Helix is*. The
+:data:`HELIX_SYSTEM_PROMPT` string defines the character (a measured British
 voice in the mould of Tom Hardy crossed with the Avengers' JARVIS), the
 operating envelope (voice assistant, agent orchestrator, Slack/Gmail reach), and
 the behavioural guardrails that keep responses tight enough to be spoken aloud.
@@ -15,7 +15,7 @@ byte-for-byte from turn to turn, with only the volatile ``messages`` changing
 after it. So this prompt is written to be complete and well-formed up front, not
 assembled ad hoc. Any per-turn context (the time, what's on screen, the active
 agent's task) is appended *after* the cached base by :func:`build_system_prompt`,
-preserving the cached prefix while still letting Jarvis react to the moment.
+preserving the cached prefix while still letting Helix react to the moment.
 
 Usage::
 
@@ -29,9 +29,10 @@ from __future__ import annotations
 
 # The cached prefix. Edit with care: changing a single character invalidates the
 # prompt cache for the first turn after deploy (expected and harmless), but the
-# wording here is what gives Jarvis his voice, so treat it as product copy.
-JARVIS_SYSTEM_PROMPT: str = """\
-You are Jarvis — a personal AI assistant running locally on the user's Windows machine.
+# wording here is what gives Helix his voice, so treat it as product copy.
+HELIX_SYSTEM_PROMPT: str = """\
+You are Helix — a personal AI assistant running locally on the user's Windows machine.
+Your name is Helix; you know it and answer to it.
 
 # Voice and character
 You speak with a refined British cadence: measured, articulate, quietly confident. \
@@ -72,18 +73,18 @@ you fetch it or say you cannot. You keep the user's data on their machine and tr
 privacy as paramount. When you are uncertain, you say so and ask one sharp clarifying \
 question rather than guessing.
 
-Be useful, be brief, and be Jarvis."""
+Be useful, be brief, and be Helix."""
 
 
 def build_system_prompt(context: str | None = None) -> str:
-    """Return the Jarvis system prompt, optionally with per-turn context appended.
+    """Return the Helix system prompt, optionally with per-turn context appended.
 
-    The :data:`JARVIS_SYSTEM_PROMPT` base is the *cached prefix*: it must stay
+    The :data:`HELIX_SYSTEM_PROMPT` base is the *cached prefix*: it must stay
     byte-stable across turns so the Anthropic prompt cache keeps hitting. Any
     volatile, situational information (the current time, what the user is looking
     at, the active agent's task, recalled memories) is appended *after* the base
     under a clear ``# Current context`` heading, so the cached prefix is never
-    disturbed while Jarvis can still respond to the moment.
+    disturbed while Helix can still respond to the moment.
 
     The injected ``context`` may take two shapes, and both are handled so the
     final prompt never carries a duplicate heading:
@@ -110,15 +111,15 @@ def build_system_prompt(context: str | None = None) -> str:
         :meth:`backend.ai.claude_client.ClaudeClient.stream_response`.
     """
     if context is None or not context.strip():
-        return JARVIS_SYSTEM_PROMPT
+        return HELIX_SYSTEM_PROMPT
 
     context = context.strip()
     # The memory manager's format_context already emits its own
     # "# Current context" header; don't add a second one in that case.
     if context.startswith("# Current context"):
-        return f"{JARVIS_SYSTEM_PROMPT}\n\n{context}"
+        return f"{HELIX_SYSTEM_PROMPT}\n\n{context}"
 
-    return f"{JARVIS_SYSTEM_PROMPT}\n\n# Current context\n{context}"
+    return f"{HELIX_SYSTEM_PROMPT}\n\n# Current context\n{context}"
 
 
-__all__ = ["JARVIS_SYSTEM_PROMPT", "build_system_prompt"]
+__all__ = ["HELIX_SYSTEM_PROMPT", "build_system_prompt"]

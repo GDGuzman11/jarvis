@@ -1,7 +1,7 @@
 """First-run setup wizard API (Phase 10).
 
 A tiny FastAPI router the frontend's first-run wizard calls to discover which
-credentials Jarvis still needs and to store them — straight into the Windows
+credentials Helix still needs and to store them — straight into the Windows
 Credential Manager via :mod:`backend.security.keystore`, never a file (Security
 Rule 1). Three endpoints::
 
@@ -34,7 +34,7 @@ log = get_logger(__name__)
 # The credentials the first-run wizard collects, in the order the UI should
 # prompt for them. This is a deliberate subset of keystore.ALL_CREDENTIALS:
 # the optional Slack app/signing and Gmail redirect values are not required to
-# get Jarvis talking, so the wizard does not block on them. Names are the
+# get Helix talking, so the wizard does not block on them. Names are the
 # lower-case form the wizard sends; they map 1:1 to the keystore username
 # constants below.
 REQUIRED_CREDENTIALS: tuple[str, ...] = (

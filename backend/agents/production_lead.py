@@ -1,6 +1,6 @@
 """Production Lead — the orchestrator agent.
 
-The Production Lead is Jarvis's project manager. It takes incoming *goals*
+The Production Lead is Helix's project manager. It takes incoming *goals*
 (high-level requests, typically from the user via the voice pipeline) and routes
 each to the specialist best suited to handle it: UI work to Ben, backend/API work
 to Kado, security to Sentinel, marketing strategy to Vega, and writing/copy to
@@ -105,7 +105,7 @@ _DEFAULT_TARGET = "backend"
 _VALID_TARGETS = frozenset(agent_id for agent_id, _ in _ROUTING_RULES)
 
 _CLASSIFIER_SYSTEM = """\
-You are the routing brain of Jarvis's production lead. Given a goal, reply with EXACTLY ONE \
+You are the routing brain of Helix's production lead. Given a goal, reply with EXACTLY ONE \
 word naming the single best agent to handle it, chosen from this set and nothing else:
 - frontend  (UI, React/Tauri, design, visual work)
 - backend   (APIs, database, server, voice pipeline, performance)

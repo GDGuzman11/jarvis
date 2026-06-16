@@ -66,14 +66,14 @@ interface Metrics {
 /** A single turn in the Reasoning-window chat history. */
 export interface ChatMessage {
   id: string;
-  role: "user" | "jarvis";
+  role: "user" | "helix";
   content: string;
   timestamp: string;
-  /** Jarvis turns only: false while tokens are still streaming in. */
+  /** Helix turns only: false while tokens are still streaming in. */
   complete?: boolean;
 }
 
-export interface JarvisStore {
+export interface HelixStore {
   // --- Connection ---
   connection: ConnectionStatus;
   setConnection: (status: ConnectionStatus) => void;
@@ -111,10 +111,10 @@ export interface JarvisStore {
   }) => void;
   setMetrics: (m: Partial<Metrics> & { model?: string }) => void;
 
-  // --- Reasoning: chat history (user turns + completed Jarvis replies) ---
+  // --- Reasoning: chat history (user turns + completed Helix replies) ---
   chatHistory: ChatMessage[];
   addUserMessage: (text: string) => void;
-  appendJarvisToken: (content: string, isFinal: boolean) => void;
+  appendHelixToken: (content: string, isFinal: boolean) => void;
 
   // --- Communications ---
   slackMessages: SlackMessage[];
@@ -129,7 +129,7 @@ export interface JarvisStore {
   toggleToolPermission: (agentId: string, tool: string) => void;
 }
 
-export const useStore = create<JarvisStore>((set) => ({
+export const useStore = create<HelixStore>((set) => ({
   connection: "connecting",
   setConnection: (status) => set({ connection: status }),
 
@@ -208,11 +208,11 @@ export const useStore = create<JarvisStore>((set) => ({
         },
       ],
     })),
-  appendJarvisToken: (content, isFinal) =>
+  appendHelixToken: (content, isFinal) =>
     set((s) => {
       const last = s.chatHistory[s.chatHistory.length - 1];
-      // Continue the in-flight Jarvis turn, or open a new one.
-      if (last && last.role === "jarvis" && !last.complete) {
+      // Continue the in-flight Helix turn, or open a new one.
+      if (last && last.role === "helix" && !last.complete) {
         const updated: ChatMessage = {
           ...last,
           content: last.content + content,
@@ -224,8 +224,8 @@ export const useStore = create<JarvisStore>((set) => ({
         chatHistory: [
           ...s.chatHistory,
           {
-            id: `jarvis-${Date.now()}-${s.chatHistory.length}`,
-            role: "jarvis",
+            id: `helix-${Date.now()}-${s.chatHistory.length}`,
+            role: "helix",
             content,
             timestamp: new Date().toISOString(),
             complete: isFinal,

@@ -89,7 +89,7 @@ function App() {
   return (
     <div className="hud-bg min-h-screen p-6">
       <h1 className="mb-4 text-lg font-bold uppercase tracking-[0.4em] text-glow-cyan">
-        Jarvis HUD — Dev Preview
+        Helix HUD — Dev Preview
       </h1>
       <div className="flex flex-wrap gap-2">
         {(Object.keys(WINDOWS) as WindowLabel[]).map((w) => (

@@ -1,6 +1,6 @@
 """Continuous audio capture + OpenWakeWord wake-word detection + VAD (Phase 3).
 
-This module owns the *front* of the Jarvis voice pipeline — the part that runs
+This module owns the *front* of the Helix voice pipeline — the part that runs
 forever in the background, listening for the user to say "hey Jarvis", and then
 capturing the utterance that follows until they stop speaking.
 
@@ -63,6 +63,8 @@ FRAME_LENGTH: int = 1280
 
 # Built-in OpenWakeWord model name. "hey_jarvis" ships with the library and is
 # downloaded automatically on first use — no API key or custom file required.
+# NOTE: wake phrase is "hey_jarvis" until a custom "hey_helix" model is
+# trained — do NOT rename this string or wake-word detection breaks.
 KEYWORD: str = "hey_jarvis"
 
 # Detection score threshold. Scores range [0, 1]; 0.5 is the recommended

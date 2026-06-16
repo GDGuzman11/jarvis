@@ -1,7 +1,7 @@
-"""Ollama client for Jarvis — local phi3.5 fallback.
+"""Ollama client for Helix — local phi3.5 fallback.
 
 When the Claude API is unavailable (network down, rate limited, key missing),
-Jarvis degrades gracefully to a local model served by Ollama. This module wraps
+Helix degrades gracefully to a local model served by Ollama. This module wraps
 the async Ollama client so the rest of the backend can stream a fallback
 response with the same token-by-token shape as
 :meth:`backend.ai.claude_client.ClaudeClient.stream_response`.
@@ -91,7 +91,7 @@ class OllamaClient:
             (``[{"role": "user", "content": "..."}, ...]``). Combined with the
             system prompt into Ollama's ``chat`` message list.
         system_prompt:
-            The Jarvis persona / instructions, prepended as a ``system`` message.
+            The Helix persona / instructions, prepended as a ``system`` message.
 
         Yields
         ------

@@ -1,4 +1,4 @@
-"""Slack integration for Jarvis — send messages, read DMs/mentions, live listener.
+"""Slack integration for Helix — send messages, read DMs/mentions, live listener.
 
 This module wraps Slack's official SDKs so the rest of the backend can talk to a
 workspace without touching Slack internals:
@@ -7,7 +7,7 @@ workspace without touching Slack internals:
   for sending messages and reading conversation history. All blocking-free: the
   async web client uses ``aiohttp`` under the hood.
 * A Socket-Mode listener (built on :class:`slack_bolt.async_app.AsyncApp`) that
-  fires a user-supplied callback whenever a DM or an ``@Jarvis`` mention arrives,
+  fires a user-supplied callback whenever a DM or an ``@Helix`` mention arrives,
   so the voice pipeline can announce "you have a new Slack message" without
   polling.
 
@@ -24,7 +24,7 @@ Graceful degradation
 ---------------------
 If a credential is missing the client logs a warning and degrades to a safe
 no-op: sends return ``False``, reads return ``[]``, and the listener simply does
-not start. Jarvis must boot and run with Slack unconfigured — Phase 1/5 rule.
+not start. Helix must boot and run with Slack unconfigured — Phase 1/5 rule.
 
 Minimal scopes (Security Rule 5)
 --------------------------------

@@ -20,7 +20,8 @@
   - Secret-scan failure is now **2 files**: `get_gmail_token.py:9` + `docs/TEST_HISTORY.md:110` — not 1 as previously recorded
   - **Phase 7 known gap**: Frontend handles 9 WS event types; backend only emits 6. `comms`, `tool_permissions`, `tool_call` never broadcast → Communications (Win3), Tools (Win5), and Reasoning tool cards (Win2) render skeletons
   - Memory system is **~60% to goal** — infrastructure solid, recall reliability weak (similarity-only, `last_recalled_at` dead column, rule-based extraction, no contradiction handling)
-- **Next Task**: **Tier 0 hygiene first** (hours of work — scrub OAuth client ID from 2 files → 144/144 clean, fix backup WAL issue). Then **Phase 15B** (wire missing WebSocket events). Then **Phase 16** (Memory Intelligence).
+- **Tier 0 progress (2026-06-16)**: ✅ Item 1 (Jarvis → Helix rename) complete & verified 5/5. Remaining Tier 0: scrub OAuth client ID from `get_gmail_token.py:9` + `docs/TEST_HISTORY.md:110` → 144/144 clean (items 2–3), fix SQLite WAL backup (item 4).
+- **Next Task**: **Tier 0 items 2–3** — scrub OAuth client ID from 2 files → 144/144 clean (`/security-agent`). Then item 4 (WAL backup, `/backend-agent`). Then **Phase 15B** (wire missing WebSocket events). Then **Phase 16** (Memory Intelligence).
 - **Blockers**: Dedicated microphone not yet purchased — voice E2E tests deferred to Pending.
 - **Test State**: 143/144 passing · **2 files** failing secret-scan (`get_gmail_token.py` + `docs/TEST_HISTORY.md`) · `pnpm build` clean.
 - **Build Started**: 2026-06-02
@@ -106,7 +107,7 @@ Dark theme `#080810` (updated 2026-06-04), electric blue/cyan accents `#00D4FF`,
 ## Tier 0 — Hygiene (do before Phase 15B)
 *Handled by: `/security-agent` (items 1–2) + `/backend-agent` (items 3–4) + `/frontend-agent` (item 5). Hours of work. Unblock 144/144 clean suite.*
 
-- [ ] **Rename assistant from Jarvis → Helix across entire codebase** — Helix must know his own name. Touch every layer:
+- [x] **Rename assistant from Jarvis → Helix across entire codebase** — Helix must know his own name. *(Done 2026-06-16: backend 33 files / 94 replacements via `backend-agent`; frontend file `JarvisOrb.tsx`→`HelixOrb.tsx` + windows/config via `frontend-agent`; verified 5/5 by `debugger-agent` — backend 143/1, `pnpm build` clean, WS token path unaffected, wake-word string preserved. NOTE: persona file is at `backend/ai/persona.py`, not `backend/agents/persona.py` as listed below. Intentionally left for later: DB role enum `'jarvis'`, `SERVICE_NAME="jarvis"` keyring, `JARVIS_*` env vars, `jarvis.db`/`jarvis_*.zip` filenames, `jarvis-*` Tailwind tokens, and bundle id `com.jarvis.hud` — none user-facing / would break suite or app identity.)*
   - `backend/agents/persona.py` — update system prompt: name, personality intro, self-references ("I am Helix", not "I am Jarvis")
   - `frontend/src/components/JarvisOrb.tsx` → rename file to `HelixOrb.tsx`; update all imports
   - `frontend/src/windows/` — update any window titles, display text, or comments referencing "Jarvis"

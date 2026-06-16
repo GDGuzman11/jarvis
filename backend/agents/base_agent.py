@@ -1,4 +1,4 @@
-"""Base class for every Jarvis background agent.
+"""Base class for every Helix background agent.
 
 Each of the 6 background agents (the Production Lead plus five specialists) is a
 long-lived asyncio task that loops forever:
@@ -75,7 +75,7 @@ RESTORE_CONTEXT_MESSAGES: int = 12
 
 
 class BaseAgent(abc.ABC):
-    """Abstract base for a single long-lived Jarvis agent.
+    """Abstract base for a single long-lived Helix agent.
 
     Parameters
     ----------
