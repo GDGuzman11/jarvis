@@ -1,15 +1,24 @@
 @import "tailwindcss";
 
+/*
+ * Champagne-gold / near-black / white HUD palette.
+ * Token NAMES are kept as `jarvis-*` (internal/developer-facing only) to avoid a
+ * sweeping rename; only their VALUES changed. `jarvis-cyan` is now the primary gold,
+ * `jarvis-red` is now a muted amber ALERT (zero red anywhere). The cool aqua accent
+ * (live states: online / listening / speaking / active) is the new `jarvis-accent`.
+ */
 @theme {
-  --color-jarvis-bg: #080810;
-  --color-jarvis-panel: rgba(8, 14, 28, 0.82);
-  --color-jarvis-cyan: #00d4ff;
-  --color-jarvis-cyan-bright: #00ffff;
-  --color-jarvis-gold: #ffb800;
-  --color-jarvis-red: #ff3b5c;
-  --color-jarvis-gray: #5a6072;
-  --color-jarvis-text: #cfe9ff;
-  --color-jarvis-muted: #6b7689;
+  --color-jarvis-bg: #08080a;
+  --color-jarvis-panel: rgba(16, 14, 10, 0.5);
+  --color-jarvis-cyan: #ffc247;          /* primary gold */
+  --color-jarvis-cyan-bright: #ffe9a8;   /* gold highlight */
+  --color-jarvis-gold: #ffe9a8;          /* highlight (aligned with gold-bright) */
+  --color-jarvis-red: #e0902e;           /* amber ALERT — no red */
+  --color-jarvis-gray: #9a9488;          /* muted neutral */
+  --color-jarvis-text: #ffffff;          /* white ink */
+  --color-jarvis-muted: #9a9488;
+  --color-jarvis-accent: #3fe3d0;        /* cool aqua accent — live states */
+  --color-jarvis-accent-bright: #8ffaec;
   --font-hud: "Rajdhani", "Segoe UI", system-ui, sans-serif;
 }
 
@@ -32,53 +41,60 @@ body {
 
 /* Sharp HUD panel — frosted glass floating on the desktop */
 .glass {
-  background: rgba(5, 10, 25, 0.35);
+  background: rgba(16, 14, 10, 0.45);
   backdrop-filter: blur(40px);
   -webkit-backdrop-filter: blur(40px);
-  border: 1px solid rgba(0, 212, 255, 0.45);
+  border: 1px solid rgba(255, 194, 71, 0.45);
   box-shadow:
-    0 0 0 1px rgba(0, 212, 255, 0.06),
+    0 0 0 1px rgba(255, 194, 71, 0.06),
     0 8px 48px rgba(0, 0, 0, 0.7),
-    inset 0 1px 0 rgba(0, 212, 255, 0.08),
-    inset 0 0 32px rgba(0, 212, 255, 0.03);
+    inset 0 1px 0 rgba(255, 194, 71, 0.08),
+    inset 0 0 32px rgba(255, 194, 71, 0.03);
 }
 
 .glass-hover {
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 .glass-hover:hover {
-  border-color: rgba(0, 212, 255, 0.7);
+  border-color: rgba(255, 194, 71, 0.7);
   box-shadow:
-    0 0 20px rgba(0, 212, 255, 0.4),
-    0 0 0 1px rgba(0, 212, 255, 0.2),
+    0 0 20px rgba(255, 194, 71, 0.4),
+    0 0 0 1px rgba(255, 194, 71, 0.2),
     0 8px 48px rgba(0, 0, 0, 0.7);
 }
 
 /* Fine-grain grid backdrop — translucent so the desktop shows through */
 .hud-bg {
-  background-color: rgba(8, 8, 16, 0.18);
+  background-color: rgba(10, 8, 6, 0.18);
   background-image:
-    linear-gradient(rgba(0, 212, 255, 0.02) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0, 212, 255, 0.02) 1px, transparent 1px),
-    linear-gradient(rgba(0, 212, 255, 0.02) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0, 212, 255, 0.02) 1px, transparent 1px);
+    linear-gradient(rgba(255, 194, 71, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 194, 71, 0.025) 1px, transparent 1px),
+    linear-gradient(rgba(255, 194, 71, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 194, 71, 0.025) 1px, transparent 1px);
   background-size: 80px 80px, 80px 80px, 20px 20px, 20px 20px;
 }
 
 .text-glow-cyan {
   text-shadow:
-    0 0 10px rgba(0, 212, 255, 0.8),
-    0 0 20px rgba(0, 212, 255, 0.3),
+    0 0 10px rgba(255, 194, 71, 0.8),
+    0 0 20px rgba(255, 194, 71, 0.3),
     0 1px 4px rgba(0, 0, 0, 0.9);
 }
 .text-glow-gold {
   text-shadow:
-    0 0 10px rgba(255, 184, 0, 0.8),
-    0 0 20px rgba(255, 184, 0, 0.3),
+    0 0 10px rgba(255, 194, 71, 0.8),
+    0 0 20px rgba(255, 194, 71, 0.3),
+    0 1px 4px rgba(0, 0, 0, 0.9);
+}
+/* Cool aqua glow — live-state text (listening / speaking / online) */
+.text-glow-accent {
+  text-shadow:
+    0 0 10px rgba(63, 227, 208, 0.8),
+    0 0 20px rgba(63, 227, 208, 0.35),
     0 1px 4px rgba(0, 0, 0, 0.9);
 }
 
-/* HUD Button — high contrast angular */
+/* HUD Button — high contrast angular. Gold at rest, aqua accent on hover. */
 .hud-btn {
   display: inline-flex;
   align-items: center;
@@ -88,25 +104,33 @@ body {
   font-weight: 700;
   letter-spacing: 0.15em;
   text-transform: uppercase;
-  color: #00d4ff;
-  background: rgba(0, 212, 255, 0.06);
-  border: 1px solid rgba(0, 212, 255, 0.5);
+  color: #ffc247;
+  background: rgba(255, 194, 71, 0.06);
+  border: 1px solid rgba(255, 194, 71, 0.5);
   transition: all 0.15s ease;
   cursor: pointer;
 }
 .hud-btn:hover {
-  background: rgba(0, 212, 255, 0.15);
-  border-color: #00d4ff;
-  box-shadow: 0 0 16px rgba(0, 212, 255, 0.5), inset 0 0 12px rgba(0, 212, 255, 0.1);
-  color: #fff;
+  background: rgba(63, 227, 208, 0.12);
+  border-color: #3fe3d0;
+  box-shadow: 0 0 16px rgba(63, 227, 208, 0.5), inset 0 0 12px rgba(63, 227, 208, 0.1);
+  color: #8ffaec;
 }
 .hud-btn:active {
-  background: rgba(0, 212, 255, 0.25);
+  background: rgba(63, 227, 208, 0.22);
+}
+.hud-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  color: #9a9488;
+  border-color: rgba(154, 148, 136, 0.4);
+  background: transparent;
+  box-shadow: none;
 }
 
 /* Scrollbar */
 .hud-scroll::-webkit-scrollbar { width: 4px; height: 4px; }
-.hud-scroll::-webkit-scrollbar-thumb { background: rgba(0, 212, 255, 0.35); border-radius: 0; }
+.hud-scroll::-webkit-scrollbar-thumb { background: rgba(255, 194, 71, 0.35); border-radius: 0; }
 .hud-scroll::-webkit-scrollbar-track { background: transparent; }
 
 /* Animations */
@@ -121,7 +145,7 @@ body {
   100% { background-position: 200% 0; }
 }
 
-/* Data stream line — flows along the top of each window */
+/* Data stream line — flows along the top of each window (gold → aqua peak) */
 .data-stream-top::before {
   content: '';
   position: absolute;
@@ -129,11 +153,11 @@ body {
   height: 1px;
   background: linear-gradient(90deg,
     transparent 0%,
-    rgba(0, 212, 255, 0) 20%,
-    rgba(0, 212, 255, 0.9) 45%,
-    rgba(0, 255, 255, 1) 50%,
-    rgba(0, 212, 255, 0.9) 55%,
-    rgba(0, 212, 255, 0) 80%,
+    rgba(255, 194, 71, 0) 20%,
+    rgba(255, 194, 71, 0.9) 45%,
+    rgba(63, 227, 208, 1) 50%,
+    rgba(255, 194, 71, 0.9) 55%,
+    rgba(255, 194, 71, 0) 80%,
     transparent 100%
   );
   background-size: 200% 100%;
@@ -150,7 +174,7 @@ body {
   position: absolute;
   width: 10px;
   height: 10px;
-  border-color: rgba(0, 212, 255, 0.6);
+  border-color: rgba(255, 194, 71, 0.6);
   border-style: solid;
   z-index: 1;
   transition: border-color 0.2s ease;
@@ -163,3 +187,4 @@ body {
   top: 0; right: 0;
   border-width: 1px 1px 0 0;
 }
+</content>

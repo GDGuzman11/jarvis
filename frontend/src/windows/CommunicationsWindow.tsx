@@ -42,7 +42,7 @@ function MessageCard({ top, mid, snippet, unread }: { top: string; mid: string; 
     <div className="glass glass-hover p-3">
       <div className="flex items-center justify-between">
         <span className="truncate text-sm font-semibold text-jarvis-text">{top}</span>
-        {unread && <span className="h-2 w-2 shrink-0 bg-jarvis-cyan" style={{ boxShadow: "0 0 8px #00d4ff" }} />}
+        {unread && <span className="h-2 w-2 shrink-0 bg-jarvis-accent" style={{ boxShadow: "0 0 8px #3fe3d0" }} />}
       </div>
       <p className="mt-0.5 truncate text-xs text-jarvis-cyan/80">{mid}</p>
       <p className="mt-1 line-clamp-2 text-xs text-jarvis-muted">{snippet}</p>
@@ -63,7 +63,7 @@ export function CommunicationsWindow() {
       <div className="flex h-full gap-4 p-4">
         <Panel
           title="Slack"
-          accent="#00d4ff"
+          accent="#ffc247"
           action={<ActionButton label="Reply" onClick={() => sendCommand({ type: "comms_action", channel: "slack", action: "reply" })} />}
         >
           {slack.length === 0 ? (
@@ -79,7 +79,7 @@ export function CommunicationsWindow() {
 
         <Panel
           title="Gmail"
-          accent="#ffb800"
+          accent="#ffe9a8"
           action={<ActionButton label="Compose" onClick={() => sendCommand({ type: "comms_action", channel: "gmail", action: "compose" })} />}
         >
           {gmail.length === 0 ? (

@@ -61,7 +61,7 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
       >
         {msg.content}
         {msg.role === "helix" && !msg.complete && (
-          <span className="ml-0.5 inline-block h-3 w-1.5 animate-pulse-glow bg-jarvis-cyan align-middle" />
+          <span className="ml-0.5 inline-block h-3 w-1.5 animate-pulse-glow bg-jarvis-accent align-middle" />
         )}
       </div>
     </div>

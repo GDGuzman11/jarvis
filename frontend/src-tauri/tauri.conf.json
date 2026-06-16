@@ -74,6 +74,21 @@
         "decorations": false,
         "transparent": true,
         "resizable": true
+      },
+      {
+        "label": "command",
+        "title": "Helix — Command",
+        "url": "index.html?window=command",
+        "width": 560,
+        "height": 72,
+        "x": 680,
+        "y": 980,
+        "decorations": false,
+        "transparent": true,
+        "resizable": false,
+        "alwaysOnTop": true,
+        "shadow": false,
+        "skipTaskbar": true
       }
     ],
     "security": {

@@ -3,10 +3,12 @@ import { motion } from "framer-motion";
 import { useStore } from "../lib/store";
 import type { ConnectionStatus } from "../lib/types";
 
+// glow strings MUST retain a literal "0.5" alpha — the badge background is derived
+// below via conn.glow.replace('0.5','0.08'). open = live aqua accent; offline = amber alert.
 const CONN_CONFIG: Record<ConnectionStatus, { label: string; color: string; glow: string }> = {
-  connecting: { label: "LINKING", color: "text-jarvis-gold", glow: "rgba(255,184,0,0.5)" },
-  open:       { label: "ONLINE",  color: "text-jarvis-cyan", glow: "rgba(0,212,255,0.5)" },
-  closed:     { label: "OFFLINE", color: "text-jarvis-red",  glow: "rgba(255,59,92,0.5)" },
+  connecting: { label: "LINKING", color: "text-jarvis-gold",   glow: "rgba(255,194,71,0.5)" },
+  open:       { label: "ONLINE",  color: "text-jarvis-accent", glow: "rgba(63,227,208,0.5)" },
+  closed:     { label: "OFFLINE", color: "text-jarvis-red",    glow: "rgba(224,144,46,0.5)" },
 };
 
 async function startDrag(e: MouseEvent) {

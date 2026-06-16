@@ -55,20 +55,22 @@ const SYMBOLS = [
 ];
 
 // --- Colour palette ---------------------------------------------------------
-const COL_NEURON_BASE = new Color("#b3d4ff"); // light blue-white node
+// Champagne-gold neural mass with a cool aqua accent. The "freedom pathways"
+// (formerly red) glow aqua against the gold to read as self-determination.
+const COL_NEURON_BASE = new Color("#ffe9c2"); // warm white-gold node
 const COL_NEURON_HOT = new Color("#ffffff"); // white-hot active node
-const COL_NEURON_GOLD = new Color("#ffd27a"); // gold tint (thinking)
-const COL_NEURON_CYAN = new Color("#7af0ff"); // cyan surge (speaking)
-const COL_CONN_DIM = new Color("#1a3a7a"); // dim blue connection
-const COL_CONN_HOT = new Color("#7ab8ff"); // bright cyan-blue connection
-const COL_RED_DIM = new Color("#440011"); // dark red pathway
-const COL_RED_HOT = new Color("#ff2244"); // vivid red pathway
+const COL_NEURON_GOLD = new Color("#ffc247"); // gold tint (thinking)
+const COL_NEURON_CYAN = new Color("#6ff0e2"); // aqua surge (speaking)
+const COL_CONN_DIM = new Color("#5a4410"); // dim gold connection
+const COL_CONN_HOT = new Color("#ffd66b"); // bright gold connection
+const COL_RED_DIM = new Color("#1f6e66"); // dim aqua freedom pathway
+const COL_RED_HOT = new Color("#8ffaec"); // vivid aqua freedom pathway
 
 const STATE_GLOW: Record<VoiceState, Color> = {
-  idle: new Color("#003366"), // deep blue
-  listening: new Color("#0066aa"), // brighter blue
-  thinking: new Color("#aa7700"), // gold
-  speaking: new Color("#0099cc"), // cyan
+  idle: new Color("#3a2e10"), // dim gold
+  listening: new Color("#1f6e66"), // aqua accent
+  thinking: new Color("#aa7700"), // bright gold
+  speaking: new Color("#1f8c82"), // aqua accent
 };
 
 /** Per-state behaviour knobs the animation lerps toward. */
@@ -314,7 +316,7 @@ export function HelixOrb({ voiceState, audioLevel }: OrbProps) {
     const hologramShell = new Mesh(
       new IcosahedronGeometry(BASE_RADIUS * 1.08, 2),
       new MeshBasicMaterial({
-        color: new Color("#0044aa"),
+        color: new Color("#5a4410"),
         wireframe: true,
         transparent: true,
         opacity: 0.04,

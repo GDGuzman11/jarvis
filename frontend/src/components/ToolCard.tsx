@@ -41,7 +41,7 @@ export function ToolCard({ agentId, tool }: ToolCardProps) {
           ? "border-jarvis-cyan bg-jarvis-cyan/20 text-jarvis-cyan"
           : "border-jarvis-gray/40 bg-transparent text-transparent hover:border-jarvis-cyan/60"
       }`}
-      style={allowed ? { boxShadow: "0 0 10px rgba(0,212,255,0.5)" } : undefined}
+      style={allowed ? { boxShadow: "0 0 10px rgba(255,194,71,0.5)" } : undefined}
     >
       {allowed ? "✓" : ""}
     </button>
