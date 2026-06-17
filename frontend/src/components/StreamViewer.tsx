@@ -20,14 +20,14 @@ export function StreamViewer({ text, active }: StreamViewerProps) {
   }, [text]);
 
   return (
-    <div className="hud-scroll h-full overflow-y-auto p-4 font-mono text-sm leading-relaxed text-jarvis-text/90">
+    <div className="hud-scroll h-full overflow-y-auto p-4 font-mono text-sm leading-relaxed text-helix-ink/90">
       {text.length === 0 ? (
-        <span className="italic text-jarvis-muted">Awaiting model output…</span>
+        <span className="italic text-helix-muted">Awaiting model output…</span>
       ) : (
         <span className="whitespace-pre-wrap break-words">{text}</span>
       )}
       {active && (
-        <span className="ml-0.5 inline-block h-4 w-2 translate-y-0.5 bg-jarvis-cyan animate-pulse-glow" />
+        <span className="ml-0.5 inline-block h-4 w-2 translate-y-0.5 bg-helix-gold animate-pulse-glow" />
       )}
       <div ref={endRef} />
     </div>

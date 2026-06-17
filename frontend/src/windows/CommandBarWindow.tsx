@@ -20,7 +20,7 @@ interface Verb {
 const VERBS: Verb[] = [
   { verb: "PLAN", target: "agents", hint: "Mission control & agents" },
   { verb: "EXECUTE", target: "reasoning", hint: "Reasoning & chat" },
-  { verb: "MONITOR", target: "agents", hint: "Agent status" },
+  { verb: "MONITOR", target: "reasoning", hint: "Live activity & metrics" },
   { verb: "LEARN", target: "memory", disabled: true, hint: "Memory graph — coming in 16F" },
   { verb: "ADAPT", target: "tools", hint: "Tool permissions" },
 ];
@@ -64,10 +64,10 @@ export function CommandBarWindow() {
   const online = agents.filter((a) => a.status !== "offline").length;
   const connColor =
     connection === "open"
-      ? "text-jarvis-accent"
+      ? "text-helix-accent"
       : connection === "closed"
-        ? "text-jarvis-red"
-        : "text-jarvis-gold";
+        ? "text-helix-alert"
+        : "text-helix-gold-bright";
   const connLabel =
     connection === "open" ? "ONLINE" : connection === "closed" ? "OFFLINE" : "LINKING";
 
@@ -97,16 +97,16 @@ export function CommandBarWindow() {
         title="Drag to move"
         className="flex cursor-grab select-none items-center justify-center gap-3 px-3 pb-1.5 pt-1 text-[9px] uppercase tracking-widest active:cursor-grabbing"
       >
-        <span className="truncate text-jarvis-cyan/80">{model}</span>
-        <span className="text-jarvis-muted">·</span>
-        <span className="text-jarvis-muted">
-          AGENTS <span className="text-jarvis-cyan">{online}/{agents.length}</span>
+        <span className="truncate text-helix-gold/80">{model}</span>
+        <span className="text-helix-muted">·</span>
+        <span className="text-helix-muted">
+          AGENTS <span className="text-helix-gold">{online}/{agents.length}</span>
         </span>
-        <span className="text-jarvis-muted">·</span>
+        <span className="text-helix-muted">·</span>
         <span className={connColor}>{connLabel}</span>
-        <span className="text-jarvis-muted">·</span>
-        <span className="text-jarvis-muted">
-          SESSION <span className="font-mono text-jarvis-gold">${sessionCostUsd.toFixed(2)}</span>
+        <span className="text-helix-muted">·</span>
+        <span className="text-helix-muted">
+          SESSION <span className="font-mono text-helix-gold-bright">${sessionCostUsd.toFixed(2)}</span>
         </span>
       </div>
     </div>

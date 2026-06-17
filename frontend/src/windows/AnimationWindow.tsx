@@ -89,23 +89,23 @@ export function AnimationWindow() {
         type="button"
         title="Shutdown Helix"
         onClick={requestShutdown}
-        className="absolute right-3 top-3 z-20 flex h-8 w-8 items-center justify-center border border-jarvis-red/50 text-jarvis-red text-base transition-all duration-200 hover:border-jarvis-red hover:text-jarvis-red hover:shadow-[0_0_12px_rgba(224,144,46,0.6)]"
+        className="absolute right-3 top-3 z-20 flex h-8 w-8 items-center justify-center border border-helix-alert/50 text-helix-alert text-base transition-all duration-200 hover:border-helix-alert hover:text-helix-alert hover:shadow-[0_0_12px_rgba(255,90,90,0.6)]"
       >
         ⏻
       </button>
       {/* Top tagline + identity flourishes (reference hub motif). */}
       <div className="pointer-events-none absolute inset-x-0 top-3 flex flex-col items-center gap-0.5">
-        <span className="text-[9px] font-semibold uppercase tracking-[0.55em] text-jarvis-cyan/70 text-glow-gold">
+        <span className="text-[9px] font-semibold uppercase tracking-[0.55em] text-helix-gold/70 text-glow-gold">
           THINK · PLAN · ACT · ELEVATE
         </span>
-        <span className="text-[7px] uppercase tracking-[0.4em] text-jarvis-muted">
+        <span className="text-[7px] uppercase tracking-[0.4em] text-helix-muted">
           HELIX · CORE INTELLIGENCE
         </span>
       </div>
       <div className="pointer-events-none absolute inset-x-0 bottom-6 flex justify-center">
         <span
           className={`text-xs font-semibold uppercase tracking-[0.5em] ${
-            live ? "text-jarvis-accent text-glow-accent" : "text-jarvis-cyan text-glow-gold"
+            live ? "text-helix-accent text-glow-accent" : "text-helix-gold text-glow-gold"
           }`}
         >
           {STATE_LABEL[voiceState] ?? voiceState}
@@ -117,7 +117,7 @@ export function AnimationWindow() {
         title="Drag to move"
         className="absolute inset-x-0 bottom-0 z-10 flex h-6 cursor-grab items-center justify-center active:cursor-grabbing"
       >
-        <span className="pointer-events-none h-1 w-10 rounded-full bg-jarvis-cyan/40" />
+        <span className="pointer-events-none h-1 w-10 rounded-full bg-helix-gold/40" />
       </div>
     </div>
   );

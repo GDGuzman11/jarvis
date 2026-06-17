@@ -19,13 +19,13 @@ export function ToolsWindow() {
         <table className="w-full border-separate" style={{ borderSpacing: "0.5rem" }}>
           <thead>
             <tr>
-              <th className="sticky left-0 bg-jarvis-bg/80 px-2 py-1 text-left text-[10px] uppercase tracking-widest text-jarvis-muted">
+              <th className="sticky left-0 bg-helix-bg/80 px-2 py-1 text-left text-[10px] uppercase tracking-widest text-helix-muted">
                 Tool / Agent
               </th>
               {agents.map((a) => (
                 <th key={a.agent_id} className="px-1 py-1 text-center">
-                  <div className="text-xs font-bold text-glow-cyan">{a.agent_name}</div>
-                  <div className="text-[9px] uppercase tracking-widest text-jarvis-muted">{a.role}</div>
+                  <div className="text-xs font-bold text-glow-gold">{a.agent_name}</div>
+                  <div className="text-[9px] uppercase tracking-widest text-helix-muted">{a.role}</div>
                 </th>
               ))}
             </tr>
@@ -33,7 +33,7 @@ export function ToolsWindow() {
           <tbody>
             {tools.map((tool) => (
               <tr key={tool}>
-                <td className="sticky left-0 bg-jarvis-bg/80 px-2 py-1 font-mono text-xs text-jarvis-text">
+                <td className="sticky left-0 bg-helix-bg/80 px-2 py-1 font-mono text-xs text-helix-ink">
                   {tool}
                 </td>
                 {agents.map((a) => (

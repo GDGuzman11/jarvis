@@ -2,23 +2,19 @@
 
 /*
  * Champagne-gold / near-black / white HUD palette.
- * Token NAMES are kept as `jarvis-*` (internal/developer-facing only) to avoid a
- * sweeping rename; only their VALUES changed. `jarvis-cyan` is now the primary gold,
- * `jarvis-red` is now a muted amber ALERT (zero red anywhere). The cool aqua accent
- * (live states: online / listening / speaking / active) is the new `jarvis-accent`.
+ * Gold is primary, aqua (`helix-accent`) marks live states, and true red
+ * (`helix-alert` #FF5A5A) is reserved exclusively for hard-failure states.
  */
 @theme {
-  --color-jarvis-bg: #08080a;
-  --color-jarvis-panel: rgba(16, 14, 10, 0.5);
-  --color-jarvis-cyan: #ffc247;          /* primary gold */
-  --color-jarvis-cyan-bright: #ffe9a8;   /* gold highlight */
-  --color-jarvis-gold: #ffe9a8;          /* highlight (aligned with gold-bright) */
-  --color-jarvis-red: #e0902e;           /* amber ALERT — no red */
-  --color-jarvis-gray: #9a9488;          /* muted neutral */
-  --color-jarvis-text: #ffffff;          /* white ink */
-  --color-jarvis-muted: #9a9488;
-  --color-jarvis-accent: #3fe3d0;        /* cool aqua accent — live states */
-  --color-jarvis-accent-bright: #8ffaec;
+  --color-helix-bg: #08080a;
+  --color-helix-panel: rgba(16, 14, 10, 0.5);
+  --color-helix-gold: #ffc247;           /* primary gold */
+  --color-helix-gold-bright: #ffe9a8;    /* gold highlight */
+  --color-helix-alert: #FF5A5A;          /* true red — hard-failure states only */
+  --color-helix-muted: #9a9488;          /* muted neutral */
+  --color-helix-ink: #ffffff;            /* white ink */
+  --color-helix-accent: #3fe3d0;         /* cool aqua accent — live states */
+  --color-helix-accent-bright: #8ffaec;
   --font-hud: "Rajdhani", "Segoe UI", system-ui, sans-serif;
 }
 
@@ -32,7 +28,7 @@ html, body, #root {
 
 body {
   font-family: var(--font-hud);
-  color: var(--color-jarvis-text);
+  color: var(--color-helix-ink);
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
   /* Keep text readable against any desktop background showing through. */
@@ -74,12 +70,6 @@ body {
   background-size: 80px 80px, 80px 80px, 20px 20px, 20px 20px;
 }
 
-.text-glow-cyan {
-  text-shadow:
-    0 0 10px rgba(255, 194, 71, 0.8),
-    0 0 20px rgba(255, 194, 71, 0.3),
-    0 1px 4px rgba(0, 0, 0, 0.9);
-}
 .text-glow-gold {
   text-shadow:
     0 0 10px rgba(255, 194, 71, 0.8),
@@ -187,4 +177,3 @@ body {
   top: 0; right: 0;
   border-width: 1px 1px 0 0;
 }
-</content>

@@ -14,17 +14,17 @@ import { submitAgentTask, fetchAgentTasks, type AgentTask } from "../lib/api";
 
 /** queued=cyan, running=gold, done=green, failed=red. */
 const STATUS_COLOR: Record<string, string> = {
-  queued: "text-jarvis-cyan border-jarvis-cyan/40",
-  running: "text-jarvis-gold border-jarvis-gold/40",
-  in_progress: "text-jarvis-gold border-jarvis-gold/40",
+  queued: "text-helix-gold border-helix-gold/40",
+  running: "text-helix-gold-bright border-helix-gold-bright/40",
+  in_progress: "text-helix-gold-bright border-helix-gold-bright/40",
   done: "text-emerald-400 border-emerald-400/40",
   completed: "text-emerald-400 border-emerald-400/40",
-  failed: "text-jarvis-red border-jarvis-red/40",
-  error: "text-jarvis-red border-jarvis-red/40",
+  failed: "text-helix-alert border-helix-alert/40",
+  error: "text-helix-alert border-helix-alert/40",
 };
 
 function StatusPill({ status }: { status: string }) {
-  const cls = STATUS_COLOR[status] ?? "text-jarvis-muted border-jarvis-muted/40";
+  const cls = STATUS_COLOR[status] ?? "text-helix-muted border-helix-muted/40";
   return (
     <span className={`shrink-0 border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-widest ${cls}`}>
       {status}
@@ -72,8 +72,8 @@ export function AgentTaskPanel({ agentId }: { agentId: string }) {
   }
 
   return (
-    <div className="mt-3 border-t border-jarvis-cyan/10 pt-2" onClick={(e) => e.stopPropagation()}>
-      <p className="text-[10px] uppercase tracking-widest text-jarvis-muted">Assign Task</p>
+    <div className="mt-3 border-t border-helix-gold/10 pt-2" onClick={(e) => e.stopPropagation()}>
+      <p className="text-[10px] uppercase tracking-widest text-helix-muted">Assign Task</p>
       <div className="mt-1 flex gap-2">
         <input
           type="text"
@@ -82,7 +82,7 @@ export function AgentTaskPanel({ agentId }: { agentId: string }) {
           onKeyDown={handleKey}
           disabled={sending}
           placeholder="Describe a task…"
-          className="min-w-0 flex-1 border border-jarvis-cyan/30 bg-jarvis-bg/60 px-2 py-1.5 text-xs text-jarvis-text placeholder:text-jarvis-muted/50 outline-none transition-colors focus:border-jarvis-cyan/70 disabled:opacity-40"
+          className="min-w-0 flex-1 border border-helix-gold/30 bg-helix-bg/60 px-2 py-1.5 text-xs text-helix-ink placeholder:text-helix-muted/50 outline-none transition-colors focus:border-helix-gold/70 disabled:opacity-40"
         />
         <button
           type="button"
@@ -93,16 +93,16 @@ export function AgentTaskPanel({ agentId }: { agentId: string }) {
           {sending ? "…" : "SEND"}
         </button>
       </div>
-      {error && <p className="mt-1 text-[10px] text-jarvis-red">{error}</p>}
+      {error && <p className="mt-1 text-[10px] text-helix-alert">{error}</p>}
 
       <button
         type="button"
         onClick={() => setLogOpen((o) => !o)}
-        className="mt-2 flex w-full items-center gap-1 text-[10px] uppercase tracking-widest text-jarvis-muted hover:text-jarvis-cyan"
+        className="mt-2 flex w-full items-center gap-1 text-[10px] uppercase tracking-widest text-helix-muted hover:text-helix-gold"
       >
-        <span className="text-jarvis-cyan">{logOpen ? "▾" : "▸"}</span>
+        <span className="text-helix-gold">{logOpen ? "▾" : "▸"}</span>
         Task Log
-        <span className="text-jarvis-muted/70">({tasks.length})</span>
+        <span className="text-helix-muted/70">({tasks.length})</span>
       </button>
 
       <AnimatePresence initial={false}>
@@ -115,12 +115,12 @@ export function AgentTaskPanel({ agentId }: { agentId: string }) {
           >
             <ul className="mt-1 space-y-1">
               {loadingLog ? (
-                <li className="text-[11px] italic text-jarvis-muted">Loading…</li>
+                <li className="text-[11px] italic text-helix-muted">Loading…</li>
               ) : tasks.length === 0 ? (
-                <li className="text-[11px] italic text-jarvis-muted">No tasks yet.</li>
+                <li className="text-[11px] italic text-helix-muted">No tasks yet.</li>
               ) : (
                 tasks.map((t) => (
-                  <li key={t.task_id} className="flex items-center justify-between gap-2 text-[11px] text-jarvis-text/80">
+                  <li key={t.task_id} className="flex items-center justify-between gap-2 text-[11px] text-helix-ink/80">
                     <span className="truncate" title={t.goal}>
                       {t.goal.length > 60 ? `${t.goal.slice(0, 60)}…` : t.goal}
                     </span>

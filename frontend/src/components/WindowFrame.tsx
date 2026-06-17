@@ -4,11 +4,11 @@ import { useStore } from "../lib/store";
 import type { ConnectionStatus } from "../lib/types";
 
 // glow strings MUST retain a literal "0.5" alpha — the badge background is derived
-// below via conn.glow.replace('0.5','0.08'). open = live aqua accent; offline = amber alert.
+// below via conn.glow.replace('0.5','0.08'). open = live aqua accent; offline = red alert.
 const CONN_CONFIG: Record<ConnectionStatus, { label: string; color: string; glow: string }> = {
-  connecting: { label: "LINKING", color: "text-jarvis-gold",   glow: "rgba(255,194,71,0.5)" },
-  open:       { label: "ONLINE",  color: "text-jarvis-accent", glow: "rgba(63,227,208,0.5)" },
-  closed:     { label: "OFFLINE", color: "text-jarvis-red",    glow: "rgba(224,144,46,0.5)" },
+  connecting: { label: "LINKING", color: "text-helix-gold-bright",   glow: "rgba(255,194,71,0.5)" },
+  open:       { label: "ONLINE",  color: "text-helix-accent", glow: "rgba(63,227,208,0.5)" },
+  closed:     { label: "OFFLINE", color: "text-helix-alert",    glow: "rgba(255,90,90,0.5)" },
 };
 
 async function startDrag(e: MouseEvent) {
@@ -42,15 +42,15 @@ export function WindowFrame({ title, index = 0, children }: WindowFrameProps) {
       {/* Header */}
       <header
         onMouseDown={startDrag}
-        className="relative z-10 flex cursor-grab select-none items-center justify-between border-b border-jarvis-cyan/20 bg-black/20 px-4 py-2.5 active:cursor-grabbing"
+        className="relative z-10 flex cursor-grab select-none items-center justify-between border-b border-helix-gold/20 bg-black/20 px-4 py-2.5 active:cursor-grabbing"
       >
         {/* Left: accent + title */}
         <div className="flex items-center gap-2.5">
           <div className="flex gap-1">
-            <span className="h-3 w-px bg-jarvis-cyan opacity-80" />
-            <span className="h-3 w-px bg-jarvis-cyan/40" />
+            <span className="h-3 w-px bg-helix-gold opacity-80" />
+            <span className="h-3 w-px bg-helix-gold/40" />
           </div>
-          <span className="text-[11px] font-bold uppercase tracking-[0.35em] text-glow-cyan">
+          <span className="text-[11px] font-bold uppercase tracking-[0.35em] text-glow-gold">
             {title}
           </span>
         </div>
@@ -78,8 +78,8 @@ export function WindowFrame({ title, index = 0, children }: WindowFrameProps) {
       </div>
 
       {/* Bottom corner accents */}
-      <div className="pointer-events-none absolute bottom-0 left-0 h-2 w-2 border-b border-l border-jarvis-cyan/40" />
-      <div className="pointer-events-none absolute bottom-0 right-0 h-2 w-2 border-b border-r border-jarvis-cyan/40" />
+      <div className="pointer-events-none absolute bottom-0 left-0 h-2 w-2 border-b border-l border-helix-gold/40" />
+      <div className="pointer-events-none absolute bottom-0 right-0 h-2 w-2 border-b border-r border-helix-gold/40" />
     </motion.div>
   );
 }

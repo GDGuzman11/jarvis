@@ -38,8 +38,8 @@ export function ToolCard({ agentId, tool }: ToolCardProps) {
       aria-label={`${allowed ? "Revoke" : "Grant"} ${tool} for ${agentId}`}
       className={`flex h-7 w-7 items-center justify-center border transition-all ${
         allowed
-          ? "border-jarvis-cyan bg-jarvis-cyan/20 text-jarvis-cyan"
-          : "border-jarvis-gray/40 bg-transparent text-transparent hover:border-jarvis-cyan/60"
+          ? "border-helix-gold bg-helix-gold/20 text-helix-gold"
+          : "border-helix-muted/40 bg-transparent text-transparent hover:border-helix-gold/60"
       }`}
       style={allowed ? { boxShadow: "0 0 10px rgba(255,194,71,0.5)" } : undefined}
     >

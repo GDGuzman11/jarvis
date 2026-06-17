@@ -67,20 +67,20 @@ export function SetupWizardWindow() {
     <WindowFrame title="Setup" index={0}>
       <div className="hud-scroll h-full overflow-y-auto p-6">
         {loading ? (
-          <p className="text-sm text-jarvis-muted">Checking setup status…</p>
+          <p className="text-sm text-helix-muted">Checking setup status…</p>
         ) : (
           <>
             <div className="mb-4">
-              <p className="text-xs uppercase tracking-widest text-jarvis-muted">
+              <p className="text-xs uppercase tracking-widest text-helix-muted">
                 Credentials saved
               </p>
-              <p className="text-2xl font-bold text-glow-cyan">
+              <p className="text-2xl font-bold text-glow-gold">
                 {savedCount}
-                <span className="text-jarvis-muted"> / {total}</span>
+                <span className="text-helix-muted"> / {total}</span>
               </p>
-              <div className="mt-2 h-1 w-full bg-jarvis-cyan/10">
+              <div className="mt-2 h-1 w-full bg-helix-gold/10">
                 <div
-                  className="h-1 bg-jarvis-cyan transition-all"
+                  className="h-1 bg-helix-gold transition-all"
                   style={{ width: `${(savedCount / total) * 100}%` }}
                 />
               </div>
@@ -92,11 +92,11 @@ export function SetupWizardWindow() {
                 return (
                   <div key={key} className="glass p-3">
                     <div className="flex items-center justify-between">
-                      <label className="text-xs uppercase tracking-widest text-jarvis-muted">
+                      <label className="text-xs uppercase tracking-widest text-helix-muted">
                         {label}
                       </label>
                       {isSaved && (
-                        <span className="text-[10px] font-semibold tracking-widest text-jarvis-cyan">
+                        <span className="text-[10px] font-semibold tracking-widest text-helix-gold">
                           ✓ SAVED
                         </span>
                       )}
@@ -113,13 +113,13 @@ export function SetupWizardWindow() {
                         onKeyDown={(e) => {
                           if (e.key === "Enter") void handleSave(key);
                         }}
-                        className="min-w-0 flex-1 border-b border-jarvis-cyan/30 bg-transparent px-1 py-1 text-sm text-jarvis-text outline-none focus:border-jarvis-cyan"
+                        className="min-w-0 flex-1 border-b border-helix-gold/30 bg-transparent px-1 py-1 text-sm text-helix-ink outline-none focus:border-helix-gold"
                       />
                       <button
                         type="button"
                         disabled={busy === key || !(drafts[key] ?? "").trim()}
                         onClick={() => void handleSave(key)}
-                        className="glass glass-hover shrink-0 px-3 text-xs uppercase tracking-widest text-jarvis-cyan disabled:opacity-40"
+                        className="glass glass-hover shrink-0 px-3 text-xs uppercase tracking-widest text-helix-gold disabled:opacity-40"
                       >
                         {busy === key ? "…" : "Save"}
                       </button>
@@ -133,7 +133,7 @@ export function SetupWizardWindow() {
               <button
                 type="button"
                 onClick={handleLaunch}
-                className="glass glass-hover mt-6 w-full py-3 text-sm font-bold uppercase tracking-[0.3em] text-glow-cyan"
+                className="glass glass-hover mt-6 w-full py-3 text-sm font-bold uppercase tracking-[0.3em] text-glow-gold"
               >
                 Launch Helix
               </button>

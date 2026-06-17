@@ -25,15 +25,15 @@ function ToolCallCard({
   return (
     <div className="glass p-3">
       <div className="flex items-center justify-between">
-        <span className="font-mono text-sm font-bold text-jarvis-cyan">{toolName}()</span>
-        <span className="text-[10px] uppercase tracking-widest text-jarvis-muted">{agentId}</span>
+        <span className="font-mono text-sm font-bold text-helix-gold">{toolName}()</span>
+        <span className="text-[10px] uppercase tracking-widest text-helix-muted">{agentId}</span>
       </div>
-      <pre className="hud-scroll mt-2 max-h-20 overflow-auto whitespace-pre-wrap break-words text-[11px] text-jarvis-text/70">
+      <pre className="hud-scroll mt-2 max-h-20 overflow-auto whitespace-pre-wrap break-words text-[11px] text-helix-ink/70">
         {JSON.stringify(args, null, 2)}
       </pre>
-      <div className="mt-1 border-t border-jarvis-cyan/10 pt-1">
-        <span className="text-[10px] uppercase tracking-widest text-jarvis-muted">Result</span>
-        <pre className="hud-scroll mt-0.5 max-h-20 overflow-auto whitespace-pre-wrap break-words text-[11px] text-jarvis-gold/80">
+      <div className="mt-1 border-t border-helix-gold/10 pt-1">
+        <span className="text-[10px] uppercase tracking-widest text-helix-muted">Result</span>
+        <pre className="hud-scroll mt-0.5 max-h-20 overflow-auto whitespace-pre-wrap break-words text-[11px] text-helix-gold-bright/80">
           {result === null ? "… in flight" : JSON.stringify(result, null, 2)}
         </pre>
       </div>
@@ -47,7 +47,7 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
     <div className={`flex flex-col ${isUser ? "items-end" : "items-start"}`}>
       <span
         className={`mb-0.5 text-[9px] font-bold uppercase tracking-[0.25em] ${
-          isUser ? "text-jarvis-muted" : "text-jarvis-cyan/70"
+          isUser ? "text-helix-muted" : "text-helix-gold/70"
         }`}
       >
         {isUser ? "You" : "Helix"}
@@ -55,13 +55,13 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
       <div
         className={`max-w-[80%] whitespace-pre-wrap break-words px-3 py-2 text-xs leading-relaxed ${
           isUser
-            ? "border border-jarvis-cyan/30 bg-jarvis-cyan/10 text-right text-jarvis-text"
-            : "border border-white/10 bg-white/5 text-left text-jarvis-text"
+            ? "border border-helix-gold/30 bg-helix-gold/10 text-right text-helix-ink"
+            : "border border-white/10 bg-white/5 text-left text-helix-ink"
         }`}
       >
         {msg.content}
         {msg.role === "helix" && !msg.complete && (
-          <span className="ml-0.5 inline-block h-3 w-1.5 animate-pulse-glow bg-jarvis-accent align-middle" />
+          <span className="ml-0.5 inline-block h-3 w-1.5 animate-pulse-glow bg-helix-accent align-middle" />
         )}
       </div>
     </div>
@@ -125,26 +125,26 @@ export function ReasoningWindow() {
       <div className="flex h-full flex-col gap-3 p-4">
         {/* Header row: model badge + live metrics */}
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="glass px-3 py-1.5 text-sm font-bold tracking-wide text-glow-cyan">
+          <span className="glass px-3 py-1.5 text-sm font-bold tracking-wide text-glow-gold">
             {model}
           </span>
           <div className="flex flex-wrap items-center gap-2">
             <span className="glass px-3 py-1.5 text-xs">
-              <span className="text-jarvis-muted">COST </span>
-              <span className="font-mono text-jarvis-gold">${metrics.cost_usd.toFixed(4)}</span>
+              <span className="text-helix-muted">COST </span>
+              <span className="font-mono text-helix-gold-bright">${metrics.cost_usd.toFixed(4)}</span>
             </span>
             <span className="glass px-3 py-1.5 text-xs">
-              <span className="text-jarvis-muted">SESSION </span>
-              <span className="font-mono text-jarvis-gold">${sessionCostUsd.toFixed(2)}</span>
+              <span className="text-helix-muted">SESSION </span>
+              <span className="font-mono text-helix-gold-bright">${sessionCostUsd.toFixed(2)}</span>
             </span>
             <span className="glass px-3 py-1.5 text-xs">
-              <span className="text-jarvis-muted">LATENCY </span>
-              <span className="font-mono text-jarvis-cyan">{metrics.latency_ms} ms</span>
+              <span className="text-helix-muted">LATENCY </span>
+              <span className="font-mono text-helix-gold">{metrics.latency_ms} ms</span>
             </span>
-            <span className="px-1 text-[10px] text-jarvis-muted">
+            <span className="px-1 text-[10px] text-helix-muted">
               {metrics.input_tokens} in / {metrics.output_tokens} out
               {metrics.cache_read_tokens > 0 && (
-                <span className="text-jarvis-muted/70"> · {metrics.cache_read_tokens} cached</span>
+                <span className="text-helix-muted/70"> · {metrics.cache_read_tokens} cached</span>
               )}
             </span>
           </div>
@@ -153,7 +153,7 @@ export function ReasoningWindow() {
         {/* Chat history */}
         <div ref={scrollRef} className="hud-scroll glass min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
           {chatHistory.length === 0 ? (
-            <p className="text-xs italic text-jarvis-muted">
+            <p className="text-xs italic text-helix-muted">
               {/* Wake phrase stays "Hey Jarvis": the OpenWakeWord model is
                   trained on "hey_jarvis" and only wakes on that phrase until a
                   custom "hey_helix" model is trained. Do not rename here. */}
@@ -166,9 +166,9 @@ export function ReasoningWindow() {
 
         {/* Tool calls */}
         <div className="hud-scroll max-h-[24%] min-h-0 shrink-0 space-y-2 overflow-y-auto">
-          <p className="text-[10px] uppercase tracking-widest text-jarvis-muted">Tool Calls</p>
+          <p className="text-[10px] uppercase tracking-widest text-helix-muted">Tool Calls</p>
           {toolCalls.length === 0 ? (
-            <p className="text-xs italic text-jarvis-muted">No tool calls yet.</p>
+            <p className="text-xs italic text-helix-muted">No tool calls yet.</p>
           ) : (
             toolCalls.map((c) => (
               <ToolCallCard key={c.id} toolName={c.tool_name} agentId={c.agent_id} args={c.args} result={c.result} />
@@ -178,7 +178,7 @@ export function ReasoningWindow() {
 
         {/* Text input — type a message when mic isn't available */}
         <div className="shrink-0 space-y-1">
-          <p className="text-[10px] uppercase tracking-widest text-jarvis-muted">
+          <p className="text-[10px] uppercase tracking-widest text-helix-muted">
             {busy ? voiceState.toUpperCase() : "Type a message"}
           </p>
           <div className="flex gap-2">
@@ -190,7 +190,7 @@ export function ReasoningWindow() {
               onKeyDown={handleKey}
               disabled={busy || sending}
               placeholder={busy ? "Helix is busy…" : "Ask Helix anything…"}
-              className="flex-1 border border-jarvis-cyan/30 bg-jarvis-bg/60 px-3 py-2 text-xs text-jarvis-text placeholder:text-jarvis-muted/50 outline-none transition-colors focus:border-jarvis-cyan/70 disabled:opacity-40"
+              className="flex-1 border border-helix-gold/30 bg-helix-bg/60 px-3 py-2 text-xs text-helix-ink placeholder:text-helix-muted/50 outline-none transition-colors focus:border-helix-gold/70 disabled:opacity-40"
             />
             <button
               type="button"
@@ -201,7 +201,7 @@ export function ReasoningWindow() {
               {sending ? "…" : "SEND"}
             </button>
           </div>
-          {error && <p className="text-[10px] text-jarvis-red">{error}</p>}
+          {error && <p className="text-[10px] text-helix-alert">{error}</p>}
         </div>
       </div>
     </WindowFrame>

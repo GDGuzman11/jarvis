@@ -45,14 +45,14 @@ export function MissionControl() {
   return (
     <div className="glass hud-corners mb-3 p-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-bold uppercase tracking-[0.3em] text-glow-cyan">
+        <h3 className="text-sm font-bold uppercase tracking-[0.3em] text-glow-gold">
           Mission Control
         </h3>
-        <span className="text-[10px] uppercase tracking-widest text-jarvis-muted">
+        <span className="text-[10px] uppercase tracking-widest text-helix-muted">
           Task Atlas
         </span>
       </div>
-      <p className="mt-1 text-[11px] text-jarvis-muted">
+      <p className="mt-1 text-[11px] text-helix-muted">
         Hand a high-level goal to Atlas — it breaks the work down and delegates.
       </p>
       <div className="mt-2 flex gap-2">
@@ -63,7 +63,7 @@ export function MissionControl() {
           onKeyDown={handleKey}
           disabled={sending}
           placeholder="e.g. Plan and ship the new onboarding flow…"
-          className="min-w-0 flex-1 border border-jarvis-cyan/30 bg-jarvis-bg/60 px-3 py-2 text-sm text-jarvis-text placeholder:text-jarvis-muted/50 outline-none transition-colors focus:border-jarvis-cyan/70 disabled:opacity-40"
+          className="min-w-0 flex-1 border border-helix-gold/30 bg-helix-bg/60 px-3 py-2 text-sm text-helix-ink placeholder:text-helix-muted/50 outline-none transition-colors focus:border-helix-gold/70 disabled:opacity-40"
         />
         <button
           type="button"
@@ -74,7 +74,7 @@ export function MissionControl() {
           {sending ? "DISPATCHING…" : "DISPATCH"}
         </button>
       </div>
-      {error && <p className="mt-1 text-[10px] text-jarvis-red">{error}</p>}
+      {error && <p className="mt-1 text-[10px] text-helix-alert">{error}</p>}
       {confirmed && (
         <p className="mt-1 text-[10px] text-emerald-400">Goal dispatched to Atlas.</p>
       )}

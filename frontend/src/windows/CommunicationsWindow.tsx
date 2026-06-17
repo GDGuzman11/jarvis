@@ -30,7 +30,7 @@ function ActionButton({ label, onClick }: { label: string; onClick: () => void }
     <button
       type="button"
       onClick={onClick}
-      className="glass glass-hover px-3 py-1 text-[10px] font-semibold uppercase tracking-widest text-jarvis-cyan"
+      className="glass glass-hover px-3 py-1 text-[10px] font-semibold uppercase tracking-widest text-helix-gold"
     >
       {label}
     </button>
@@ -41,17 +41,17 @@ function MessageCard({ top, mid, snippet, unread }: { top: string; mid: string; 
   return (
     <div className="glass glass-hover p-3">
       <div className="flex items-center justify-between">
-        <span className="truncate text-sm font-semibold text-jarvis-text">{top}</span>
-        {unread && <span className="h-2 w-2 shrink-0 bg-jarvis-accent" style={{ boxShadow: "0 0 8px #3fe3d0" }} />}
+        <span className="truncate text-sm font-semibold text-helix-ink">{top}</span>
+        {unread && <span className="h-2 w-2 shrink-0 bg-helix-accent" style={{ boxShadow: "0 0 8px #3fe3d0" }} />}
       </div>
-      <p className="mt-0.5 truncate text-xs text-jarvis-cyan/80">{mid}</p>
-      <p className="mt-1 line-clamp-2 text-xs text-jarvis-muted">{snippet}</p>
+      <p className="mt-0.5 truncate text-xs text-helix-gold/80">{mid}</p>
+      <p className="mt-1 line-clamp-2 text-xs text-helix-muted">{snippet}</p>
     </div>
   );
 }
 
 function EmptyState({ label }: { label: string }) {
-  return <p className="px-1 text-xs italic text-jarvis-muted">{label}</p>;
+  return <p className="px-1 text-xs italic text-helix-muted">{label}</p>;
 }
 
 export function CommunicationsWindow() {
@@ -75,7 +75,7 @@ export function CommunicationsWindow() {
           )}
         </Panel>
 
-        <div className="w-px bg-jarvis-cyan/15" />
+        <div className="w-px bg-helix-gold/15" />
 
         <Panel
           title="Gmail"

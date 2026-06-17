@@ -77,7 +77,7 @@ function App() {
           <button
             type="button"
             onClick={() => setActive(null)}
-            className="glass glass-hover fixed top-3 left-3 z-50 px-3 py-1 text-xs uppercase tracking-widest text-jarvis-cyan"
+            className="glass glass-hover fixed top-3 left-3 z-50 px-3 py-1 text-xs uppercase tracking-widest text-helix-gold"
           >
             ← Back
           </button>
@@ -91,7 +91,7 @@ function App() {
   // tab preview each window for development without the native multi-window shell.
   return (
     <div className="hud-bg min-h-screen p-6">
-      <h1 className="mb-4 text-lg font-bold uppercase tracking-[0.4em] text-glow-cyan">
+      <h1 className="mb-4 text-lg font-bold uppercase tracking-[0.4em] text-glow-gold">
         Helix HUD — Dev Preview
       </h1>
       <div className="flex flex-wrap gap-2">
@@ -100,13 +100,13 @@ function App() {
             key={w}
             type="button"
             onClick={() => setActive(w)}
-            className="glass glass-hover px-4 py-2 text-sm uppercase tracking-widest text-jarvis-cyan"
+            className="glass glass-hover px-4 py-2 text-sm uppercase tracking-widest text-helix-gold"
           >
             {w}
           </button>
         ))}
       </div>
-      <p className="mt-4 text-xs text-jarvis-muted">
+      <p className="mt-4 text-xs text-helix-muted">
         Select a window to preview. In the packaged app each opens in its own
         Tauri window automatically.
       </p>
