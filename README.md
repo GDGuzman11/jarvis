@@ -10,19 +10,8 @@ A local-first personal AI assistant for Windows 11. Say the wake phrase — it w
 
 ## Demo
 
-> 🎬 **Helix Short** — a quick look at Helix running on the desktop.
 
-<!--
-  HOW TO EMBED THE VIDEO (one-time, done from GitHub's web UI):
-    1. Open this README on github.com and click the ✏️ (Edit) pencil.
-    2. Drag-and-drop your "Helix Short.mp4" file onto the line just below this comment.
-    3. GitHub uploads it and auto-inserts an inline <video> player (a
-       https://github.com/user-attachments/assets/... link). Then Commit changes.
-  Note: References/ is gitignored, so the local .mp4 isn't in the repo — GitHub
-  hosts the uploaded copy on its CDN, which is what lets it play inline.
--->
-
-*▶️ Demo video goes here — drop **Helix Short.mp4** in via the GitHub editor (see the comment above).*
+https://github.com/user-attachments/assets/f4d59d31-791e-425a-be20-3d300a9c28a2
 
 ---
 
