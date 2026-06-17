@@ -89,6 +89,18 @@
         "decorations": false,
         "transparent": true,
         "resizable": true
+      },
+      {
+        "label": "memory",
+        "title": "Helix — Memory",
+        "url": "index.html?window=memory",
+        "width": 760,
+        "height": 760,
+        "x": 780,
+        "y": 760,
+        "decorations": false,
+        "transparent": false,
+        "resizable": true
       }
     ],
     "security": {

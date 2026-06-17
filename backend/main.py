@@ -43,6 +43,8 @@ from backend.logging_config import configure_logging, get_logger
 from backend.memory.database import (
     create_task,
     get_agent_tasks,
+    get_graph_facts,
+    get_graph_people,
     init_db,
     rename_agent,
 )
@@ -463,10 +465,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # fallback). Runs off the voice hot path inside the fire-and-forget
     # consolidate task, gated by the rule pre-filter, so it adds no latency to
     # the spoken reply and degrades to rule distillation if both LLMs are down.
+    # Phase 16F: hand the manager the WebSocket hub so a new fact emits a
+    # ``memory_update`` event and the Memory window's 3D brain grows a neuron live.
     memory_manager = MemoryManager(
         db_path=DEFAULT_DB_PATH,
         vector_store=vector_store,
         extractor=LLMExtractor(),
+        hub=hub,
     )
     app.state.memory_manager = memory_manager
     log.info("Memory manager ready")
@@ -841,6 +846,194 @@ async def list_agent_tasks_endpoint(agent_id: str) -> dict[str, Any]:
         for row in rows[:AGENT_TASK_LOG_LIMIT]
     ]
     return {"agent_id": agent_id, "tasks": tasks}
+
+
+# --- Memory graph data source (Phase 16F) -----------------------------------
+#
+# The Memory window renders Helix's knowledge as a 3D "brain": each neuron is a
+# real thing Helix knows (a distilled memory fact, a person, and — extensibly —
+# future node types like projects), and edges connect semantically-similar
+# memories. ``GET /api/memory/graph`` is that brain's data source. The response
+# is multi-source and *extensible*: ``nodes`` is built by concatenating one
+# builder per node ``type``, so a future ``type:"project"`` source slots in
+# without reshaping the contract.
+
+# Most-important/recent facts to surface as neurons (cap for perf).
+GRAPH_MAX_NODES: int = 400
+# People are a separate, smaller source.
+GRAPH_MAX_PEOPLE: int = 400
+# Pairwise cosine-similarity floor for an edge between two memory neurons.
+GRAPH_EDGE_THRESHOLD: float = 0.5
+# Hard cap on emitted edges (keeps the payload + frontend physics bounded).
+GRAPH_MAX_EDGES: int = 2000
+# Chars of a fact's content surfaced as the node preview.
+GRAPH_PREVIEW_CHARS: int = 120
+
+
+def _fact_to_graph_node(row: dict[str, Any]) -> dict[str, Any]:
+    """Shape one active ``memory_facts`` row into a ``type:"memory"`` node."""
+    content = row.get("content") or ""
+    return {
+        "id": f"fact:{row['id']}",
+        "type": "memory",
+        "text_preview": content[:GRAPH_PREVIEW_CHARS],
+        "text_full": content,
+        "importance": row.get("importance"),
+        "access_count": row.get("access_count") or 0,
+        "confidence": row.get("confidence"),
+        "created_at": row.get("created_at"),
+        "last_recalled_at": row.get("last_recalled_at"),
+        # Non-null marks a contradiction → the frontend colors the neuron red.
+        "conflicting_fact_ids": row.get("conflicting_fact_ids"),
+        # No dedicated subject column on memory_facts yet; reserved in the shape.
+        "subject": None,
+        "category": row.get("category"),
+    }
+
+
+def _person_to_graph_node(row: dict[str, Any]) -> dict[str, Any]:
+    """Shape one ``people`` row into a ``type:"person"`` node.
+
+    People carry no vectors in v1 (so no person edges); they tether to the brain
+    core on the frontend.
+    """
+    return {
+        "id": f"person:{row['id']}",
+        "type": "person",
+        "name": row.get("name"),
+        "email": row.get("email"),
+        "role": row.get("role"),
+        "notes": row.get("notes"),
+        "last_contact_at": row.get("last_contact_at"),
+        "created_at": row.get("created_at"),
+    }
+
+
+def _compute_similarity_edges(
+    vector_store: Any,
+    active_fact_ids: set[str],
+    threshold: float,
+    max_edges: int,
+) -> list[dict[str, Any]]:
+    """Pairwise cosine-similarity edges among the active memory neurons.
+
+    Reconstructs each *live* (non-tombstoned) fact vector straight from the FAISS
+    index — the store is an ``IndexFlatIP`` over L2-normalised vectors, so the dot
+    product equals cosine similarity. Only vectors whose ``fact_id`` is in
+    ``active_fact_ids`` (the facts that became nodes) are used, and a fact with
+    more than one vector contributes once. The N×D matrix is multiplied by its
+    transpose; the strict upper triangle above ``threshold`` becomes edges, capped
+    at ``max_edges`` (keeping the strongest). Synchronous + bounded (≤ one matmul
+    over ≤ ``GRAPH_MAX_NODES`` rows); the caller runs it via ``asyncio.to_thread``.
+    Returns ``[]`` for any store that can't be reconstructed (e.g. a fake/empty
+    store), never raising — a graph with no edges is still a valid graph.
+    """
+    import numpy as np
+
+    metadata = getattr(vector_store, "_metadata", None)
+    if not metadata:
+        return []
+    tombstoned = getattr(vector_store, "_tombstoned", set()) or set()
+    index = getattr(vector_store, "_index", None)
+    if index is None:
+        ensure = getattr(vector_store, "_ensure_index", None)
+        index = ensure() if callable(ensure) else None
+    if index is None or not hasattr(index, "reconstruct"):
+        return []
+
+    vectors: list[Any] = []
+    ids: list[str] = []
+    seen: set[str] = set()
+    for position, meta in enumerate(metadata):
+        if position in tombstoned:
+            continue
+        fid = meta.get("fact_id") if isinstance(meta, dict) else None
+        if fid is None:
+            continue
+        node_id = f"fact:{int(fid)}"
+        if node_id not in active_fact_ids or node_id in seen:
+            continue
+        try:
+            vec = index.reconstruct(position)
+        except Exception:  # noqa: BLE001 — skip a vector we can't reconstruct
+            continue
+        vectors.append(np.asarray(vec, dtype="float32"))
+        ids.append(node_id)
+        seen.add(node_id)
+
+    n = len(vectors)
+    if n < 2:
+        return []
+
+    matrix = np.vstack(vectors)
+    sims = matrix @ matrix.T
+    rows_idx, cols_idx = np.triu_indices(n, k=1)
+    edges: list[dict[str, Any]] = []
+    for i, j in zip(rows_idx.tolist(), cols_idx.tolist()):
+        similarity = float(sims[i, j])
+        if similarity > threshold:
+            edges.append(
+                {
+                    "source_id": ids[i],
+                    "target_id": ids[j],
+                    "similarity": similarity,
+                }
+            )
+
+    if len(edges) > max_edges:
+        edges.sort(key=lambda e: e["similarity"], reverse=True)
+        edges = edges[:max_edges]
+    return edges
+
+
+@app.get("/api/memory/graph", tags=["memory"])
+async def memory_graph_endpoint() -> dict[str, Any]:
+    """Return the memory brain's nodes + edges for the Memory window (Phase 16F).
+
+    ``nodes`` concatenates one builder per source — active memory facts
+    (``type:"memory"``) and people (``type:"person"``) — so future node types add
+    without reshaping the response. ``edges`` are pairwise cosine-similarity links
+    (> :data:`GRAPH_EDGE_THRESHOLD`) among the memory neurons, reconstructed from
+    the FAISS index. Degrades gracefully: a missing/empty memory backend returns
+    ``{"nodes": [], "edges": []}`` rather than a 500, and an edge-computation
+    failure still returns the nodes.
+    """
+    memory_manager: MemoryManager | None = getattr(
+        app.state, "memory_manager", None
+    )
+    vector_store = getattr(app.state, "vector_store", None)
+    if memory_manager is None:
+        return {"nodes": [], "edges": []}
+
+    db_path = memory_manager.db_path
+    try:
+        facts = await get_graph_facts(limit=GRAPH_MAX_NODES, db_path=db_path)
+        people = await get_graph_people(limit=GRAPH_MAX_PEOPLE, db_path=db_path)
+    except Exception:  # noqa: BLE001 — a graph read must never 500 the window
+        log.warning("memory_graph_nodes_failed", exc_info=True)
+        return {"nodes": [], "edges": []}
+
+    memory_nodes = [_fact_to_graph_node(row) for row in facts]
+    person_nodes = [_person_to_graph_node(row) for row in people]
+    nodes = memory_nodes + person_nodes
+
+    edges: list[dict[str, Any]] = []
+    active_fact_ids = {node["id"] for node in memory_nodes}
+    if vector_store is not None and active_fact_ids:
+        try:
+            edges = await asyncio.to_thread(
+                _compute_similarity_edges,
+                vector_store,
+                active_fact_ids,
+                GRAPH_EDGE_THRESHOLD,
+                GRAPH_MAX_EDGES,
+            )
+        except Exception:  # noqa: BLE001 — nodes still render without edges
+            log.warning("memory_graph_edges_failed", exc_info=True)
+            edges = []
+
+    log.info("memory_graph_served", nodes=len(nodes), edges=len(edges))
+    return {"nodes": nodes, "edges": edges}
 
 
 def _is_allowed_ws_origin(origin: str | None) -> bool:

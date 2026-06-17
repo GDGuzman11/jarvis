@@ -26,6 +26,7 @@ const ReasoningWindow = lazy(() => import("./windows/ReasoningWindow"));
 const CommunicationsWindow = lazy(() => import("./windows/CommunicationsWindow"));
 const AgentsWindow = lazy(() => import("./windows/AgentsWindow"));
 const ToolsWindow = lazy(() => import("./windows/ToolsWindow"));
+const MemoryWindow = lazy(() => import("./windows/MemoryWindow"));
 const SetupWizardWindow = lazy(() => import("./windows/SetupWizardWindow"));
 const ShutdownWindow = lazy(() => import("./windows/ShutdownWindow"));
 
@@ -35,6 +36,7 @@ export type WindowLabel =
   | "communications"
   | "agents"
   | "tools"
+  | "memory"
   | "setup"
   | "shutdown";
 
@@ -44,6 +46,7 @@ const WINDOWS: Record<WindowLabel, ComponentType> = {
   communications: CommunicationsWindow,
   agents: AgentsWindow,
   tools: ToolsWindow,
+  memory: MemoryWindow,
   setup: SetupWizardWindow,
   shutdown: ShutdownWindow,
 };

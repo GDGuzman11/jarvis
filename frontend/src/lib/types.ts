@@ -108,6 +108,68 @@ export interface ShutdownEvent {
   timestamp: string;
 }
 
+/* ── Memory graph (Window 6 — the 3D "memory brain") ───────────────────────
+ * Mirrors `GET /api/memory/graph`. Nodes are an open union keyed on `type`
+ * so a future `project` source slots in without reshaping the payload. The
+ * shared fields below appear on every node; the rest are type-specific. */
+
+/** Fields present on every graph node regardless of source. */
+interface MemoryNodeBase {
+  id: string;
+  type: string;
+  created_at?: string | null;
+}
+
+/** A distilled memory fact (`type: "memory"`). */
+export interface MemoryFactNode extends MemoryNodeBase {
+  type: "memory";
+  text_preview: string;
+  text_full: string;
+  importance: number; // 0..1
+  access_count: number;
+  confidence: number; // 0..1
+  last_recalled_at: string | null;
+  conflicting_fact_ids: string | null;
+  subject: string | null;
+  category?: string | null;
+}
+
+/** A person profile (`type: "person"`). */
+export interface MemoryPersonNode extends MemoryNodeBase {
+  type: "person";
+  name: string;
+  email?: string | null;
+  role?: string | null;
+  notes?: string | null;
+  last_contact_at?: string | null;
+}
+
+/** Any future/unknown node type still carries the base fields. */
+export interface MemoryGenericNode extends MemoryNodeBase {
+  [key: string]: unknown;
+}
+
+export type MemoryNode = MemoryFactNode | MemoryPersonNode | MemoryGenericNode;
+
+export interface MemoryEdge {
+  source_id: string;
+  target_id: string;
+  similarity: number; // 0.5..1
+}
+
+export interface MemoryGraph {
+  nodes: MemoryNode[];
+  edges: MemoryEdge[];
+}
+
+/** Backend `memory_update` event — grows/updates the brain live. */
+export interface MemoryUpdateEvent {
+  type: "memory_update";
+  action: "add" | "update" | "recall";
+  node: MemoryNode | null;
+  timestamp: string;
+}
+
 export type HelixEvent =
   | AgentUpdateEvent
   | TokenEvent
@@ -117,6 +179,7 @@ export type HelixEvent =
   | MetricsEvent
   | CommsEvent
   | ToolPermissionsEvent
+  | MemoryUpdateEvent
   | ShutdownEvent;
 
 /** A tool-call record as held in the store (args + eventual result). */

@@ -15,6 +15,8 @@ import type {
   AgentStatus,
   ConnectionStatus,
   GmailMessage,
+  MemoryEdge,
+  MemoryNode,
   SlackMessage,
   ToolCallRecord,
   VoiceState,
@@ -127,6 +129,17 @@ export interface HelixStore {
   permissions: Record<string, string[]>;
   setPermissions: (p: Record<string, string[]>, tools?: string[]) => void;
   toggleToolPermission: (agentId: string, tool: string) => void;
+
+  // --- Memory brain (Window 6) ---
+  memoryNodes: MemoryNode[];
+  memoryEdges: MemoryEdge[];
+  /** Most recently added/updated node id — lets the brain pop it in. */
+  memoryLastTouched: { id: string; action: string; at: number } | null;
+  setMemoryGraph: (nodes: MemoryNode[], edges: MemoryEdge[]) => void;
+  applyMemoryUpdate: (
+    action: "add" | "update" | "recall",
+    node: MemoryNode | null,
+  ) => void;
 }
 
 export const useStore = create<HelixStore>((set) => ({
@@ -281,5 +294,31 @@ export const useStore = create<HelixStore>((set) => ({
         ? current.filter((t) => t !== tool)
         : [...current, tool];
       return { permissions: { ...s.permissions, [agentId]: next } };
+    }),
+
+  memoryNodes: [],
+  memoryEdges: [],
+  memoryLastTouched: null,
+  setMemoryGraph: (memoryNodes, memoryEdges) =>
+    set({ memoryNodes, memoryEdges, memoryLastTouched: null }),
+  applyMemoryUpdate: (action, node) =>
+    set((s) => {
+      // `recall` with no node payload only flags an existing neuron to pulse.
+      if (!node) {
+        return s;
+      }
+      const idx = s.memoryNodes.findIndex((n) => n.id === node.id);
+      let memoryNodes = s.memoryNodes;
+      if (idx >= 0) {
+        // Update in place (merge so partial payloads don't wipe fields).
+        memoryNodes = s.memoryNodes.slice();
+        memoryNodes[idx] = { ...memoryNodes[idx], ...node } as MemoryNode;
+      } else if (action === "add" || action === "update") {
+        memoryNodes = [...s.memoryNodes, node];
+      }
+      return {
+        memoryNodes,
+        memoryLastTouched: { id: node.id, action, at: Date.now() },
+      };
     }),
 }));

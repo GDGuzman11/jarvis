@@ -68,6 +68,9 @@ function dispatch(event: HelixEvent): void {
     case "tool_permissions":
       s.setPermissions(event.permissions, event.tools);
       break;
+    case "memory_update":
+      s.applyMemoryUpdate(event.action, event.node);
+      break;
     case "shutdown":
       disconnectWebSocket();
       // Close the Tauri window; fall back to window.close() in browser mode.

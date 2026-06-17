@@ -41,6 +41,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from backend.events import MemoryUpdateEvent
 from backend.logging_config import get_logger
 from backend.memory import database
 from backend.memory.evaluator import MemoryEvaluator
@@ -289,6 +290,39 @@ def _sanitize_fact_text(text: str) -> str:
     return _CONTROL_CHARS_RE.sub("", text or "")
 
 
+# Phase 16F — how many chars of a fact go into the live event's text_preview.
+_GRAPH_PREVIEW_CHARS: int = 120
+
+
+def _build_memory_node(
+    fact_id: int,
+    content: str,
+    *,
+    category: str,
+    importance: float | None,
+    confidence: float | None = None,
+    access_count: int = 0,
+) -> dict[str, Any]:
+    """Build the minimal ``type:"memory"`` graph node for a live update (16F).
+
+    Mirrors the node shape the ``GET /api/memory/graph`` endpoint emits (the
+    ``fact:<n>`` id form + preview/full text + the columns the brain uses for
+    sizing/coloring) so the frontend can splice a ``memory_update`` straight into
+    the graph without reshaping. A brand-new fact has ``access_count`` 0 and no
+    recall timestamp yet.
+    """
+    return {
+        "id": f"fact:{fact_id}",
+        "type": "memory",
+        "text_preview": (content or "")[:_GRAPH_PREVIEW_CHARS],
+        "text_full": content,
+        "category": category,
+        "importance": importance,
+        "confidence": confidence,
+        "access_count": access_count,
+    }
+
+
 @dataclass
 class RecallResult:
     """The blended memory context returned by :meth:`MemoryManager.recall`.
@@ -341,11 +375,16 @@ class MemoryManager:
         *,
         evaluator: MemoryEvaluator | None = None,
         extractor: LLMExtractor | None = None,
+        hub: Any | None = None,
     ) -> None:
         self._db_path = db_path
         self._vector_store = vector_store
         self._evaluator = evaluator or MemoryEvaluator()
         self._extractor = extractor
+        # Phase 16F: optional WebSocket hub for live "grow the brain" events.
+        # Optional and defaulting to None so every pre-16F caller/test that builds
+        # the manager without a hub keeps working — the emit is then a no-op.
+        self._hub = hub
 
     # --- Database kwargs ----------------------------------------------------
 
@@ -439,6 +478,13 @@ class MemoryManager:
                     "source": source,
                     "importance": importance,
                 },
+            )
+            # Phase 16F: a directly-promoted fact is also a new neuron.
+            await self._emit_memory_update(
+                "add",
+                _build_memory_node(
+                    fact_id, content, category=category, importance=importance,
+                ),
             )
             log.info(
                 "memory_store_fact", category=category, source=source, fact_id=fact_id
@@ -569,7 +615,36 @@ class MemoryManager:
                 "importance": importance,
             },
         )
+        # Phase 16F: a new fact == a new neuron. Tell the brain to grow.
+        await self._emit_memory_update(
+            "add",
+            _build_memory_node(
+                fact_id, content, category=category, importance=importance,
+                confidence=confidence,
+            ),
+        )
         return fact_id
+
+    async def _emit_memory_update(
+        self, action: str, node: dict[str, Any] | None
+    ) -> None:
+        """Broadcast a ``memory_update`` so the brain grows a neuron live (16F).
+
+        Best-effort and self-contained: a no-op when no hub was injected (every
+        pre-16F caller/test), and any broadcast failure is logged and swallowed so
+        a memory write can never be broken by the UI fan-out. Awaited (not
+        create_task'd) because the call sites already run off the voice hot path
+        inside fire-and-forget consolidate/agent tasks, where the in-memory
+        broadcast adds no perceptible latency and stays deterministic for tests.
+        """
+        if self._hub is None:
+            return
+        try:
+            await self._hub.broadcast(
+                MemoryUpdateEvent(action=action, node=node)
+            )
+        except Exception:  # noqa: BLE001 — a UI emit must never break a write
+            log.warning("memory_update_emit_failed", exc_info=True)
 
     async def _tombstone_vector(self, fact_id: int) -> None:
         """Tombstone every FAISS vector for ``fact_id`` (Phase 16D). Never raises.

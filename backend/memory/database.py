@@ -1179,6 +1179,63 @@ async def get_memory_facts_by_ids(
     return [dict(row) for row in rows]
 
 
+# --- Phase 16F: memory-graph data source ------------------------------------
+
+
+async def get_graph_facts(
+    limit: int = 400,
+    *,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> list[dict]:
+    """Return active facts shaped for the memory-graph endpoint (Phase 16F).
+
+    Active = ``valid_to IS NULL`` (archived / superseded / decayed facts are
+    excluded, exactly like the recall filter). Returns one dict per fact with the
+    columns the brain visualization needs for node sizing/coloring and the hover
+    panel: ``id``, ``content`` (the frontend derives preview + full text),
+    ``category``, ``importance``, ``access_count``, ``confidence``,
+    ``created_at``, ``last_recalled_at`` and ``conflicting_fact_ids``. Ordered
+    most-important then most-recent first so the ``limit`` cap keeps the highest-
+    signal facts when a brain has more than ``limit`` neurons.
+    """
+    conn = await connect(db_path)
+    try:
+        cursor = await conn.execute(
+            "SELECT id, content, category, importance, access_count, confidence, "
+            "created_at, last_recalled_at, conflicting_fact_ids "
+            "FROM memory_facts WHERE valid_to IS NULL "
+            "ORDER BY importance DESC, id DESC LIMIT ?",
+            (int(limit),),
+        )
+        rows = await cursor.fetchall()
+    finally:
+        await conn.close()
+    return [dict(row) for row in rows]
+
+
+async def get_graph_people(
+    limit: int = 400,
+    *,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> list[dict]:
+    """Return contact profiles shaped for the memory-graph endpoint (Phase 16F).
+
+    Newest first. People become ``type:"person"`` nodes in the brain; in v1 they
+    carry no vectors (so no person edges) and tether to the core on the frontend.
+    """
+    conn = await connect(db_path)
+    try:
+        cursor = await conn.execute(
+            "SELECT id, name, email, slack_user_id, role, notes, "
+            "last_contact_at, created_at FROM people ORDER BY id DESC LIMIT ?",
+            (int(limit),),
+        )
+        rows = await cursor.fetchall()
+    finally:
+        await conn.close()
+    return [dict(row) for row in rows]
+
+
 # --- Phase 12: people (contact profiles) ------------------------------------
 
 

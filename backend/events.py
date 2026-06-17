@@ -60,6 +60,7 @@ EventType = Literal[
     "comms",
     "tool_permissions",
     "shutdown",
+    "memory_update",
 ]
 
 
@@ -233,6 +234,30 @@ class ToolPermissionsEvent(Event):
 
 
 @dataclass(slots=True)
+class MemoryUpdateEvent(Event):
+    """A memory fact was created/updated/recalled — grow the brain live (16F).
+
+    Broadcast from the memory write path (``MemoryManager._add_fact`` /
+    ``store_fact``) whenever a new neuron should appear in the Memory window's 3D
+    brain. ``action`` is ``"add"`` (a brand-new fact/neuron), ``"update"`` (an
+    existing fact changed) or ``"recall"`` (a fact was just recalled, so its
+    neuron can pulse). ``node`` carries the affected node in the same minimal
+    shape the ``GET /api/memory/graph`` endpoint emits (``id``, ``type``,
+    ``text_preview``, …) so the frontend can splice it straight into the graph
+    without a full refetch; it is ``None`` when only an id-less signal is needed.
+
+    Fact text may originate from untrusted sources (a Slack/email body that
+    became a fact). It rides this event as *display data* only and is never
+    re-injected into a model prompt by the frontend.
+    """
+
+    action: Literal["add", "update", "recall"]
+    node: dict[str, Any] | None = None
+    type: Literal["memory_update"] = "memory_update"
+    timestamp: str = field(default_factory=_utc_now_iso)
+
+
+@dataclass(slots=True)
 class ShutdownEvent(Event):
     """The backend is shutting down; windows should close (Phase 15B).
 
@@ -277,6 +302,7 @@ __all__ = [
     "MetricsEvent",
     "CommsEvent",
     "ToolPermissionsEvent",
+    "MemoryUpdateEvent",
     "ShutdownEvent",
     "serialize",
 ]

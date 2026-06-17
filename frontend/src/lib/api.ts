@@ -5,6 +5,8 @@
  * the toggle still works once the backend exposes the route.
  */
 
+import type { MemoryGraph } from "./types";
+
 const API_BASE = "http://127.0.0.1:8000";
 
 export async function fetchHealth(): Promise<{ status: string; version: string } | null> {
@@ -173,6 +175,25 @@ export async function submitAgentTask(
     throw new Error(data.detail ?? `Request failed (${res.status}).`);
   }
   return (await res.json()) as { task_id: number | string; status: string };
+}
+
+/**
+ * GET `/api/memory/graph` — the full memory brain snapshot (nodes + edges).
+ * Returns null on any error (offline backend, route missing, malformed body)
+ * so the Memory window can degrade to its "memory still forming" empty state.
+ */
+export async function fetchMemoryGraph(): Promise<MemoryGraph | null> {
+  try {
+    const res = await fetch(`${API_BASE}/api/memory/graph`);
+    if (!res.ok) return null;
+    const data = (await res.json()) as Partial<MemoryGraph>;
+    return {
+      nodes: Array.isArray(data.nodes) ? data.nodes : [],
+      edges: Array.isArray(data.edges) ? data.edges : [],
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
