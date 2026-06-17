@@ -6,7 +6,7 @@
  * the `memory_update` WebSocket event). OPAQUE window → bloom is safe here.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas } from "@react-three/fiber";
 import { Color } from "three";
 import WindowFrame from "../components/WindowFrame";
@@ -32,18 +32,21 @@ export function MemoryWindow() {
 
   const [query, setQuery] = useState("");
   const [hovered, setHovered] = useState<MemoryNode | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
 
-  // Load the brain snapshot once on open; live updates arrive via WebSocket.
-  useEffect(() => {
-    let alive = true;
-    fetchMemoryGraph().then((g) => {
-      if (alive && g) setMemoryGraph(g.nodes, g.edges);
-    });
-    return () => {
-      alive = false;
-    };
+  // Pull a fresh brain snapshot. Runs on open and from the ↻ button; live
+  // `memory_update` events still patch the graph in between refreshes.
+  const loadGraph = useCallback(async () => {
+    setRefreshing(true);
+    const g = await fetchMemoryGraph();
+    if (g) setMemoryGraph(g.nodes, g.edges);
+    setRefreshing(false);
   }, [setMemoryGraph]);
+
+  useEffect(() => {
+    void loadGraph();
+  }, [loadGraph]);
 
   const visibleIds = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -83,6 +86,15 @@ export function MemoryWindow() {
           <span className="text-[10px] uppercase tracking-wider text-helix-muted">
             {nodes.length} {nodes.length === 1 ? "memory" : "memories"}
           </span>
+          <button
+            type="button"
+            onClick={() => void loadGraph()}
+            disabled={refreshing}
+            title="Refresh memory graph"
+            className="hud-btn disabled:opacity-40"
+          >
+            {refreshing ? "…" : "↻ Refresh"}
+          </button>
         </div>
 
         {/* Empty / sparse state */}

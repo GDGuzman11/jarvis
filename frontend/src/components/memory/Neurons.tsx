@@ -44,6 +44,7 @@ const col = new Color();
 export default function Neurons({ nodes, edges, visibleIds, panelRef, onHover }: NeuronsProps) {
   const count = nodes.length;
   const meshRef = useRef<InstancedMesh>(null);
+  const hitRef = useRef<InstancedMesh>(null);
   const hoverRef = useRef(-1);
 
   // Stable id → instance index map and precomputed per-node styles.
@@ -75,6 +76,7 @@ export default function Neurons({ nodes, edges, visibleIds, panelRef, onHover }:
   useFrame((state, delta) => {
     const mesh = meshRef.current;
     if (!mesh) return;
+    const hit = hitRef.current;
     layout.step(delta, state.clock.elapsedTime);
     const p = layout.positions;
     const hovered = hoverRef.current;
@@ -97,6 +99,14 @@ export default function Neurons({ nodes, edges, visibleIds, panelRef, onHover }:
       dummy.updateMatrix();
       mesh.setMatrixAt(i, dummy.matrix);
 
+      // Larger invisible hover proxy at the same spot so small neurons are
+      // easy to target (the visible neuron keeps its styled size).
+      if (hit) {
+        dummy.scale.setScalar(Math.max(s.size * 2.8, 0.5) * pulse);
+        dummy.updateMatrix();
+        hit.setMatrixAt(i, dummy.matrix);
+      }
+
       const baseLum = visible ? (isMatch ? s.glow * 2.0 : s.glow) : 0.08;
       const lum = baseLum * (isHover ? 1.6 : 1);
       col.setRGB(s.color[0], s.color[1], s.color[2]).multiplyScalar(lum);
@@ -106,6 +116,7 @@ export default function Neurons({ nodes, edges, visibleIds, panelRef, onHover }:
     }
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    if (hit) hit.instanceMatrix.needsUpdate = true;
 
     // --- Similarity edges ---
     const ep = edgeLines.geometry.attributes.position.array as Float32Array;
@@ -169,14 +180,23 @@ export default function Neurons({ nodes, edges, visibleIds, panelRef, onHover }:
       <instancedMesh
         ref={meshRef}
         args={[undefined, undefined, Math.max(count, 1)]}
+      >
+        <sphereGeometry args={[1, 14, 14]} />
+        <meshBasicMaterial toneMapped={false} />
+      </instancedMesh>
+      {/* Invisible, larger hover proxies — decouple the hit area from the
+          visible neuron size so small neurons are still easy to target. */}
+      <instancedMesh
+        ref={hitRef}
+        args={[undefined, undefined, Math.max(count, 1)]}
         onPointerMove={(e: ThreeEvent<PointerEvent>) => {
           e.stopPropagation();
           if (e.instanceId !== undefined) setHover(e.instanceId);
         }}
         onPointerOut={() => setHover(-1)}
       >
-        <sphereGeometry args={[1, 14, 14]} />
-        <meshBasicMaterial toneMapped={false} />
+        <sphereGeometry args={[1, 10, 10]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </instancedMesh>
       <primitive object={edgeLines} />
       <primitive object={tetherLines} />
