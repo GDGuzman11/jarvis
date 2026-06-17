@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import random
 import signal
 import sqlite3
 import tempfile
@@ -88,19 +89,112 @@ ALLOWED_WS_ORIGINS: frozenset[str] = frozenset(ALLOWED_ORIGINS)
 log = get_logger(__name__)
 
 
+# Greeting "angles" — Helix's persona is fixed (calm British butler), but the
+# *framing* of the hello rotates each launch so the assistant doesn't open with
+# the identical sentence every single time. One is chosen at random per startup
+# and handed to Claude as the instruction; the persona system prompt keeps the
+# tone consistent regardless of which angle is drawn.
+_GREETING_ANGLES: tuple[str, ...] = (
+    "Greet Gabe and give a brief one-sentence system status.",
+    "Welcome Gabe back warmly, then state system readiness in one sentence.",
+    "Open with a calm good-day to Gabe and a one-line status report.",
+    "Acknowledge Gabe with a touch of dry wit, then a one-sentence status.",
+    "Greet Gabe as he settles in and confirm all systems in a single sentence.",
+    "Offer Gabe a composed hello and a crisp one-sentence status update.",
+    "Address Gabe directly, note you are at his service, and give a one-line status.",
+    "Greet Gabe and report, in one understated sentence, that all is in order.",
+)
+
+
+def _greeting_instruction() -> str:
+    """Pick a randomized greeting angle (Helix persona is preserved by the prompt).
+
+    Returns a single instruction line for Claude, drawn at random from
+    :data:`_GREETING_ANGLES`, with the shared length cap appended. Randomising the
+    *instruction* (not the persona) is what makes the spoken hello vary launch to
+    launch while the British-butler voice stays constant.
+    """
+    return random.choice(_GREETING_ANGLES) + " Keep it under 40 words."
+
+
+async def _append_open_loops(
+    spoken: str, memory_manager: MemoryManager | None
+) -> str:
+    """Append overdue open-loop reminders to ``spoken`` when any exist (Phase 12D).
+
+    Surfaces loops created more than 12 hours ago that are still ``open`` so Helix
+    proactively reminds Gabe of unfinished follow-ups at session start. Guarded: a
+    missing manager or a query failure simply returns ``spoken`` unchanged, so the
+    greeting always survives. Now that the open-loop system actually *resolves*
+    loops, this no longer nags about reminders the user already handled.
+    """
+    if memory_manager is None:
+        return spoken
+    from backend.memory.database import get_open_loops_async
+
+    try:
+        open_loops = await get_open_loops_async(
+            memory_manager.db_path, status="open", older_than_hours=12
+        )
+        if open_loops:
+            loop_text = ", ".join(
+                loop["description"][:60] for loop in open_loops[:3]
+            )
+            spoken += (
+                f" Also, sir — you have {len(open_loops)} open item(s) "
+                f"to follow up on: {loop_text}."
+            )
+            log.info("startup_open_loops_surfaced", count=len(open_loops))
+    except Exception:  # noqa: BLE001 — reminders must not break the greeting
+        log.warning("startup_open_loops_failed", exc_info=True)
+    return spoken
+
+
+async def _compose_greeting_text(
+    memory_manager: MemoryManager | None,
+    client: Any,
+    *,
+    context: str,
+    fallback: str,
+) -> str:
+    """Build the spoken greeting: a randomized hello + any overdue reminders.
+
+    Factored out of :func:`_startup_greeting` so the text composition is testable
+    without a WebSocket, audio device, or live API: a fake ``client`` whose
+    ``stream_response`` echoes the (randomized) instruction is enough to verify the
+    greeting varies across calls and that reminders still append when overdue loops
+    exist. The Claude call is fully guarded — any failure falls back to
+    ``fallback`` — and the persona system prompt keeps Helix's voice constant.
+    """
+    from backend.ai.persona import build_system_prompt
+
+    reply = ""
+    try:
+        messages = [{"role": "user", "content": _greeting_instruction()}]
+        async for token in client.stream_response(
+            messages, system_prompt=build_system_prompt(context=context)
+        ):
+            reply += token
+    except Exception:  # noqa: BLE001 — a greeting failure must never crash startup
+        log.warning("startup_greeting_failed", exc_info=True)
+
+    spoken = reply.strip() if reply.strip() else fallback
+    return await _append_open_loops(spoken, memory_manager)
+
+
 async def _startup_greeting(memory_manager: MemoryManager | None = None) -> None:
     """Speak a personalised greeting once the first Tauri window connects.
 
-    When a :class:`MemoryManager` is supplied (Phase 12D), the greeting also
-    surfaces *overdue* open loops — promises/reminders created more than 12 hours
-    ago that are still open — so Helix proactively reminds the user of
-    unfinished follow-ups at session start. Every memory access is guarded so the
-    greeting still works when ``memory_manager is None`` or the query fails.
+    The base hello is *randomized* each launch (see :func:`_greeting_instruction`)
+    so Helix doesn't open with the same line every time, while the British-butler
+    persona stays constant. When a :class:`MemoryManager` is supplied (Phase 12D),
+    the greeting also surfaces *overdue* open loops — promises/reminders created
+    more than 12 hours ago that are still open — so Helix proactively reminds the
+    user of unfinished follow-ups. Every memory access is guarded so the greeting
+    still works when ``memory_manager is None`` or the query fails.
     """
-    from backend.ai.claude_client import ClaudeClient, ClaudeAPIError
-    from backend.ai.persona import build_system_prompt
+    from backend.ai.claude_client import ClaudeClient
     from backend.events import VoiceStateEvent
-    from backend.memory.database import get_open_loops_async
     from backend.security.keystore import missing_credentials
     from backend.voice import tts
 
@@ -133,43 +227,9 @@ async def _startup_greeting(memory_manager: MemoryManager | None = None) -> None
         f"{cred_status.capitalize()}, sir."
     )
 
-    reply = ""
-    try:
-        client = ClaudeClient()
-        messages = [
-            {
-                "role": "user",
-                "content": "Greet your user and give a brief one-sentence system status. Keep it under 40 words.",
-            }
-        ]
-        async for token in client.stream_response(
-            messages, system_prompt=build_system_prompt(context=context)
-        ):
-            reply += token
-    except (ClaudeAPIError, Exception):
-        log.warning("startup_greeting_failed", exc_info=True)
-
-    spoken = reply.strip() if reply.strip() else fallback
-
-    # Surface overdue open loops (created > 12 hours ago, still open) so Helix
-    # proactively reminds the user of unfinished follow-ups (Phase 12D). Guarded:
-    # a missing manager or a query failure simply skips the reminder.
-    if memory_manager is not None:
-        try:
-            open_loops = await get_open_loops_async(
-                memory_manager.db_path, status="open", older_than_hours=12
-            )
-            if open_loops:
-                loop_text = ", ".join(
-                    loop["description"][:60] for loop in open_loops[:3]
-                )
-                spoken += (
-                    f" Also, sir — you have {len(open_loops)} open item(s) "
-                    f"to follow up on: {loop_text}."
-                )
-                log.info("startup_open_loops_surfaced", count=len(open_loops))
-        except Exception:  # noqa: BLE001 — reminders must not break the greeting
-            log.warning("startup_open_loops_failed", exc_info=True)
+    spoken = await _compose_greeting_text(
+        memory_manager, ClaudeClient(), context=context, fallback=fallback
+    )
 
     await hub.broadcast(VoiceStateEvent(state="speaking"))
     try:

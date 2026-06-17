@@ -54,6 +54,11 @@ EXTRACTION_MAX_TOKENS: int = 700
 _VALID_ACTIONS: frozenset[str] = frozenset({"ADD", "UPDATE", "DELETE", "NOOP"})
 _VALID_SOURCES: frozenset[str] = frozenset({"user", "inference"})
 
+# Open-loop (reminder/follow-up) actions the open-loop extractor may return.
+_VALID_OPEN_LOOP_ACTIONS: frozenset[str] = frozenset(
+    {"CREATE", "RESOLVE", "NOOP"}
+)
+
 # The extraction contract. Kept stable (and cache-friendly) across calls so the
 # Haiku prompt-cache prefix stays warm.
 EXTRACTION_SYSTEM_PROMPT: str = (
@@ -87,6 +92,40 @@ EXTRACTION_SYSTEM_PROMPT: str = (
     "- The entire output must be valid JSON parseable by a strict parser."
 )
 
+# The open-loop (reminder / follow-up / promise) extraction contract. Separate
+# from fact extraction because the judgement is different: it is far stricter
+# about what counts as a *genuine* reminder (the old keyword rule fired on bare
+# phrases like "need to" and stored sentence fragments such as "anymore" or
+# "s, no need to"), and it must also recognise when the user has *finished* or
+# wants to *drop* a reminder already on file. Kept stable for prompt-cache reuse.
+OPEN_LOOP_SYSTEM_PROMPT: str = (
+    "You manage the reminder list for Helix, a personal AI assistant.\n"
+    "You read ONE conversation turn (the user's message and Helix's reply) plus "
+    "the list of reminders already on file, and decide what should change.\n\n"
+    "Choose one action per item:\n"
+    "  CREATE  - the user genuinely asks to be reminded, makes a promise, or "
+    "commits to a concrete follow-up that should be tracked. Only create when "
+    "there is a real, actionable task with a clear, well-formed description.\n"
+    "  RESOLVE - the user indicates an existing reminder is done, handled, no "
+    "longer needed, or asks to remove/forget/cancel/clear it. Reference the "
+    "exact id of the reminder being closed out via \"target_id\".\n"
+    "  NOOP    - nothing to track here (small talk, a passing mention, a vague "
+    "musing, an incomplete fragment, or a pure question).\n\n"
+    "Be conservative. Do NOT create a reminder from a bare phrase, a half-"
+    "finished sentence, idle chatter, or a hypothetical. A reminder must read as "
+    "a complete, self-contained instruction, e.g. \"Call the dentist on Friday\" "
+    "or \"Send Maria the Q3 report\" - never a fragment like \"anymore\" or "
+    "\"need to\".\n"
+    "When the user is removing/forgetting/cancelling a reminder, ALWAYS choose "
+    "RESOLVE for the matching reminder and NEVER also CREATE a new one.\n\n"
+    "Return ONLY a JSON array. No prose, no markdown, no code fences. Each "
+    "element is an object with exactly these keys:\n"
+    '  {"action": "CREATE|RESOLVE|NOOP", "description": "<clean reminder text, '
+    'empty for RESOLVE/NOOP>", "target_id": <id of the reminder for RESOLVE, '
+    'else null>, "confidence": <number 0.0-1.0>}\n\n'
+    "If nothing should change, return an empty array: []"
+)
+
 
 @dataclass(frozen=True)
 class Extraction:
@@ -112,6 +151,29 @@ class Extraction:
     confidence: float
     subject: str
     source: str
+
+
+@dataclass(frozen=True)
+class OpenLoopOp:
+    """One reminder operation produced by the open-loop extractor.
+
+    Attributes
+    ----------
+    action:
+        One of ``CREATE`` / ``RESOLVE`` / ``NOOP`` (upper-cased).
+    description:
+        The clean reminder text for ``CREATE`` (empty for ``RESOLVE`` / ``NOOP``).
+    target_id:
+        For ``RESOLVE``, the ``open_loops.id`` the user just completed or asked to
+        drop. ``None`` for ``CREATE`` / ``NOOP``.
+    confidence:
+        Model confidence in ``[0.0, 1.0]``.
+    """
+
+    action: str
+    description: str
+    target_id: int | None
+    confidence: float
 
 
 def _coerce_confidence(value: Any) -> float:
@@ -203,6 +265,50 @@ def _normalise(raw_items: list[Any]) -> list[Extraction]:
     return out
 
 
+def _coerce_target_id(value: Any) -> int | None:
+    """Best-effort parse of a RESOLVE ``target_id`` into an int, else ``None``."""
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalise_open_loops(raw_items: list[Any]) -> list[OpenLoopOp]:
+    """Validate + normalise raw JSON objects into :class:`OpenLoopOp` records.
+
+    Drops malformed/under-specified entries rather than raising so one bad object
+    never discards the whole batch: a ``CREATE`` with no description and a
+    ``RESOLVE`` with no resolvable ``target_id`` are both useless and skipped.
+    ``NOOP`` entries are dropped too — they carry no action for the caller.
+    """
+    out: list[OpenLoopOp] = []
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        action = str(item.get("action", "")).strip().upper()
+        if action not in _VALID_OPEN_LOOP_ACTIONS:
+            continue
+        description = str(item.get("description", "") or "").strip()
+        target_id = _coerce_target_id(item.get("target_id"))
+        if action == "CREATE" and not description:
+            continue
+        if action == "RESOLVE" and target_id is None:
+            continue
+        if action == "NOOP":
+            continue
+        out.append(
+            OpenLoopOp(
+                action=action,
+                description=description,
+                target_id=target_id,
+                confidence=_coerce_confidence(item.get("confidence", 0.8)),
+            )
+        )
+    return out
+
+
 class LLMExtractor:
     """Extract structured memory operations from a turn via Haiku → phi3.5.
 
@@ -288,11 +394,93 @@ class LLMExtractor:
         log.info("memory_extract_done", count=len(extractions))
         return extractions
 
+    # --- Open-loop (reminder/follow-up) judgement ---------------------------
+
+    @staticmethod
+    def _build_open_loop_messages(
+        user_text: str, reply: str, open_loops: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Render the turn + the current reminder list into one user message."""
+        if open_loops:
+            loop_lines = "\n".join(
+                f"{loop.get('id')}: {loop.get('description', '')}"
+                for loop in open_loops
+            )
+            loop_block = (
+                "Reminders already on file (id: description):\n" + loop_lines
+            )
+        else:
+            loop_block = "There are no reminders on file."
+        return [
+            {
+                "role": "user",
+                "content": (
+                    f"User: {user_text or ''}\n"
+                    f"Helix: {reply or ''}\n\n"
+                    f"{loop_block}\n\n"
+                    "Return reminder operations as a JSON array."
+                ),
+            }
+        ]
+
+    async def extract_open_loops(
+        self,
+        user_text: str,
+        reply: str,
+        open_loops: list[dict[str, Any]],
+    ) -> list[OpenLoopOp]:
+        """Judge reminder CREATE/RESOLVE for one turn (Haiku → phi3.5 → ``[]``).
+
+        Mirrors :meth:`extract`'s resilience: Claude Haiku first; on an API error
+        *or* unparseable output, fall back to local phi3.5; if both fail, return
+        ``[]`` so the caller simply makes no reminder change. The LLM is far better
+        than the old keyword rule at telling a genuine reminder from a fragment,
+        and — given the current ``open_loops`` with their ids — can resolve the
+        right reminder when the user says it is done or asks to forget it. Never
+        raises; off the voice hot path (called from the fire-and-forget
+        consolidate task).
+        """
+        messages = self._build_open_loop_messages(user_text, reply, open_loops)
+
+        raw: str | None = None
+        try:
+            raw = await self._claude.complete(
+                messages,
+                OPEN_LOOP_SYSTEM_PROMPT,
+                model=self._model,
+                max_tokens=EXTRACTION_MAX_TOKENS,
+            )
+        except Exception as exc:  # noqa: BLE001 — any failure → fall back
+            log.warning("open_loop_extract_claude_failed", error=str(exc))
+            raw = None
+
+        items = _extract_json_array(raw) if raw is not None else None
+
+        if items is None:
+            try:
+                raw = await self._ollama.complete(
+                    messages, OPEN_LOOP_SYSTEM_PROMPT, fmt="json"
+                )
+            except Exception as exc:  # noqa: BLE001 — fallback must not raise
+                log.warning("open_loop_extract_ollama_failed", error=str(exc))
+                raw = None
+            items = _extract_json_array(raw) if raw else None
+
+        if items is None:
+            log.info("open_loop_extract_unparseable")
+            return []
+
+        ops = _normalise_open_loops(items)
+        log.info("open_loop_extract_done", count=len(ops))
+        return ops
+
 
 __all__ = [
     "LLMExtractor",
     "Extraction",
+    "OpenLoopOp",
     "EXTRACTION_MODEL",
     "EXTRACTION_SYSTEM_PROMPT",
+    "OPEN_LOOP_SYSTEM_PROMPT",
     "EXTRACTION_MAX_TOKENS",
 ]

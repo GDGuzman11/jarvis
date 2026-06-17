@@ -471,12 +471,13 @@ class MemoryManager:
         """
         try:
             # --- Intelligence layer (Phase 12D): open loops + people --------
-            # Both run off the hot path as fire-and-forget tasks so they never
-            # add latency, and they fire regardless of the importance score (a
-            # reminder or a contact mention is worth capturing even when the
-            # exchange itself doesn't promote to a semantic fact).
-            for desc in self._evaluator.detect_open_loops(user_text):
-                asyncio.create_task(self._save_open_loop_async(desc, source=source))
+            # Both run off the hot path (consolidate is itself a fire-and-forget
+            # task) and fire regardless of the importance score — a reminder or a
+            # contact mention is worth capturing even when the exchange itself
+            # doesn't promote to a semantic fact. Open-loop handling is fully
+            # self-contained (its own try/except) so a reminder failure can never
+            # abort the fact extraction below.
+            await self._process_open_loops(user_text, reply, source=source)
 
             person = self._evaluator.extract_person(f"{user_text} {reply}")
             if person:
@@ -849,6 +850,81 @@ class MemoryManager:
             log.info("memory_open_loop_saved", source=source)
         except Exception:  # noqa: BLE001 — a loop write must not break a turn
             log.warning("memory_open_loop_failed", exc_info=True)
+
+    async def _process_open_loops(
+        self, user_text: str, reply: str, *, source: str
+    ) -> None:
+        """Create/resolve reminders for one turn. Self-contained; never raises.
+
+        This replaces the old write-only keyword path that fired on bare phrases
+        ("need to", "follow up") and stored sentence fragments as reminders while
+        never resolving anything. Two paths:
+
+        * **LLM path** (production — an :class:`LLMExtractor` is wired): a cheap
+          keyword *pre-filter* gates an LLM call (so idle chatter costs nothing),
+          then the LLM judges whether this is a genuine reminder worth creating
+          and which existing reminder(s), if any, the user just finished or asked
+          to forget. "Remove my reminder about X" therefore RESOLVES the matching
+          loop and never re-creates one — the core bug this fixes.
+        * **Fallback path** (no LLM extractor — e.g. unit tests, or a degraded
+          deployment): the conservative keyword detection, used only because no
+          better judge is available. It is deliberately *not* the default, so the
+          garbage-fragment behaviour cannot occur whenever the LLM is present.
+        """
+        try:
+            extractor = self._extractor
+            if extractor is not None and hasattr(extractor, "extract_open_loops"):
+                existing = await database.get_open_loops(
+                    "open", **self._db_kwargs()
+                )
+                if not self._evaluator.open_loop_prefilter(
+                    user_text, has_open_loops=bool(existing)
+                ):
+                    return
+                ops = await extractor.extract_open_loops(
+                    user_text, reply, existing
+                )
+                await self._apply_open_loop_ops(ops, source=source)
+                return
+
+            # Fallback: conservative keyword detection (no LLM judge available).
+            for desc in self._evaluator.detect_open_loops(user_text):
+                await self._save_open_loop_async(desc, source=source)
+        except Exception:  # noqa: BLE001 — reminders must not break consolidation
+            log.warning("memory_open_loops_failed", exc_info=True)
+
+    async def _apply_open_loop_ops(
+        self, ops: list[Any], *, source: str
+    ) -> None:
+        """Apply the open-loop extractor's CREATE/RESOLVE operations to the DB.
+
+        CREATE writes a new ``open_loops`` row (status ``open``); RESOLVE flips an
+        existing loop to ``resolved`` and stamps ``resolved_at`` via
+        :func:`database.resolve_open_loops_async`. Unknown/empty ops are skipped.
+        Never raises into the caller — each write is best-effort.
+        """
+        created = 0
+        resolved = 0
+        for op in ops:
+            action = getattr(op, "action", "")
+            if action == "CREATE":
+                desc = (getattr(op, "description", "") or "").strip()
+                if desc:
+                    await database.save_open_loop(
+                        desc, source=source, **self._db_kwargs()
+                    )
+                    created += 1
+            elif action == "RESOLVE":
+                target = getattr(op, "target_id", None)
+                if target is not None:
+                    n = await database.resolve_open_loops_async(
+                        ids=[int(target)], status="resolved", **self._db_kwargs()
+                    )
+                    resolved += n
+        if created or resolved:
+            log.info(
+                "memory_open_loops_applied", created=created, resolved=resolved
+            )
 
     async def _upsert_person_async(self, person: dict[str, Any]) -> None:
         """Insert/update a person profile (deduped by email). Never raises."""

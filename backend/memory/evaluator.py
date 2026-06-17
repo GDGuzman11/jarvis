@@ -156,6 +156,19 @@ _OPEN_LOOP_TRIGGERS: tuple[str, ...] = (
     "i need to",
 )
 
+# Resolution hints — phrases that suggest an *existing* reminder is finished or
+# should be dropped. These are only a cheap pre-filter to decide whether the
+# (off-hot-path) open-loop LLM is worth calling when reminders exist; the LLM
+# makes the actual create/resolve judgement. Kept broad so genuine resolutions
+# are not missed — false positives merely cost one LLM call that returns NOOP.
+_OPEN_LOOP_RESOLVE_HINTS: tuple[str, ...] = (
+    "done", "did it", "did that", "i did", "already did", "finished",
+    "completed", "complete", "handled", "took care of", "taken care of",
+    "sorted", "resolved", "forget", "remove", "cancel", "clear", "delete",
+    "no longer", "scratch that", "never mind", "nevermind", "no need",
+)
+
+
 # A pragmatic email matcher — good enough for Gmail/Slack context strings.
 _EMAIL_RE: str = r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
 
@@ -230,6 +243,36 @@ class MemoryEvaluator:
         return value >= self.threshold
 
     # --- Open-loop detection (Phase 12D) ------------------------------------
+
+    def open_loop_prefilter(
+        self, user_text: str, *, has_open_loops: bool = False
+    ) -> bool:
+        """Cheap gate: should the open-loop LLM be consulted for this utterance?
+
+        Returns ``True`` when the turn carries a plausible reminder signal, so the
+        (off-hot-path) LLM judgement is worth the call — and ``False`` for idle
+        chatter, so the LLM is never invoked needlessly. Two signals:
+
+        * a *creation* trigger (``"remind me"``, ``"follow up"``, ``"need to"`` …)
+          is always worth a look (the LLM then decides if it is a genuine reminder
+          or just a fragment — the keyword pass alone used to store garbage here);
+        * a *resolution* hint (``"done"``, ``"forget"``, ``"cancel"`` …) only when
+          ``has_open_loops`` — there is no point asking the LLM to close a reminder
+          out when none exist.
+
+        This is intentionally permissive: a false positive costs one LLM call that
+        returns an empty/NOOP result; the strict judgement lives in the LLM.
+        """
+        if not user_text or not user_text.strip():
+            return False
+        lowered = user_text.lower()
+        if any(trigger in lowered for trigger in _OPEN_LOOP_TRIGGERS):
+            return True
+        if has_open_loops and any(
+            hint in lowered for hint in _OPEN_LOOP_RESOLVE_HINTS
+        ):
+            return True
+        return False
 
     def detect_open_loops(self, user_text: str) -> list[str]:
         """Scan ``user_text`` for promises/reminders/follow-ups.

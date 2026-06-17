@@ -1337,6 +1337,65 @@ async def get_open_loops_async(
     )
 
 
+# Statuses a loop may be *resolved into* (its open state is closed out).
+_RESOLVED_STATUSES: frozenset[str] = frozenset({"resolved", "dismissed"})
+
+
+async def resolve_open_loops_async(
+    db_path: Path | str = DEFAULT_DB_PATH,
+    *,
+    ids: list[int] | None = None,
+    status: str = "resolved",
+) -> int:
+    """Close out open loops, stamping ``status`` + ``resolved_at``. Return rows hit.
+
+    This is the write the open-loop system was missing: loops were INSERTed and
+    SELECTed but never transitioned out of ``'open'``, so they accumulated forever
+    and were re-surfaced at every launch. Two modes:
+
+    * ``ids`` given — resolve exactly those loop ids (e.g. the LLM picked which
+      tracked reminders the user just completed or asked to forget). An empty list
+      is a no-op (returns 0) so a caller need not special-case "nothing matched".
+    * ``ids=None`` — resolve **every** currently-open loop (a "clear all" sweep).
+
+    ``status`` must be ``'resolved'`` (the user finished/handled the item) or
+    ``'dismissed'`` (the user wants it dropped); any other value raises
+    ``ValueError`` so a typo can never write an out-of-CHECK status. ``resolved_at``
+    is set to ``datetime('now')`` to match every other timestamp in this schema.
+    Returns the number of rows updated (``cursor.rowcount``).
+    """
+    if status not in _RESOLVED_STATUSES:
+        raise ValueError(
+            f"invalid resolve status {status!r}; expected one of "
+            f"{sorted(_RESOLVED_STATUSES)}"
+        )
+
+    conn = await connect(db_path)
+    try:
+        if ids is None:
+            cursor = await conn.execute(
+                "UPDATE open_loops SET status = ?, resolved_at = datetime('now') "
+                "WHERE status = 'open'",
+                (status,),
+            )
+        else:
+            int_ids = [int(i) for i in ids]
+            if not int_ids:
+                return 0
+            placeholders = ",".join("?" for _ in int_ids)
+            cursor = await conn.execute(
+                # placeholders is built from the hardcoded id count only; the ids
+                # themselves stay parameterised.
+                f"UPDATE open_loops SET status = ?, resolved_at = datetime('now') "  # noqa: S608
+                f"WHERE id IN ({placeholders})",
+                (status, *int_ids),
+            )
+        await conn.commit()
+        return cursor.rowcount
+    finally:
+        await conn.close()
+
+
 # --- Phase 12: decisions (the WHY behind choices) ---------------------------
 
 
