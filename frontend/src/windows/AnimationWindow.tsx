@@ -51,39 +51,6 @@ export function AnimationWindow() {
       <Canvas camera={{ position: [0, 0, 4], fov: 50 }} dpr={[1, 2]}>
         <HelixOrb voiceState={voiceState} audioLevel={audioLevel} />
       </Canvas>
-      {/* Connection beams — radiating from orb centre to the other windows. */}
-      <svg
-        className="pointer-events-none absolute inset-0 z-10 h-full w-full"
-        viewBox="0 0 360 360"
-        preserveAspectRatio="none"
-      >
-        {/* Reasoning (left) */}
-        <path id="beam-reasoning" d="M180,180 L0,180" stroke="#ffc247" strokeWidth="0.5" strokeOpacity="0.12" fill="none" />
-        <circle r="2" fill="#3fe3d0" opacity="0.8">
-          <animateMotion dur="2.2s" repeatCount="indefinite" path="M180,180 L0,180" />
-        </circle>
-
-        {/* Communications (upper-right) */}
-        <path id="beam-comms" d="M180,180 L360,72" stroke="#ffc247" strokeWidth="0.5" strokeOpacity="0.12" fill="none" />
-        <circle r="2" fill="#3fe3d0" opacity="0.8">
-          <animateMotion dur="1.8s" repeatCount="indefinite" path="M180,180 L360,72" />
-        </circle>
-
-        {/* Agents (bottom) */}
-        <path id="beam-agents" d="M180,180 L180,360" stroke="#ffc247" strokeWidth="0.5" strokeOpacity="0.12" fill="none" />
-        <circle r="2" fill="#3fe3d0" opacity="0.8">
-          <animateMotion dur="2.5s" repeatCount="indefinite" path="M180,180 L180,360" />
-        </circle>
-
-        {/* Tools (lower-right) */}
-        <path id="beam-tools" d="M180,180 L360,270" stroke="#ffc247" strokeWidth="0.5" strokeOpacity="0.12" fill="none" />
-        <circle r="2" fill="#3fe3d0" opacity="0.8">
-          <animateMotion dur="2.0s" repeatCount="indefinite" path="M180,180 L360,270" />
-        </circle>
-
-        {/* Centre node */}
-        <circle cx="180" cy="180" r="4" fill="none" stroke="#ffc247" strokeWidth="0.5" strokeOpacity="0.4" />
-      </svg>
       {/* Shutdown button — top-right corner, above the Canvas so it stays clickable. */}
       <button
         type="button"
