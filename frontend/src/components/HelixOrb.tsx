@@ -55,12 +55,15 @@ import {
 import type { VoiceState } from "../lib/types";
 
 // --- Helix geometry constants ----------------------------------------------
-const TURNS = 3.4; // number of full turns of each strand
-const RADIUS = 0.85; // helix radius
-const HEIGHT = 2.7; // total vertical span
-const STRAND_SAMPLES = 220; // curve samples per strand (smooth tube)
-const STRAND_TUBE = 0.045; // strand ribbon thickness
-const RUNG_COUNT = 16; // DNA base pairs
+// Open DNA twist (not a tight coil): pitch-per-turn (HEIGHT/TURNS ≈ 1.42) is
+// LARGER than the strand diameter (2·RADIUS ≈ 1.24), so successive turns sit
+// apart and the ribbon reads as an elegant open helix, like the reference.
+const TURNS = 2.4; // number of full turns of each strand
+const RADIUS = 0.62; // helix radius (diameter ≈ 1.24)
+const HEIGHT = 3.4; // total vertical span (fills the window, pitch/turn ≈ 1.42)
+const STRAND_SAMPLES = 240; // curve samples per strand (smooth tube)
+const STRAND_TUBE = 0.058; // strand ribbon thickness (substantial backbone)
+const RUNG_COUNT = 28; // DNA base pairs (prominent, evenly spaced ladder)
 const DOT_COUNT = 50; // free-flowing dots
 
 const WHITE = "#eef2f7";
@@ -294,8 +297,9 @@ export function HelixOrb({ voiceState, audioLevel }: OrbProps) {
   });
 
   return (
-    // Slight cinematic tilt of the whole composition for depth.
-    <group rotation={[0.18, 0, 0.12]}>
+    // Cinematic tilt of the whole composition — leans toward camera so the
+    // front of the helix reads brighter than the back and it clearly recedes.
+    <group rotation={[0.32, 0, 0.1]}>
       <ambientLight intensity={0.55} />
       <directionalLight ref={keyLight} position={[2.5, 3, 4]} intensity={1.15} color="#ffffff" />
       <directionalLight ref={rimLight} position={[-3, -1.5, -2.5]} intensity={0.5} color={GOLD} />
@@ -303,10 +307,22 @@ export function HelixOrb({ voiceState, audioLevel }: OrbProps) {
       {/* Spinning double helix. */}
       <group ref={helixGroup}>
         <mesh geometry={strandA}>
-          <meshStandardMaterial color={WHITE} roughness={0.32} metalness={0.15} />
+          <meshStandardMaterial
+            color={WHITE}
+            roughness={0.32}
+            metalness={0.15}
+            emissive={WHITE}
+            emissiveIntensity={0.12}
+          />
         </mesh>
         <mesh geometry={strandB}>
-          <meshStandardMaterial color={GOLD} roughness={0.28} metalness={0.45} />
+          <meshStandardMaterial
+            color={GOLD}
+            roughness={0.28}
+            metalness={0.45}
+            emissive={GOLD}
+            emissiveIntensity={0.12}
+          />
         </mesh>
 
         {rungs.map((r, i) => (
@@ -324,13 +340,13 @@ export function HelixOrb({ voiceState, audioLevel }: OrbProps) {
       {/* Two counter-rotating aqua gyroscope rings encircling the helix. */}
       <group ref={ringA}>
         <mesh rotation={[0.55, 0, 0]}>
-          <torusGeometry args={[1.15, 0.012, 12, 96]} />
+          <torusGeometry args={[1.0, 0.012, 12, 96]} />
           <meshStandardMaterial color={AQUA} roughness={0.3} metalness={0.4} />
         </mesh>
       </group>
       <group ref={ringB}>
         <mesh rotation={[-0.5, 0, 0.7]}>
-          <torusGeometry args={[1.3, 0.011, 12, 96]} />
+          <torusGeometry args={[1.15, 0.011, 12, 96]} />
           <meshStandardMaterial color={AQUA} roughness={0.3} metalness={0.4} />
         </mesh>
       </group>
