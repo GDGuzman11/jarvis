@@ -28,6 +28,21 @@
         "skipTaskbar": true
       },
       {
+        "label": "shutdown",
+        "title": "Helix — Power",
+        "url": "index.html?window=shutdown",
+        "width": 52,
+        "height": 52,
+        "x": 1216,
+        "y": 236,
+        "decorations": false,
+        "transparent": true,
+        "resizable": false,
+        "alwaysOnTop": true,
+        "shadow": false,
+        "skipTaskbar": true
+      },
+      {
         "label": "reasoning",
         "title": "Helix — Reasoning",
         "url": "index.html?window=reasoning",

@@ -27,6 +27,7 @@ const CommunicationsWindow = lazy(() => import("./windows/CommunicationsWindow")
 const AgentsWindow = lazy(() => import("./windows/AgentsWindow"));
 const ToolsWindow = lazy(() => import("./windows/ToolsWindow"));
 const SetupWizardWindow = lazy(() => import("./windows/SetupWizardWindow"));
+const ShutdownWindow = lazy(() => import("./windows/ShutdownWindow"));
 
 export type WindowLabel =
   | "animation"
@@ -34,7 +35,8 @@ export type WindowLabel =
   | "communications"
   | "agents"
   | "tools"
-  | "setup";
+  | "setup"
+  | "shutdown";
 
 const WINDOWS: Record<WindowLabel, ComponentType> = {
   animation: AnimationWindow,
@@ -43,6 +45,7 @@ const WINDOWS: Record<WindowLabel, ComponentType> = {
   agents: AgentsWindow,
   tools: ToolsWindow,
   setup: SetupWizardWindow,
+  shutdown: ShutdownWindow,
 };
 
 /** Resolve the active window label from Tauri, then URL query, else null. */

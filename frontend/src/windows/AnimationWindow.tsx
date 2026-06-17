@@ -27,19 +27,6 @@ const STATE_LABEL: Record<string, string> = {
   speaking: "SPEAKING",
 };
 
-async function requestShutdown() {
-  // Tell the backend to shut down gracefully (fire and forget).
-  fetch("http://127.0.0.1:8000/api/shutdown", { method: "POST" }).catch(() => {});
-
-  // Exit the entire Tauri process — kills all 5 windows instantly.
-  try {
-    const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("exit_app");
-  } catch {
-    window.close();
-  }
-}
-
 export function AnimationWindow() {
   useBootSound();
   const voiceState = useStore((s) => s.voiceState);
@@ -61,15 +48,6 @@ export function AnimationWindow() {
       >
         <HelixOrb voiceState={voiceState} audioLevel={audioLevel} />
       </Canvas>
-      {/* Shutdown button — top-right corner, above the Canvas so it stays clickable. */}
-      <button
-        type="button"
-        title="Shutdown Helix"
-        onClick={requestShutdown}
-        className="absolute right-3 top-3 z-20 flex h-8 w-8 items-center justify-center border border-helix-alert/50 text-helix-alert text-base transition-all duration-200 hover:border-helix-alert hover:text-helix-alert hover:shadow-[0_0_12px_rgba(255,90,90,0.6)]"
-      >
-        ⏻
-      </button>
       <div className="pointer-events-none absolute inset-x-0 bottom-6 flex justify-center">
         <span
           className={`text-xs font-semibold uppercase tracking-[0.5em] ${
