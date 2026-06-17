@@ -1,48 +1,51 @@
 /**
  * HelixOrb — Helix's identity symbol. PURE SYMBOLISM, never a data view.
  *
- * "Ethereal Halo" — a calm, white, glowing artefact:
+ * "Ethereal Halo" — a calm, glowing artefact that floats transparently on the
+ * desktop (no post-processing, so the Tauri window stays truly transparent —
+ * the glow is built from additive sprites + emissive materials instead of a
+ * full-screen bloom pass, which was forcing an opaque backing square):
  *
- *   1. TWO CROSSED HALOS — two fractured halos (6 chunky arc segments with
- *      gaps), each rendered as a WHITE GLOWING OUTLINE only (EdgesGeometry →
- *      LineSegments, emissive white). Halo A tumbles on its X axis, Halo B
- *      spins on its Y axis, so they cross like a slow gyroscope. No solid
- *      glass, no gold.
+ *   1. TWO CROSSED WHITE HALOS — two fractured halos (6 chunky arc segments
+ *      with gaps), each a WHITE GLOWING OUTLINE (EdgesGeometry → LineSegments,
+ *      emissive white). Halo A tumbles on its X axis, Halo B spins on its Y
+ *      axis, crossing like a slow gyroscope.
  *
- *   2. WHITE CORE — a soft white-glowing nucleus at the centre, wrapped by 3
- *      thin tilted white orbital-ring outlines (atom motif). Minimal, ethereal.
+ *   2. GOLD CORE — a gold-glowing nucleus + an additive gold glow sprite at the
+ *      centre, wrapped by 3 thin tilted GOLD orbital-ring outlines (atom motif).
  *
- *   3. ETHEREAL DOTS — ~40 small soft-white dots drifting VERY slowly (tiny
- *      velocities + gentle noise), low opacity, soft glow. One InstancedMesh,
- *      matrices updated via useFrame (no per-dot React objects).
+ *   3. ETHEREAL DOTS — ~40 soft-white additive glow points drifting gently but
+ *      visibly (one Points object; positions updated via a typed array).
  *
- *   4. BLOOM — EffectComposer + Bloom (@react-three/postprocessing) makes the
- *      white outlines, dots and core glow ethereally.
+ *   Glow is alpha-safe: additive sprites/points add light over the transparent
+ *   framebuffer without writing an opaque background.
  *
- * Voice reactivity is preserved via the unchanged `HelixOrb({ voiceState,
- * audioLevel })` signature; per-state knobs are lerped toward each frame and
- * stay deliberately calm/ethereal:
- *   idle      — slow halo rotation + gentle core.
- *   listening — slightly brighter.
- *   thinking  — a touch faster rotation + brighter.
- *   speaking  — audioLevel adds subtle core brightness + a little rotation.
+ * Voice reactivity (unchanged signature) is lerped each frame, calm/ethereal:
+ *   idle — slow rotation + gentle core; listening — slightly brighter;
+ *   thinking — a touch faster + brighter; speaking — audioLevel adds subtle
+ *   core brightness + a little rotation.
  *
- * Palette: WHITE + soft glow only. No gold/aqua/cyan. No data fetching.
+ * Palette: WHITE outer halos + GOLD inner rings/core. No aqua/cyan, no data.
  */
 
 import { useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
-import { EffectComposer, Bloom } from "@react-three/postprocessing";
 import {
+  AdditiveBlending,
   BufferGeometry,
+  CanvasTexture,
+  Color,
   EdgesGeometry,
   Euler,
+  Float32BufferAttribute,
   Group,
-  InstancedMesh,
   LineSegments,
   Mesh,
   MeshStandardMaterial,
-  Object3D,
+  Points,
+  PointsMaterial,
+  Sprite,
+  SpriteMaterial,
   TorusGeometry,
 } from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
@@ -50,6 +53,8 @@ import type { VoiceState } from "../lib/types";
 
 const WHITE = "#ffffff";
 const SOFT_WHITE = "#f3f6ff";
+const GOLD = "#ffc247";
+const GOLD_HI = "#ffe9a8";
 const TWO_PI = Math.PI * 2;
 
 // --- Halo constants ---------------------------------------------------------
@@ -84,16 +89,34 @@ const ORBIT_TILTS: Euler[] = [
   new Euler(-0.6, -0.9, 0.7),
 ];
 
-/** Static per-dot drift descriptor (very slow, ethereal). */
+/** Static per-dot drift descriptor — clearly moving, but smooth/dreamy. */
 interface DotData {
   bx: number; by: number; bz: number; // base position
   ax: number; ay: number; az: number; // drift amplitudes
-  fx: number; fy: number; fz: number; // drift frequencies (very low)
+  fx: number; fy: number; fz: number; // drift frequencies
   px: number; py: number; pz: number; // phases
-  scale: number;
+}
+
+/** Soft radial-gradient sprite texture (white → transparent) for the glows. */
+function makeGlowTexture(): CanvasTexture {
+  const size = 64;
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext("2d")!;
+  const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  g.addColorStop(0, "rgba(255,255,255,1)");
+  g.addColorStop(0.28, "rgba(255,255,255,0.5)");
+  g.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new CanvasTexture(canvas);
+  tex.needsUpdate = true;
+  return tex;
 }
 
 export function HelixOrb({ voiceState, audioLevel }: OrbProps) {
+  const glowTex = useMemo(makeGlowTexture, []);
+
   // --- White outline geometry for one fractured halo ------------------------
   // Faceted arcs (low radialSegments) so EdgesGeometry yields clean longitudinal
   // edges; a high threshold drops the gentle along-arc curvature steps.
@@ -113,10 +136,9 @@ export function HelixOrb({ voiceState, audioLevel }: OrbProps) {
     return edges;
   }, []);
 
-  // --- Ethereal dot field (slow drift) --------------------------------------
+  // --- Ethereal dot field: data + a single additive-glow Points object ------
   const dots = useMemo<DotData[]>(() => {
     return Array.from({ length: DOT_COUNT }, () => {
-      // Even-ish spherical shell distribution.
       const u = Math.random() * 2 - 1;
       const theta = Math.random() * TWO_PI;
       const r = 1.0 + Math.random() * 0.9;
@@ -125,28 +147,59 @@ export function HelixOrb({ voiceState, audioLevel }: OrbProps) {
         bx: r * s * Math.cos(theta),
         by: r * u,
         bz: r * s * Math.sin(theta),
-        ax: 0.05 + Math.random() * 0.06,
-        ay: 0.05 + Math.random() * 0.06,
-        az: 0.05 + Math.random() * 0.06,
-        fx: 0.04 + Math.random() * 0.08, // very low frequency → almost still
-        fy: 0.04 + Math.random() * 0.08,
-        fz: 0.04 + Math.random() * 0.08,
+        // ~3-4× the previous motion so they clearly drift (still smooth).
+        ax: 0.18 + Math.random() * 0.2,
+        ay: 0.18 + Math.random() * 0.2,
+        az: 0.18 + Math.random() * 0.2,
+        fx: 0.35 + Math.random() * 0.5,
+        fy: 0.35 + Math.random() * 0.5,
+        fz: 0.35 + Math.random() * 0.5,
         px: Math.random() * TWO_PI,
         py: Math.random() * TWO_PI,
         pz: Math.random() * TWO_PI,
-        scale: 0.6 + Math.random() * 0.8,
       };
     });
   }, []);
+
+  const dotPoints = useMemo(() => {
+    const geo = new BufferGeometry();
+    geo.setAttribute("position", new Float32BufferAttribute(new Float32Array(DOT_COUNT * 3), 3));
+    const mat = new PointsMaterial({
+      map: glowTex,
+      color: new Color(SOFT_WHITE),
+      size: 0.22,
+      sizeAttenuation: true,
+      transparent: true,
+      opacity: 0.8,
+      blending: AdditiveBlending,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    return new Points(geo, mat);
+  }, [glowTex]);
+
+  // --- Additive gold glow sprite behind the nucleus -------------------------
+  const coreGlow = useMemo(() => {
+    const mat = new SpriteMaterial({
+      map: glowTex,
+      color: new Color(GOLD),
+      transparent: true,
+      opacity: 0.9,
+      blending: AdditiveBlending,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    const sprite = new Sprite(mat);
+    sprite.scale.setScalar(0.95);
+    return sprite;
+  }, [glowTex]);
 
   // --- Refs -----------------------------------------------------------------
   const haloA = useRef<LineSegments>(null);
   const haloB = useRef<LineSegments>(null);
   const coreGroup = useRef<Group>(null);
   const nucleus = useRef<Mesh>(null);
-  const dotsMesh = useRef<InstancedMesh>(null);
   const params = useRef({ ...STATE_PARAMS.idle });
-  const dummy = useMemo(() => new Object3D(), []);
 
   useFrame((state, delta) => {
     const t = state.clock.elapsedTime;
@@ -162,7 +215,7 @@ export function HelixOrb({ voiceState, audioLevel }: OrbProps) {
     if (haloA.current) haloA.current.rotation.x += delta * 0.16 * p.rot;
     if (haloB.current) haloB.current.rotation.y += delta * 0.13 * p.rot;
 
-    // Gentle core drift + breathing nucleus.
+    // Gentle core drift + breathing gold nucleus/glow.
     if (coreGroup.current) coreGroup.current.rotation.y += delta * 0.08 * p.rot;
     if (nucleus.current) {
       const mat = nucleus.current.material as MeshStandardMaterial;
@@ -170,30 +223,26 @@ export function HelixOrb({ voiceState, audioLevel }: OrbProps) {
       const s = 1 + 0.05 * Math.sin(t * 1.4) + pulse * 0.35;
       nucleus.current.scale.setScalar(s);
     }
+    const glowS = 0.95 * p.bright + pulse * 0.5 + 0.05 * Math.sin(t * 1.4);
+    coreGlow.scale.setScalar(glowS);
+    (coreGlow.material as SpriteMaterial).opacity = 0.7 * p.bright + pulse * 0.3;
 
-    // Ethereal dots — barely-moving slow drift.
-    const mesh = dotsMesh.current;
-    if (mesh) {
-      for (let i = 0; i < dots.length; i++) {
-        const d = dots[i];
-        dummy.position.set(
-          d.bx + Math.sin(t * d.fx + d.px) * d.ax,
-          d.by + Math.sin(t * d.fy + d.py) * d.ay,
-          d.bz + Math.sin(t * d.fz + d.pz) * d.az,
-        );
-        dummy.scale.setScalar(d.scale * 0.018);
-        dummy.updateMatrix();
-        mesh.setMatrixAt(i, dummy.matrix);
-      }
-      mesh.instanceMatrix.needsUpdate = true;
+    // Ethereal dots — clearly drifting, smooth.
+    const pos = dotPoints.geometry.attributes.position.array as Float32Array;
+    for (let i = 0; i < dots.length; i++) {
+      const d = dots[i];
+      pos[i * 3] = d.bx + Math.sin(t * d.fx + d.px) * d.ax;
+      pos[i * 3 + 1] = d.by + Math.sin(t * d.fy + d.py) * d.ay;
+      pos[i * 3 + 2] = d.bz + Math.sin(t * d.fz + d.pz) * d.az;
     }
+    dotPoints.geometry.attributes.position.needsUpdate = true;
   });
 
   return (
     <>
-      {/* Soft white lighting (outlines/dots/core are emissive; this is gentle fill). */}
+      {/* Soft fill light (most elements are emissive; this is gentle shading). */}
       <ambientLight intensity={0.5} />
-      <directionalLight position={[2, 3, 4]} intensity={0.8} color={WHITE} />
+      <directionalLight position={[2, 3, 4]} intensity={0.6} color={WHITE} />
 
       {/* Two crossed white-outline halos. */}
       <lineSegments ref={haloA} geometry={haloEdges}>
@@ -203,43 +252,29 @@ export function HelixOrb({ voiceState, audioLevel }: OrbProps) {
         <lineBasicMaterial color={WHITE} transparent opacity={0.9} toneMapped={false} />
       </lineSegments>
 
-      {/* Ethereal slow-drifting white dots. */}
-      <instancedMesh ref={dotsMesh} args={[undefined, undefined, DOT_COUNT]}>
-        <sphereGeometry args={[1, 10, 10]} />
-        <meshStandardMaterial
-          color={SOFT_WHITE}
-          emissive={WHITE}
-          emissiveIntensity={1.1}
-          transparent
-          opacity={0.65}
-          toneMapped={false}
-        />
-      </instancedMesh>
+      {/* Ethereal slow-drifting white glow points. */}
+      <primitive object={dotPoints} />
 
-      {/* White ethereal core — nucleus + thin white orbital-ring outlines. */}
+      {/* Gold ethereal core — glow sprite + nucleus + thin gold orbital rings. */}
       <group ref={coreGroup}>
+        <primitive object={coreGlow} />
         <mesh ref={nucleus}>
           <sphereGeometry args={[0.07, 24, 24]} />
-          <meshStandardMaterial color={WHITE} emissive={WHITE} emissiveIntensity={2.0} toneMapped={false} />
+          <meshStandardMaterial color={GOLD_HI} emissive={GOLD} emissiveIntensity={2.0} toneMapped={false} />
         </mesh>
 
         {ORBIT_TILTS.map((e, i) => (
           <mesh key={i} rotation={e}>
             <torusGeometry args={[ORBIT_R, 0.005, 8, 64]} />
             <meshStandardMaterial
-              color={SOFT_WHITE}
-              emissive={WHITE}
-              emissiveIntensity={1.4}
+              color={GOLD}
+              emissive={GOLD}
+              emissiveIntensity={1.5}
               toneMapped={false}
             />
           </mesh>
         ))}
       </group>
-
-      {/* Cinematic bloom — makes the white outlines, dots and core glow. */}
-      <EffectComposer>
-        <Bloom intensity={0.9} luminanceThreshold={0.2} luminanceSmoothing={0.9} radius={0.7} mipmapBlur />
-      </EffectComposer>
     </>
   );
 }

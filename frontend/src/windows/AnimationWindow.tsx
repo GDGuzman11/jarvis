@@ -48,7 +48,17 @@ export function AnimationWindow() {
 
   return (
     <div className="relative h-screen w-screen bg-transparent">
-      <Canvas camera={{ position: [0, 0, 4], fov: 50 }} dpr={[1, 2]}>
+      <Canvas
+        camera={{ position: [0, 0, 4], fov: 50 }}
+        dpr={[1, 2]}
+        gl={{ alpha: true, premultipliedAlpha: false, antialias: true }}
+        onCreated={({ gl, scene }) => {
+          // Keep the Tauri window truly transparent — no opaque backing square.
+          gl.setClearColor(0x000000, 0);
+          gl.setClearAlpha(0);
+          scene.background = null;
+        }}
+      >
         <HelixOrb voiceState={voiceState} audioLevel={audioLevel} />
       </Canvas>
       {/* Shutdown button — top-right corner, above the Canvas so it stays clickable. */}
