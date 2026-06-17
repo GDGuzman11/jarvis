@@ -80,21 +80,28 @@ export default function Neurons({ nodes, edges, visibleIds, panelRef, onHover }:
     const hovered = hoverRef.current;
 
     // --- Neuron instances: matrix + colour ---
+    const searching = visibleIds !== null;
     for (let i = 0; i < count; i++) {
       const ix = i * 3;
       const s = styles[i];
-      const visible = !visibleIds || visibleIds.has(nodes[i].id);
+      const visible = !searching || visibleIds!.has(nodes[i].id);
       const isHover = i === hovered;
+      // A search hit: brighten + enlarge + aqua-tint so it clearly GLOWS,
+      // while non-matches dim well back so the hit pops against the cloud.
+      const isMatch = searching && visible;
       const pulse = 0.85 + 0.15 * Math.sin(state.clock.elapsedTime * 2 + i);
-      const scale = (visible ? s.size : s.size * 0.35) * (isHover ? 1.7 : 1) * pulse;
+      const scale =
+        (visible ? s.size : s.size * 0.3) * (isHover ? 1.7 : isMatch ? 1.45 : 1) * pulse;
       dummy.position.set(p[ix], p[ix + 1], p[ix + 2]);
       dummy.scale.setScalar(scale);
       dummy.updateMatrix();
       mesh.setMatrixAt(i, dummy.matrix);
 
-      const lum = (visible ? s.glow : 0.12) * (isHover ? 1.6 : 1);
+      const baseLum = visible ? (isMatch ? s.glow * 2.0 : s.glow) : 0.08;
+      const lum = baseLum * (isHover ? 1.6 : 1);
       col.setRGB(s.color[0], s.color[1], s.color[2]).multiplyScalar(lum);
-      if (s.recalled) col.lerp(col.clone().setRGB(AQUA[0], AQUA[1], AQUA[2]), 0.35);
+      if (isMatch) col.lerp(col.clone().setRGB(AQUA[0], AQUA[1], AQUA[2]), 0.45);
+      else if (s.recalled) col.lerp(col.clone().setRGB(AQUA[0], AQUA[1], AQUA[2]), 0.35);
       mesh.setColorAt(i, col);
     }
     mesh.instanceMatrix.needsUpdate = true;
