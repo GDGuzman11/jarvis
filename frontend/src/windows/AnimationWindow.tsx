@@ -21,7 +21,7 @@ async function startDrag(e: MouseEvent) {
 }
 
 const STATE_LABEL: Record<string, string> = {
-  idle: "HELIX",
+  idle: "",
   listening: "LISTENING",
   thinking: "PROCESSING",
   speaking: "SPEAKING",
@@ -60,15 +60,6 @@ export function AnimationWindow() {
       >
         ⏻
       </button>
-      {/* Top tagline + identity flourishes (reference hub motif). */}
-      <div className="pointer-events-none absolute inset-x-0 top-3 flex flex-col items-center gap-0.5">
-        <span className="text-[9px] font-semibold uppercase tracking-[0.55em] text-helix-gold/70 text-glow-gold">
-          THINK · PLAN · ACT · ELEVATE
-        </span>
-        <span className="text-[7px] uppercase tracking-[0.4em] text-helix-muted">
-          HELIX · CORE INTELLIGENCE
-        </span>
-      </div>
       <div className="pointer-events-none absolute inset-x-0 bottom-6 flex justify-center">
         <span
           className={`text-xs font-semibold uppercase tracking-[0.5em] ${

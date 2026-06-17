@@ -1,74 +1,103 @@
 /**
- * HelixOrb — Helix's identity orb. PURE SYMBOLISM, never a data view.
+ * HelixOrb — Helix's identity symbol. PURE SYMBOLISM, never a data view.
  *
- * The look is an "arc-reactor tech core wrapped in a flowing neuron field":
+ * A cinematic 3D DOUBLE HELIX (the name Helix = a double helix):
  *
- *   1. ARC-REACTOR CORE — a white-hot core sphere with a soft additive energy
- *      halo, wrapped by two thin concentric rings (TorusGeometry) and a
- *      segmented aqua coil ring (a circle of small boxes evoking the Iron Man
- *      reactor coil). The rings spin slowly on different axes and the core
- *      pulses like an energy source.
+ *   1. TWO STRANDS — two intertwined helical ribbons running up the Y axis,
+ *      180° out of phase. Each strand is a smooth TubeGeometry swept along a
+ *      CatmullRom curve of sampled helix points (continuous tube, not a chain
+ *      of primitives). Strand A is soft white, strand B is gold.
  *
- *   2. NEURON FIELD — 280 glowing points on a spherical shell around the core,
- *      held in a single THREE.Points. They move IN UNISON: a shared smooth flow
- *      field + a shared orbital rotation push every point, with a soft radial
- *      spring back to the shell so the cloud orbits the core as one organism.
- *      Positions live in one typed array updated each frame (no React objects).
+ *   2. RUNGS — thin cylinders bridging the two strands at regular intervals
+ *      (DNA base pairs), so it unmistakably reads as a double helix.
  *
- *   3. HOVER — pointer rays hit an invisible catcher sphere; the neurons within
- *      a world-space radius of the hit point brighten and grow (smooth falloff),
- *      easing back to rest when the pointer leaves.
+ *   3. SLOW SPIN — the whole helix group turns slowly around its Y axis. The
+ *      group is given a slight cinematic tilt for depth.
+ *
+ *   4. FREE-FLOWING DOTS — ~50 small shaded spheres drift on their own around
+ *      the helix (per-dot orbital motion + smooth noise wobble — alive, not a
+ *      rigid shell). Each dot has a thin faint connector line to an assigned
+ *      point on the helix; the line follows both the drifting dot and the
+ *      spinning helix. Dots + lines update via typed arrays in one useFrame
+ *      (one InstancedMesh + one LineSegments — no per-dot React objects).
+ *
+ *   5. LIGHTING — soft ambient + key + gold rim light give the tubes and rungs
+ *      dimensional shading (lit MeshStandardMaterial, low roughness). NO glow,
+ *      NO bloom, NO additive halos — clean and premium.
  *
  * Voice reactivity is preserved via the unchanged `HelixOrb({ voiceState,
- * audioLevel })` signature; per-state "knobs" are lerped toward each frame:
- *   idle      — calm slow flow + soft pulse.
- *   listening — brighter + cool aqua shimmer.
- *   thinking  — faster flow + brighter core.
- *   speaking  — audioLevel drives core brightness + scale/energy pulse + flow.
+ * audioLevel })` signature; per-state knobs are lerped toward each frame and
+ * stay deliberately calm/cinematic:
+ *   idle      — slow spin + gentle dot drift.
+ *   listening — slightly brighter + a touch more drift.
+ *   thinking  — faster spin.
+ *   speaking  — audioLevel adds a subtle spin + dot-energy boost.
  *
- * Palette: gold #ffc247 structure, white-hot #ffe9a8 core, aqua #3fe3d0 energy.
- * No cyan, no data fetching, no new dependencies. GLSL inlined.
+ * Palette: gold/white only. No cyan, no data fetching, no new dependencies.
  */
 
-import { useMemo, useRef } from "react";
-import { useFrame, type ThreeEvent } from "@react-three/fiber";
+import { useEffect, useMemo, useRef } from "react";
+import { useFrame } from "@react-three/fiber";
 import {
-  AdditiveBlending,
-  BackSide,
   BufferGeometry,
+  CatmullRomCurve3,
+  Color,
+  DirectionalLight,
   Float32BufferAttribute,
   Group,
-  IcosahedronGeometry,
-  Mesh,
-  Points,
-  ShaderMaterial,
+  InstancedMesh,
+  LineSegments,
+  Object3D,
+  Quaternion,
+  TubeGeometry,
   Vector3,
 } from "three";
 import type { VoiceState } from "../lib/types";
 
-const NEURON_COUNT = 280;
-const SHELL_MIN = 1.55;
-const SHELL_MAX = 2.15;
-const HOVER_RADIUS = 0.85; // world-space radius of the hover highlight
-const FLOW_BASE = 0.18; // base flow-field velocity scale
-const SPRING = 1.5; // pull strength back toward the shell radius
+// --- Helix geometry constants ----------------------------------------------
+const TURNS = 3.4; // number of full turns of each strand
+const RADIUS = 0.85; // helix radius
+const HEIGHT = 2.7; // total vertical span
+const STRAND_SAMPLES = 220; // curve samples per strand (smooth tube)
+const STRAND_TUBE = 0.045; // strand ribbon thickness
+const RUNG_COUNT = 16; // DNA base pairs
+const DOT_COUNT = 50; // free-flowing dots
+
+const WHITE = "#eef2f7";
+const GOLD = "#ffc247";
+const GOLD_HI = "#ffe9a8";
+
+const TWO_PI = Math.PI * 2;
+
+/** Point on a strand at fractional position f (0..1) with the given phase. */
+function helixPoint(f: number, phase: number): Vector3 {
+  const theta = f * TURNS * TWO_PI + phase;
+  return new Vector3(
+    RADIUS * Math.cos(theta),
+    (f - 0.5) * HEIGHT,
+    RADIUS * Math.sin(theta),
+  );
+}
+
+/** Build one strand as a smooth tube swept along a CatmullRom helix curve. */
+function buildStrand(phase: number): TubeGeometry {
+  const pts: Vector3[] = [];
+  for (let i = 0; i <= STRAND_SAMPLES; i++) {
+    pts.push(helixPoint(i / STRAND_SAMPLES, phase));
+  }
+  const curve = new CatmullRomCurve3(pts, false, "catmullrom", 0.5);
+  return new TubeGeometry(curve, STRAND_SAMPLES, STRAND_TUBE, 14, false);
+}
 
 /** Per-state behaviour knobs the animation lerps toward each frame. */
 const STATE_PARAMS: Record<
   VoiceState,
-  {
-    flow: number; // flow-field + turbulence speed
-    orbit: number; // shared orbital angular velocity (rad/s)
-    pBright: number; // neuron brightness multiplier
-    cBright: number; // core brightness multiplier
-    cool: number; // aqua shimmer mix (0..1) — listening only
-    size: number; // base point size
-  }
+  { spin: number; drift: number; bright: number }
 > = {
-  idle: { flow: 0.35, orbit: 0.1, pBright: 0.85, cBright: 1.0, cool: 0.0, size: 16 },
-  listening: { flow: 0.45, orbit: 0.12, pBright: 1.05, cBright: 1.1, cool: 0.6, size: 16 },
-  thinking: { flow: 0.95, orbit: 0.26, pBright: 1.1, cBright: 1.4, cool: 0.0, size: 16 },
-  speaking: { flow: 0.6, orbit: 0.15, pBright: 1.0, cBright: 1.1, cool: 0.1, size: 18 },
+  idle: { spin: 0.16, drift: 0.85, bright: 1.0 },
+  listening: { spin: 0.22, drift: 1.15, bright: 1.14 },
+  thinking: { spin: 0.55, drift: 1.25, bright: 1.08 },
+  speaking: { spin: 0.2, drift: 1.0, bright: 1.06 },
 };
 
 interface OrbProps {
@@ -77,307 +106,223 @@ interface OrbProps {
   audioLevel: number;
 }
 
-// --- Neuron point shaders ---------------------------------------------------
-const POINT_VERT = /* glsl */ `
-attribute float aBright;
-varying float vBright;
-uniform float uSize;
-uniform float uPixelRatio;
-void main() {
-  vBright = aBright;
-  vec4 mv = modelViewMatrix * vec4(position, 1.0);
-  gl_Position = projectionMatrix * mv;
-  gl_PointSize = uSize * (1.0 + aBright * 2.0) * uPixelRatio / max(-mv.z, 0.1);
+/** Static per-dot motion descriptors (computed once). */
+interface DotData {
+  baseAngle: number;
+  baseRad: number;
+  baseY: number;
+  angSpeed: number;
+  f1: number; p1: number; // angular wobble
+  f2: number; p2: number; // radial wobble
+  f3: number; p3: number; // vertical wobble
+  scale: number;
+  local: Vector3; // assigned attachment point in helix-local space
 }
-`;
-
-const POINT_FRAG = /* glsl */ `
-precision highp float;
-varying float vBright;
-uniform float uBrightness;
-uniform float uCool;
-void main() {
-  vec2 uv = gl_PointCoord - 0.5;
-  float alpha = smoothstep(0.5, 0.0, length(uv)); // soft round glow
-  vec3 gold = vec3(1.0, 0.760, 0.278); // #ffc247
-  vec3 hot  = vec3(1.0, 0.914, 0.659); // #ffe9a8
-  vec3 aqua = vec3(0.247, 0.890, 0.816); // #3fe3d0
-  vec3 c = mix(gold, aqua, uCool * 0.7);
-  c = mix(c, hot, clamp(vBright, 0.0, 1.0));
-  float intensity = uBrightness * (0.6 + vBright * 1.4);
-  gl_FragColor = vec4(c * intensity, alpha);
-}
-`;
-
-// --- Core sphere shaders (white-hot center → gold rim) ----------------------
-const CORE_VERT = /* glsl */ `
-varying vec3 vN;
-varying vec3 vV;
-void main() {
-  vec4 mv = modelViewMatrix * vec4(position, 1.0);
-  vN = normalize(normalMatrix * normal);
-  vV = normalize(-mv.xyz);
-  gl_Position = projectionMatrix * mv;
-}
-`;
-
-const CORE_FRAG = /* glsl */ `
-precision highp float;
-varying vec3 vN;
-varying vec3 vV;
-uniform float uBrightness;
-void main() {
-  float f = max(dot(vN, vV), 0.0);
-  vec3 gold = vec3(1.0, 0.760, 0.278);
-  vec3 hot  = vec3(1.0, 0.914, 0.659);
-  vec3 c = mix(gold, hot, pow(f, 1.5));
-  c += vec3(1.0) * pow(f, 4.0) * 0.6; // white-hot centre
-  gl_FragColor = vec4(c * uBrightness, 1.0);
-}
-`;
-
-// --- Additive energy halo (back-side fresnel) -------------------------------
-const HALO_FRAG = /* glsl */ `
-precision highp float;
-varying vec3 vN;
-varying vec3 vV;
-uniform float uBrightness;
-uniform float uCool;
-void main() {
-  float fres = pow(1.0 - max(dot(vN, vV), 0.0), 2.5);
-  vec3 gold = vec3(1.0, 0.760, 0.278);
-  vec3 aqua = vec3(0.247, 0.890, 0.816);
-  vec3 c = mix(gold, aqua, 0.35 + uCool * 0.45);
-  gl_FragColor = vec4(c * fres * uBrightness, fres);
-}
-`;
 
 export function HelixOrb({ voiceState, audioLevel }: OrbProps) {
-  // --- Build the neuron Points + core/halo meshes once (imperative so we can
-  //     mutate the position buffer and drive uniforms directly each frame). ---
-  const built = useMemo(() => {
-    const positions = new Float32Array(NEURON_COUNT * 3);
-    const homeR = new Float32Array(NEURON_COUNT);
-    const bright = new Float32Array(NEURON_COUNT);
+  // --- Strand tube geometries (built once) ---------------------------------
+  const strandA = useMemo(() => buildStrand(0), []);
+  const strandB = useMemo(() => buildStrand(Math.PI), []);
 
-    for (let i = 0; i < NEURON_COUNT; i++) {
-      const t = (i + 0.5) / NEURON_COUNT;
-      const inc = Math.acos(1 - 2 * t); // even polar distribution
-      const az = i * 2.399963; // golden angle
-      const r = SHELL_MIN + Math.random() * (SHELL_MAX - SHELL_MIN);
-      const s = Math.sin(inc);
-      positions[i * 3] = r * s * Math.cos(az);
-      positions[i * 3 + 1] = r * Math.cos(inc);
-      positions[i * 3 + 2] = r * s * Math.sin(az);
-      homeR[i] = r;
+  // --- Rungs (DNA base pairs) — static transforms, built once --------------
+  const rungs = useMemo(() => {
+    const up = new Vector3(0, 1, 0);
+    const out: {
+      position: [number, number, number];
+      quaternion: [number, number, number, number];
+      length: number;
+      gold: boolean;
+    }[] = [];
+    for (let i = 0; i < RUNG_COUNT; i++) {
+      const f = (i + 0.5) / RUNG_COUNT;
+      const a = helixPoint(f, 0);
+      const b = helixPoint(f, Math.PI);
+      const mid = a.clone().add(b).multiplyScalar(0.5);
+      const dir = b.clone().sub(a);
+      const length = dir.length();
+      dir.normalize();
+      const q = new Quaternion().setFromUnitVectors(up, dir);
+      out.push({
+        position: [mid.x, mid.y, mid.z],
+        quaternion: [q.x, q.y, q.z, q.w],
+        length,
+        gold: i % 2 === 0,
+      });
     }
-
-    const geo = new BufferGeometry();
-    geo.setAttribute("position", new Float32BufferAttribute(positions, 3));
-    geo.setAttribute("aBright", new Float32BufferAttribute(bright, 1));
-
-    const pixelRatio = Math.min(typeof window !== "undefined" ? window.devicePixelRatio : 1, 2);
-    const pointMat = new ShaderMaterial({
-      uniforms: {
-        uSize: { value: STATE_PARAMS.idle.size },
-        uPixelRatio: { value: pixelRatio },
-        uBrightness: { value: STATE_PARAMS.idle.pBright },
-        uCool: { value: 0 },
-      },
-      vertexShader: POINT_VERT,
-      fragmentShader: POINT_FRAG,
-      transparent: true,
-      depthWrite: false,
-      blending: AdditiveBlending,
-    });
-    const points = new Points(geo, pointMat);
-
-    const coreMat = new ShaderMaterial({
-      uniforms: { uBrightness: { value: STATE_PARAMS.idle.cBright } },
-      vertexShader: CORE_VERT,
-      fragmentShader: CORE_FRAG,
-    });
-    const core = new Mesh(new IcosahedronGeometry(0.3, 4), coreMat);
-
-    const haloMat = new ShaderMaterial({
-      uniforms: { uBrightness: { value: STATE_PARAMS.idle.cBright }, uCool: { value: 0 } },
-      vertexShader: CORE_VERT,
-      fragmentShader: HALO_FRAG,
-      transparent: true,
-      depthWrite: false,
-      blending: AdditiveBlending,
-      side: BackSide,
-    });
-    const halo = new Mesh(new IcosahedronGeometry(0.62, 3), haloMat);
-
-    return { positions, homeR, bright, geo, points, pointMat, core, coreMat, halo, haloMat };
+    return out;
   }, []);
 
-  // 14-segment coil ring positions (XY plane), built once.
-  const coils = useMemo(
-    () => Array.from({ length: 14 }, (_, i) => (i / 14) * Math.PI * 2),
-    [],
-  );
+  // --- Dots: static motion data + typed buffers for instances & lines ------
+  const dots = useMemo<DotData[]>(() => {
+    const arr: DotData[] = [];
+    for (let i = 0; i < DOT_COUNT; i++) {
+      const f = Math.random();
+      const phase = Math.random() < 0.5 ? 0 : Math.PI;
+      const local = helixPoint(f, phase);
+      const baseAngle = f * TURNS * TWO_PI + phase + (Math.random() - 0.5) * 1.1;
+      arr.push({
+        baseAngle,
+        baseRad: RADIUS + 0.32 + Math.random() * 0.7,
+        baseY: local.y + (Math.random() - 0.5) * 0.55,
+        angSpeed: (Math.random() - 0.5) * 0.5,
+        f1: 0.3 + Math.random() * 0.5, p1: Math.random() * TWO_PI,
+        f2: 0.3 + Math.random() * 0.5, p2: Math.random() * TWO_PI,
+        f3: 0.3 + Math.random() * 0.5, p3: Math.random() * TWO_PI,
+        scale: 0.6 + Math.random() * 0.7,
+        local,
+      });
+    }
+    return arr;
+  }, []);
+
+  const lineGeo = useMemo(() => {
+    const g = new BufferGeometry();
+    g.setAttribute("position", new Float32BufferAttribute(new Float32Array(DOT_COUNT * 6), 3));
+    const colors = new Float32Array(DOT_COUNT * 6);
+    const white = new Color(WHITE);
+    const gold = new Color(GOLD);
+    for (let i = 0; i < DOT_COUNT; i++) {
+      const c = i % 2 === 0 ? gold : white;
+      for (let v = 0; v < 2; v++) {
+        colors[i * 6 + v * 3] = c.r;
+        colors[i * 6 + v * 3 + 1] = c.g;
+        colors[i * 6 + v * 3 + 2] = c.b;
+      }
+    }
+    g.setAttribute("color", new Float32BufferAttribute(colors, 3));
+    return g;
+  }, []);
 
   // --- Refs ----------------------------------------------------------------
-  const coreGroup = useRef<Group>(null);
-  const ringA = useRef<Mesh>(null);
-  const ringB = useRef<Mesh>(null);
-  const coilRing = useRef<Group>(null);
-  const params = useRef({ ...STATE_PARAMS.idle });
-  const flowTime = useRef(0);
-  const orbitAngle = useRef(0);
-  const hover = useRef({ active: false, point: new Vector3() });
+  const helixGroup = useRef<Group>(null);
+  const dotsMesh = useRef<InstancedMesh>(null);
+  const lineRef = useRef<LineSegments>(null);
+  const keyLight = useRef<DirectionalLight>(null);
+  const rimLight = useRef<DirectionalLight>(null);
 
-  const onHoverMove = (e: ThreeEvent<PointerEvent>) => {
-    hover.current.active = true;
-    hover.current.point.copy(e.point);
-  };
-  const onHoverOut = () => {
-    hover.current.active = false;
-  };
+  const dummy = useMemo(() => new Object3D(), []);
+  const params = useRef({ ...STATE_PARAMS.idle });
+  const driftT = useRef(0);
+
+  // Assign per-dot instance colours once (white/gold alternating).
+  useEffect(() => {
+    const mesh = dotsMesh.current;
+    if (!mesh) return;
+    const white = new Color(WHITE);
+    const gold = new Color(GOLD_HI);
+    for (let i = 0; i < DOT_COUNT; i++) {
+      mesh.setColorAt(i, i % 2 === 0 ? gold : white);
+    }
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  }, []);
 
   useFrame((state, delta) => {
     const t = state.clock.elapsedTime;
     const target = STATE_PARAMS[voiceState];
-    const k = Math.min(1, delta * 2.5);
+    const k = Math.min(1, delta * 2.2);
     const p = params.current;
-    p.flow += (target.flow - p.flow) * k;
-    p.orbit += (target.orbit - p.orbit) * k;
-    p.pBright += (target.pBright - p.pBright) * k;
-    p.cBright += (target.cBright - p.cBright) * k;
-    p.cool += (target.cool - p.cool) * k;
-    p.size += (target.size - p.size) * k;
-
     const pulse = voiceState === "speaking" ? audioLevel : 0;
 
-    // Advance the shared flow field + shared orbital rotation.
-    flowTime.current += delta * (0.3 + p.flow + pulse);
-    orbitAngle.current += delta * p.orbit;
-    const ft = flowTime.current;
-    const omega = p.orbit + pulse * 0.2; // shared angular velocity
+    p.spin += (target.spin + pulse * 0.25 - p.spin) * k;
+    p.drift += (target.drift + pulse * 0.4 - p.drift) * k;
+    p.bright += (target.bright + pulse * 0.15 - p.bright) * k;
 
-    const pos = built.positions;
-    const homeR = built.homeR;
-    const br = built.bright;
-    const hov = hover.current;
-    const hx = hov.point.x;
-    const hy = hov.point.y;
-    const hz = hov.point.z;
+    // Slow cinematic spin of the helix around Y.
+    let spinAngle = 0;
+    if (helixGroup.current) {
+      helixGroup.current.rotation.y += delta * p.spin;
+      spinAngle = helixGroup.current.rotation.y;
+    }
 
-    for (let i = 0; i < NEURON_COUNT; i++) {
-      const ix = i * 3;
-      let x = pos[ix];
-      let y = pos[ix + 1];
-      let z = pos[ix + 2];
+    // Subtle light response (no glow — just dimensional brightness).
+    if (keyLight.current) keyLight.current.intensity = 1.15 * p.bright;
+    if (rimLight.current) rimLight.current.intensity = 0.5 * p.bright;
 
-      // Smooth, coherent flow field — neighbours share velocities (unison).
-      const fx = Math.sin(y * 0.7 + ft) + Math.cos(z * 0.7 - ft * 0.7);
-      const fy = Math.sin(z * 0.7 + ft * 1.1) + Math.cos(x * 0.7 - ft * 0.5);
-      const fz = Math.sin(x * 0.7 + ft * 0.9) + Math.cos(y * 0.7 - ft * 0.8);
-      const fs = FLOW_BASE * p.flow * delta;
+    // Advance the shared drift clock.
+    driftT.current += delta * p.drift;
+    const dt = driftT.current;
 
-      // Shared orbital velocity around the Y axis: omega × position.
-      x += fx * fs + omega * z * delta;
-      y += fy * fs;
-      z += fz * fs - omega * x * delta;
+    const cosS = Math.cos(spinAngle);
+    const sinS = Math.sin(spinAngle);
 
-      // Soft radial spring keeps the cloud cohesive on its shell.
-      const len = Math.sqrt(x * x + y * y + z * z) || 1e-4;
-      const newLen = len + (homeR[i] - len) * Math.min(1, SPRING * delta);
-      const sc = newLen / len;
-      x *= sc;
-      y *= sc;
-      z *= sc;
+    const mesh = dotsMesh.current;
+    const linePos = lineRef.current
+      ? (lineRef.current.geometry.getAttribute("position").array as Float32Array)
+      : null;
 
-      pos[ix] = x;
-      pos[ix + 1] = y;
-      pos[ix + 2] = z;
+    for (let i = 0; i < DOT_COUNT; i++) {
+      const d = dots[i];
+      const ang = d.baseAngle + d.angSpeed * dt + Math.sin(t * d.f1 + d.p1) * 0.16;
+      const rad = d.baseRad + Math.sin(t * d.f2 + d.p2) * 0.12;
+      const yy = d.baseY + Math.sin(t * d.f3 + d.p3) * 0.18;
+      const x = rad * Math.cos(ang);
+      const z = rad * Math.sin(ang);
 
-      // Hover highlight — brighten neurons near the cursor's world hit point.
-      let tBright = 0;
-      if (hov.active) {
-        const dx = x - hx;
-        const dy = y - hy;
-        const dz = z - hz;
-        const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        tBright = Math.max(0, 1 - d / HOVER_RADIUS);
-        tBright *= tBright; // sharper falloff
+      if (mesh) {
+        dummy.position.set(x, yy, z);
+        dummy.scale.setScalar(d.scale * 0.026);
+        dummy.updateMatrix();
+        mesh.setMatrixAt(i, dummy.matrix);
       }
-      br[i] += (tBright - br[i]) * Math.min(1, delta * 6);
-    }
-    built.geo.attributes.position.needsUpdate = true;
-    built.geo.attributes.aBright.needsUpdate = true;
 
-    // Neuron uniforms.
-    const pu = built.pointMat.uniforms;
-    pu.uBrightness.value = p.pBright + pulse * 0.4;
-    pu.uCool.value = p.cool;
-    pu.uSize.value = p.size;
-
-    // Core energy pulse + brightness.
-    const energy = 0.5 + 0.5 * Math.sin(t * 1.8) + pulse;
-    const coreBright = p.cBright * (0.85 + 0.15 * energy) + pulse * 0.8;
-    built.coreMat.uniforms.uBrightness.value = coreBright;
-    built.haloMat.uniforms.uBrightness.value = coreBright * 0.9;
-    built.haloMat.uniforms.uCool.value = p.cool;
-
-    // Core breathing / speaking scale pulse.
-    if (coreGroup.current) {
-      const s = 1 + 0.04 * Math.sin(t * 1.6) + pulse * 0.25;
-      coreGroup.current.scale.setScalar(s);
-      coreGroup.current.rotation.z += delta * 0.04;
+      if (linePos) {
+        // Dot end.
+        linePos[i * 6] = x;
+        linePos[i * 6 + 1] = yy;
+        linePos[i * 6 + 2] = z;
+        // Helix end — rotate the assigned local point by the helix spin.
+        const lx = d.local.x;
+        const lz = d.local.z;
+        linePos[i * 6 + 3] = lx * cosS + lz * sinS;
+        linePos[i * 6 + 4] = d.local.y;
+        linePos[i * 6 + 5] = -lx * sinS + lz * cosS;
+      }
     }
-    // Rings spin on different axes / speeds.
-    if (ringA.current) ringA.current.rotation.z += delta * 0.3;
-    if (ringB.current) {
-      ringB.current.rotation.x += delta * 0.45;
-      ringB.current.rotation.z -= delta * 0.15;
-    }
-    if (coilRing.current) {
-      coilRing.current.rotation.z -= delta * 0.5;
-      coilRing.current.scale.setScalar(1 + 0.06 * energy);
+
+    if (mesh) mesh.instanceMatrix.needsUpdate = true;
+    if (lineRef.current && linePos) {
+      lineRef.current.geometry.getAttribute("position").needsUpdate = true;
     }
   });
 
   return (
-    <group>
-      <primitive object={built.points} />
+    // Slight cinematic tilt of the whole composition for depth.
+    <group rotation={[0.18, 0, 0.12]}>
+      <ambientLight intensity={0.55} />
+      <directionalLight ref={keyLight} position={[2.5, 3, 4]} intensity={1.15} color="#ffffff" />
+      <directionalLight ref={rimLight} position={[-3, -1.5, -2.5]} intensity={0.5} color={GOLD} />
 
-      <group ref={coreGroup} rotation={[0.35, 0, 0]}>
-        <primitive object={built.halo} />
-        <primitive object={built.core} />
-
-        {/* Concentric structural rings (gold) + aqua accent ring. */}
-        <mesh ref={ringA}>
-          <torusGeometry args={[0.58, 0.014, 12, 64]} />
-          <meshBasicMaterial color="#ffc247" toneMapped={false} />
+      {/* Spinning double helix. */}
+      <group ref={helixGroup}>
+        <mesh geometry={strandA}>
+          <meshStandardMaterial color={WHITE} roughness={0.32} metalness={0.15} />
         </mesh>
-        <mesh ref={ringB}>
-          <torusGeometry args={[0.78, 0.01, 12, 64]} />
-          <meshBasicMaterial color="#3fe3d0" toneMapped={false} />
+        <mesh geometry={strandB}>
+          <meshStandardMaterial color={GOLD} roughness={0.28} metalness={0.45} />
         </mesh>
 
-        {/* Segmented arc-reactor coil ring — aqua energy. */}
-        <group ref={coilRing}>
-          {coils.map((a, i) => (
-            <mesh
-              key={i}
-              position={[Math.cos(a) * 0.46, Math.sin(a) * 0.46, 0]}
-              rotation={[0, 0, a]}
-            >
-              <boxGeometry args={[0.05, 0.11, 0.025]} />
-              <meshBasicMaterial color="#3fe3d0" toneMapped={false} />
-            </mesh>
-          ))}
-        </group>
+        {rungs.map((r, i) => (
+          <mesh key={i} position={r.position} quaternion={r.quaternion}>
+            <cylinderGeometry args={[0.016, 0.016, r.length, 8]} />
+            <meshStandardMaterial
+              color={r.gold ? GOLD : WHITE}
+              roughness={0.4}
+              metalness={r.gold ? 0.4 : 0.15}
+            />
+          </mesh>
+        ))}
       </group>
 
-      {/* Invisible catcher sphere — feeds pointer hits to the hover highlight. */}
-      <mesh onPointerMove={onHoverMove} onPointerOut={onHoverOut}>
-        <sphereGeometry args={[2.5, 16, 16]} />
-        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
-      </mesh>
+      {/* Free-flowing dots. */}
+      <instancedMesh ref={dotsMesh} args={[undefined, undefined, DOT_COUNT]}>
+        <sphereGeometry args={[1, 12, 12]} />
+        <meshStandardMaterial roughness={0.4} metalness={0.1} />
+      </instancedMesh>
+
+      {/* Thin faint connector lines (dot -> helix point). */}
+      <lineSegments ref={lineRef} geometry={lineGeo}>
+        <lineBasicMaterial vertexColors transparent opacity={0.22} depthWrite={false} />
+      </lineSegments>
     </group>
   );
 }
