@@ -47,6 +47,9 @@ export default function MemoryCore() {
       }),
     );
     s.scale.setScalar(1.6);
+    // The core glow must not intercept the hover raycast — neurons near or
+    // behind it would otherwise never register a hover.
+    s.raycast = () => null;
     return s;
   }, [tex]);
 
@@ -63,7 +66,7 @@ export default function MemoryCore() {
   return (
     <group>
       <primitive object={glow} />
-      <mesh ref={nucleus}>
+      <mesh ref={nucleus} raycast={() => null}>
         <sphereGeometry args={[0.16, 24, 24]} />
         <meshStandardMaterial color="#ffe9a8" emissive="#ffc247" emissiveIntensity={2.2} toneMapped={false} />
       </mesh>

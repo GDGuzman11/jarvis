@@ -62,6 +62,7 @@ EventType = Literal[
     "shutdown",
     "memory_update",
     "memory_confirm",
+    "memory_recall",
 ]
 
 
@@ -284,6 +285,26 @@ class MemoryConfirmEvent(Event):
 
 
 @dataclass(slots=True)
+class MemoryRecallEvent(Event):
+    """The facts Helix just reached for during a recall — flash them (Memory window).
+
+    Broadcast from :meth:`~backend.memory.manager.MemoryManager.recall` once the
+    multi-signal re-ranker has chosen the facts to inject. ``fact_ids`` carries
+    those facts in the graph node-id form (``"fact:<n>"``) so the Memory window
+    can match them directly against its existing node ids and pulse just the
+    neurons that were recalled — no payload reshaping, no full graph refetch.
+
+    Recall sits on the voice hot path, so this event is emitted fire-and-forget
+    (scheduled, not awaited) by the manager and never carries fact *text* — only
+    ids — keeping the broadcast cheap and free of any untrusted content.
+    """
+
+    fact_ids: list[str] = field(default_factory=list)
+    type: Literal["memory_recall"] = "memory_recall"
+    timestamp: str = field(default_factory=_utc_now_iso)
+
+
+@dataclass(slots=True)
 class ShutdownEvent(Event):
     """The backend is shutting down; windows should close (Phase 15B).
 
@@ -330,6 +351,7 @@ __all__ = [
     "ToolPermissionsEvent",
     "MemoryUpdateEvent",
     "MemoryConfirmEvent",
+    "MemoryRecallEvent",
     "ShutdownEvent",
     "serialize",
 ]

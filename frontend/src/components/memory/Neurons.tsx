@@ -27,6 +27,7 @@ import {
 import type { MemoryEdge, MemoryNode } from "../../lib/types";
 import { AQUA, nodeStyle, type NodeStyle } from "../../lib/memoryStyle";
 import { BrainLayout, type LayoutEdge } from "../../lib/memoryLayout";
+import { useStore } from "../../lib/store";
 
 interface NeuronsProps {
   nodes: MemoryNode[];
@@ -40,6 +41,10 @@ interface NeuronsProps {
 const dummy = new Object3D();
 const scratch = new Vector3();
 const col = new Color();
+const flashCol = new Color();
+
+/** How long a recalled neuron stays flashed before fully fading (ms). */
+const FLASH_MS = 1500;
 
 export default function Neurons({ nodes, edges, visibleIds, panelRef, onHover }: NeuronsProps) {
   const count = nodes.length;
@@ -73,6 +78,22 @@ export default function Neurons({ nodes, edges, visibleIds, panelRef, onHover }:
   const edgeLines = useMemo(() => makeLines(layoutEdges.length), [layoutEdges.length]);
   const tetherLines = useMemo(() => makeLines(count), [count]);
 
+  // Per-instance flash start times (ms, Date.now()) for recalled neurons. A
+  // plain typed array keyed by instance index — no per-neuron React state, so
+  // many neurons can flash together at 60fps. Zero = "never flashed".
+  const flashStart = useMemo(() => new Float64Array(Math.max(count, 1)), [count]);
+
+  // When Helix recalls facts, stamp the matching neurons' flash start so the
+  // useFrame loop pulses them. Re-stamping resets a still-fading flash.
+  const recallFlash = useStore((s) => s.recallFlash);
+  useEffect(() => {
+    if (!recallFlash) return;
+    for (const id of recallFlash.ids) {
+      const i = index.get(id);
+      if (i !== undefined && i < flashStart.length) flashStart[i] = recallFlash.at;
+    }
+  }, [recallFlash, index, flashStart]);
+
   useFrame((state, delta) => {
     const mesh = meshRef.current;
     if (!mesh) return;
@@ -83,6 +104,7 @@ export default function Neurons({ nodes, edges, visibleIds, panelRef, onHover }:
 
     // --- Neuron instances: matrix + colour ---
     const searching = visibleIds !== null;
+    const now = Date.now();
     for (let i = 0; i < count; i++) {
       const ix = i * 3;
       const s = styles[i];
@@ -91,9 +113,14 @@ export default function Neurons({ nodes, edges, visibleIds, panelRef, onHover }:
       // A search hit: brighten + enlarge + aqua-tint so it clearly GLOWS,
       // while non-matches dim well back so the hit pops against the cloud.
       const isMatch = searching && visible;
+      // Decaying recall flash: 1 right after recall → 0 after FLASH_MS.
+      const flash = Math.max(0, 1 - (now - flashStart[i]) / FLASH_MS);
       const pulse = 0.85 + 0.15 * Math.sin(state.clock.elapsedTime * 2 + i);
       const scale =
-        (visible ? s.size : s.size * 0.3) * (isHover ? 1.7 : isMatch ? 1.45 : 1) * pulse;
+        (visible ? s.size : s.size * 0.3) *
+        (isHover ? 1.7 : isMatch ? 1.45 : 1) *
+        (1 + 0.8 * flash) *
+        pulse;
       dummy.position.set(p[ix], p[ix + 1], p[ix + 2]);
       dummy.scale.setScalar(scale);
       dummy.updateMatrix();
@@ -108,10 +135,17 @@ export default function Neurons({ nodes, edges, visibleIds, panelRef, onHover }:
       }
 
       const baseLum = visible ? (isMatch ? s.glow * 2.0 : s.glow) : 0.08;
-      const lum = baseLum * (isHover ? 1.6 : 1);
+      // Recall flash blows brightness up so the neuron reads as white-hot.
+      const lum = baseLum * (isHover ? 1.6 : 1) * (1 + 2.5 * flash);
       col.setRGB(s.color[0], s.color[1], s.color[2]).multiplyScalar(lum);
       if (isMatch) col.lerp(col.clone().setRGB(AQUA[0], AQUA[1], AQUA[2]), 0.45);
       else if (s.recalled) col.lerp(col.clone().setRGB(AQUA[0], AQUA[1], AQUA[2]), 0.35);
+      // Tint toward a bright white-aqua while flashing (kept HDR-bright so bloom
+      // still blooms it). Mixed last so it overrides the base/search hue.
+      if (flash > 0) {
+        flashCol.setRGB(0.78 * lum, 1.0 * lum, 0.94 * lum);
+        col.lerp(flashCol, Math.min(0.85, flash));
+      }
       mesh.setColorAt(i, col);
     }
     mesh.instanceMatrix.needsUpdate = true;
@@ -216,5 +250,10 @@ function makeLines(n: number): LineSegments {
     depthWrite: false,
     toneMapped: false,
   });
-  return new LineSegments(geo, mat);
+  const lines = new LineSegments(geo, mat);
+  // Lines must never intercept the hover raycast — only the invisible neuron
+  // hit-spheres are valid hover targets. Otherwise a line crossing in front of
+  // a neuron would steal the pointer and the HUD panel would never appear.
+  lines.raycast = () => null;
+  return lines;
 }

@@ -42,7 +42,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from backend.events import MemoryConfirmEvent, MemoryUpdateEvent
+from backend.events import (
+    MemoryConfirmEvent,
+    MemoryRecallEvent,
+    MemoryUpdateEvent,
+)
 from backend.logging_config import get_logger
 from backend.memory import database
 from backend.memory.evaluator import MemoryEvaluator
@@ -687,6 +691,33 @@ class MemoryManager:
             )
         except Exception:  # noqa: BLE001 — a UI emit must never break a write
             log.warning("memory_update_emit_failed", exc_info=True)
+
+    def _emit_recall_flash(self, fact_ids: list[int]) -> None:
+        """Fire-and-forget a ``memory_recall`` flash for just-recalled facts.
+
+        Recall is on the voice hot path, so this is *scheduled* (not awaited):
+        the broadcast runs on the event loop after recall has already returned,
+        adding zero latency to the spoken turn. The ids are converted to the
+        graph node-id form (``"fact:<n>"``) so the Memory window can pulse the
+        matching neurons directly. A no-op when no hub was injected or there are
+        no ids; any broadcast failure is logged and swallowed inside the
+        scheduled task so a UI flash can never affect recall.
+        """
+        if self._hub is None or not fact_ids:
+            return
+        node_ids = [f"fact:{fid}" for fid in fact_ids]
+
+        async def _broadcast() -> None:
+            try:
+                await self._hub.broadcast(MemoryRecallEvent(fact_ids=node_ids))
+            except Exception:  # noqa: BLE001 — a UI flash must never break recall
+                log.warning("memory_recall_emit_failed", exc_info=True)
+
+        try:
+            asyncio.create_task(_broadcast())
+        except RuntimeError:
+            # No running loop (e.g. called outside async context) — drop the flash.
+            log.warning("memory_recall_emit_no_loop")
 
     async def _tombstone_vector(self, fact_id: int) -> None:
         """Tombstone every FAISS vector for ``fact_id`` (Phase 16D). Never raises.
@@ -1388,6 +1419,53 @@ class MemoryManager:
             log.warning("memory_decay_failed", exc_info=True)
             return archived
 
+    # --- One-time domain backfill for legacy facts (Memory Capture) ---------
+
+    async def backfill_domains(self) -> int:
+        """Classify legacy NULL-``domain`` facts and write their display domain.
+
+        Facts written before the ``memory_facts.domain`` column existed carry a
+        NULL domain, so the Memory window has to guess their colour from the
+        legacy signal ``category`` (which mislabels, e.g., a personal fact whose
+        signal category is ``correction``). This one-time pass selects every
+        active fact with ``domain IS NULL``, asks the LLM extractor to classify
+        each into the 10-category display DOMAIN (Haiku → phi3.5), and writes the
+        result to ``memory_facts.domain``. A fact the classifier could not label
+        is left NULL — the graph endpoint's colour fallback still handles it.
+
+        Off the voice hot path (run once at startup as a fire-and-forget task).
+        A no-op when no extractor is wired or nothing is NULL. Returns the number
+        of facts backfilled. Never raises — a backfill must not break startup.
+        Does NOT touch the signal ``category`` column or the 16D write-policy.
+        """
+        if self._extractor is None:
+            return 0
+        classify = getattr(self._extractor, "classify_domains", None)
+        if classify is None:
+            return 0
+        try:
+            rows = await database.get_facts_missing_domain(**self._db_kwargs())
+            if not rows:
+                return 0
+            texts = [(row.get("content") or "") for row in rows]
+            domains = await classify(texts)
+            updated = 0
+            for row, domain in zip(rows, domains):
+                if not domain:
+                    continue  # unparseable → leave NULL (fallback colours it)
+                ok = await database.set_memory_fact_domain(
+                    row["id"], domain, **self._db_kwargs()
+                )
+                if ok:
+                    updated += 1
+            log.info(
+                "memory_backfill_domains", scanned=len(rows), backfilled=updated
+            )
+            return updated
+        except Exception:  # noqa: BLE001 — a backfill must never break startup
+            log.warning("memory_backfill_domains_failed", exc_info=True)
+            return 0
+
     # --- Recall: blend Layer 2 (recent) + Layer 3 (semantic) ----------------
 
     async def recall(
@@ -1536,6 +1614,10 @@ class MemoryManager:
                             log.warning(
                                 "memory_recall_touch_failed", exc_info=True
                             )
+                        # Flash the just-recalled neurons in the Memory window.
+                        # Scheduled fire-and-forget so it adds no hot-path latency
+                        # (and still fires even if the touch write above failed).
+                        self._emit_recall_flash(recalled_fact_ids)
             except Exception:  # noqa: BLE001
                 log.warning("memory_recall_semantic_failed", exc_info=True)
 

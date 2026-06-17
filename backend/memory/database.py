@@ -1190,6 +1190,56 @@ async def get_memory_facts_by_ids(
     return [dict(row) for row in rows]
 
 
+# --- Memory Capture: one-time legacy domain backfill ------------------------
+
+
+async def get_facts_missing_domain(
+    *,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> list[dict]:
+    """Return active facts whose ``domain`` is NULL (the backfill source set).
+
+    Active = ``valid_to IS NULL`` (archived / superseded facts are skipped). One
+    dict per fact with ``id``, ``content`` and the legacy signal ``category``
+    (handed to the classifier as context). Ordered by id for deterministic
+    batching. Empty list when every fact already has a domain.
+    """
+    conn = await connect(db_path)
+    try:
+        cursor = await conn.execute(
+            "SELECT id, content, category FROM memory_facts "
+            "WHERE domain IS NULL AND valid_to IS NULL ORDER BY id"
+        )
+        rows = await cursor.fetchall()
+    finally:
+        await conn.close()
+    return [dict(row) for row in rows]
+
+
+async def set_memory_fact_domain(
+    fact_id: int,
+    domain: str,
+    *,
+    db_path: Path | str = DEFAULT_DB_PATH,
+) -> bool:
+    """Set the display ``domain`` on a single fact (one-time backfill).
+
+    Writes only the ``domain`` column — the signal ``category`` and every other
+    field are untouched, so the 16D write-policy is unaffected. Returns ``True``
+    when a row matched.
+    """
+    conn = await connect(db_path)
+    try:
+        cursor = await conn.execute(
+            "UPDATE memory_facts SET domain = ? WHERE id = ?",
+            (domain, int(fact_id)),
+        )
+        await conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        await conn.close()
+
+
 # --- Phase 16F: memory-graph data source ------------------------------------
 
 

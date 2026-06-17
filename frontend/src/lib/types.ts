@@ -174,6 +174,17 @@ export interface MemoryUpdateEvent {
 }
 
 /**
+ * Backend `memory_recall` event — Helix recalled these facts to answer a
+ * question. Each id matches a graph node `id` (e.g. "fact:12"). The brain
+ * flashes the matching neurons. One or many ids may be listed.
+ */
+export interface MemoryRecallEvent {
+  type: "memory_recall";
+  fact_ids: string[];
+  timestamp: string;
+}
+
+/**
  * Backend `memory_confirm` event — Helix is unsure whether to remember a fact
  * and asks the user to confirm via the Reasoning window. `category` here is the
  * DOMAIN (drives the badge color). `fact` is untrusted display-only text — it
@@ -198,6 +209,7 @@ export type HelixEvent =
   | CommsEvent
   | ToolPermissionsEvent
   | MemoryUpdateEvent
+  | MemoryRecallEvent
   | MemoryConfirmEvent
   | ShutdownEvent;
 

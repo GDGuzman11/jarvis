@@ -67,6 +67,10 @@ _VALID_DOMAINS: frozenset[str] = frozenset(
 )
 _DEFAULT_DOMAIN: str = "general"
 
+# Domain-classification output can be larger than a normal extraction (one short
+# object per legacy fact in the backfill batch), so it gets a roomier token cap.
+DOMAIN_CLASSIFY_MAX_TOKENS: int = 1500
+
 # Open-loop (reminder/follow-up) actions the open-loop extractor may return.
 _VALID_OPEN_LOOP_ACTIONS: frozenset[str] = frozenset(
     {"CREATE", "RESOLVE", "NOOP"}
@@ -118,6 +122,35 @@ EXTRACTION_SYSTEM_PROMPT: str = (
     "- If nothing is worth storing, return an empty array: []\n"
     "- Never put secrets, passwords, tokens, or API keys into a fact.\n"
     "- The entire output must be valid JSON parseable by a strict parser."
+)
+
+# Domain-classification contract (one-time legacy backfill). Reuses the same
+# 10-category DOMAIN taxonomy as fact extraction, but classifies *already-stored*
+# facts rather than reading a conversation turn — so the input is a JSON array of
+# facts (with indices) and the output is a parallel array of {index, category}.
+# Kept stable for prompt-cache reuse.
+DOMAIN_CLASSIFY_SYSTEM_PROMPT: str = (
+    "You classify stored memory facts for Helix, a personal AI assistant, into "
+    "exactly one display domain each.\n\n"
+    "Domains (choose exactly one per fact):\n"
+    "  personal - about the user (Gabe): birthdays, preferences, family, "
+    "health, location, personal life.\n"
+    "  atlas    - work in orchestration / planning / task routing.\n"
+    "  ben      - work in frontend / UI / visual design.\n"
+    "  kado     - work in backend / database / voice pipeline / memory.\n"
+    "  sentinel - work in security / audits / key rotation.\n"
+    "  vega     - work in marketing / campaigns / social strategy.\n"
+    "  quill    - work in content / copy / drafting / documentation.\n"
+    "  project  - cross-cutting Helix build: decisions, deadlines, architecture "
+    "spanning more than one agent's domain.\n"
+    "  people   - external contacts the user mentions (not the user themselves).\n"
+    "  general  - anything that fits none of the above.\n\n"
+    "You are given a JSON array of facts, each an object "
+    '{"index": <int>, "fact": "<text>"}.\n'
+    "Return ONLY a JSON array with one object per input fact, each "
+    '{"index": <int>, "category": "<one domain from the list above>"}. '
+    "Preserve the index of each fact. No prose, no markdown, no code fences. "
+    "The entire output must be valid JSON parseable by a strict parser."
 )
 
 # The open-loop (reminder / follow-up / promise) extraction contract. Separate
@@ -304,6 +337,33 @@ def _normalise(raw_items: list[Any]) -> list[Extraction]:
     return out
 
 
+def _normalise_domains(raw_items: list[Any], n: int) -> list[str | None]:
+    """Map a classifier's ``[{index, category}]`` output onto an n-length list.
+
+    Returns a list aligned 1:1 with the input facts: ``out[i]`` is the validated
+    domain for fact ``i`` (one of :data:`_VALID_DOMAINS`) or ``None`` when the
+    model gave no usable label for that index. Defensive — a malformed object, an
+    unknown domain, or an out-of-range/duplicate index is ignored, leaving that
+    slot ``None`` so the caller keeps the fact's ``domain`` NULL (the colour
+    fallback still handles it). One bad object never sinks the batch.
+    """
+    out: list[str | None] = [None] * n
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        try:
+            idx = int(item.get("index"))
+        except (TypeError, ValueError):
+            continue
+        if not (0 <= idx < n):
+            continue
+        category = str(item.get("category", "") or "").strip().lower()
+        if category not in _VALID_DOMAINS:
+            continue
+        out[idx] = category
+    return out
+
+
 def _coerce_target_id(value: Any) -> int | None:
     """Best-effort parse of a RESOLVE ``target_id`` into an int, else ``None``."""
     if value is None:
@@ -433,6 +493,84 @@ class LLMExtractor:
         log.info("memory_extract_done", count=len(extractions))
         return extractions
 
+    # --- One-time legacy domain classification (backfill) -------------------
+
+    @staticmethod
+    def _build_classify_messages(fact_texts: list[str]) -> list[dict[str, Any]]:
+        """Render a batch of stored facts into the single classifier message."""
+        payload = [
+            {"index": i, "fact": (text or "")}
+            for i, text in enumerate(fact_texts)
+        ]
+        return [
+            {
+                "role": "user",
+                "content": (
+                    "Classify each of these stored facts into exactly one "
+                    "domain.\n"
+                    + json.dumps(payload, ensure_ascii=False)
+                    + "\n\nReturn a JSON array of "
+                    '{"index", "category"} objects, one per fact.'
+                ),
+            }
+        ]
+
+    async def classify_domains(
+        self, fact_texts: list[str]
+    ) -> list[str | None]:
+        """Classify stored facts into display domains (Haiku → phi3.5 → NULLs).
+
+        One batched call classifies the whole list to keep the one-time domain
+        backfill cheap. Tries Claude Haiku first; on an API/credential error *or*
+        unparseable output, falls back to local phi3.5; if both fail or yield no
+        parseable JSON, returns ``[None, …]`` so the caller leaves every domain
+        NULL (the colour fallback still handles them). The returned list is always
+        aligned 1:1 with ``fact_texts``. Never raises — a backfill must not break
+        startup. Reuses the same domain taxonomy + defensive parsing as the
+        per-fact extractor ``category``.
+        """
+        if not fact_texts:
+            return []
+        messages = self._build_classify_messages(fact_texts)
+
+        # --- Primary: Claude Haiku ---------------------------------------
+        raw: str | None = None
+        try:
+            raw = await self._claude.complete(
+                messages,
+                DOMAIN_CLASSIFY_SYSTEM_PROMPT,
+                model=self._model,
+                max_tokens=DOMAIN_CLASSIFY_MAX_TOKENS,
+            )
+        except Exception as exc:  # noqa: BLE001 — any failure → fall back
+            log.warning("memory_classify_claude_failed", error=str(exc))
+            raw = None
+
+        items = _extract_json_array(raw) if raw is not None else None
+
+        # --- Fallback: local phi3.5 --------------------------------------
+        if items is None:
+            try:
+                raw = await self._ollama.complete(
+                    messages, DOMAIN_CLASSIFY_SYSTEM_PROMPT, fmt="json"
+                )
+            except Exception as exc:  # noqa: BLE001 — fallback must not raise
+                log.warning("memory_classify_ollama_failed", error=str(exc))
+                raw = None
+            items = _extract_json_array(raw) if raw else None
+
+        if items is None:
+            log.info("memory_classify_unparseable")
+            return [None] * len(fact_texts)
+
+        domains = _normalise_domains(items, len(fact_texts))
+        log.info(
+            "memory_classify_done",
+            facts=len(fact_texts),
+            labelled=sum(1 for d in domains if d is not None),
+        )
+        return domains
+
     # --- Open-loop (reminder/follow-up) judgement ---------------------------
 
     @staticmethod
@@ -521,5 +659,7 @@ __all__ = [
     "EXTRACTION_MODEL",
     "EXTRACTION_SYSTEM_PROMPT",
     "OPEN_LOOP_SYSTEM_PROMPT",
+    "DOMAIN_CLASSIFY_SYSTEM_PROMPT",
     "EXTRACTION_MAX_TOKENS",
+    "DOMAIN_CLASSIFY_MAX_TOKENS",
 ]

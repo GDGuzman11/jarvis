@@ -141,6 +141,9 @@ export interface HelixStore {
     action: "add" | "update" | "recall",
     node: MemoryNode | null,
   ) => void;
+  /** Latest batch of recalled fact ids + when it landed → flashes neurons. */
+  recallFlash: { ids: string[]; at: number } | null;
+  flashRecalled: (ids: string[]) => void;
 
   // --- Memory confirm queue (Reasoning window "Remember this?" cards) ---
   pendingConfirms: MemoryConfirmEvent[];
@@ -327,6 +330,9 @@ export const useStore = create<HelixStore>((set) => ({
         memoryLastTouched: { id: node.id, action, at: Date.now() },
       };
     }),
+
+  recallFlash: null,
+  flashRecalled: (ids) => set({ recallFlash: { ids, at: Date.now() } }),
 
   pendingConfirms: [],
   addPendingConfirm: (ev) =>

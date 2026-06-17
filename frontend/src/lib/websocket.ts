@@ -71,6 +71,9 @@ function dispatch(event: HelixEvent): void {
     case "memory_update":
       s.applyMemoryUpdate(event.action, event.node);
       break;
+    case "memory_recall":
+      s.flashRecalled(event.fact_ids);
+      break;
     case "memory_confirm":
       s.addPendingConfirm(event);
       break;

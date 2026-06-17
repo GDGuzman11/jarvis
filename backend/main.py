@@ -481,6 +481,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.memory_manager = memory_manager
     log.info("Memory manager ready")
 
+    # Memory Capture Overhaul: one-time domain backfill for legacy facts whose
+    # ``domain`` column is NULL (written before the column existed). Classifies
+    # each via the LLM extractor (Haiku → phi3.5) and writes ``memory_facts.domain``
+    # so the Memory window colours them correctly instead of guessing from the
+    # legacy signal category (which mislabels personal facts as project). Run once
+    # at startup as a fire-and-forget task — off the voice hot path, never raises,
+    # and a no-op when nothing is NULL. Logs how many it backfilled.
+    asyncio.create_task(
+        memory_manager.backfill_domains(), name="memory-domain-backfill"
+    )
+
     # Voice pipeline (Phase 3): wake -> listen -> STT -> Claude -> TTS -> play.
     # OpenWakeWord needs no API key, so the pipeline always starts. The detector
     # disables itself gracefully if the openwakeword library is not installed.
@@ -879,16 +890,25 @@ GRAPH_PREVIEW_CHARS: int = 120
 # only as a fallback for facts written before the ``domain`` column existed (their
 # ``domain`` is NULL). New facts carry ``domain`` directly. Anything unmapped →
 # "general", so the frontend always has a colour.
+#
+# Only the unambiguously-domain-bearing signal categories map to a non-``general``
+# domain. The *signal* categories ``correction`` / ``decision`` / ``failure`` /
+# ``repeated_topic`` describe the *shape* of a turn, not its subject — a
+# correction can be personal ("actually my mother is Ramona") just as easily as
+# project — so they fall back to ``general`` rather than masquerading as
+# ``project``. The real fix for those facts is the one-time LLM ``domain``
+# backfill (``MemoryManager.backfill_domains``); this map is only the colour of
+# last resort while a fact's ``domain`` is still NULL.
 _CATEGORY_TO_DOMAIN_FALLBACK: dict[str, str] = {
     "preference": "personal",
     "instruction": "personal",
     "open_loop": "personal",
-    "correction": "project",
-    "decision": "project",
-    "failure": "project",
     "app_work": "project",
     "agent_outcome": "project",
     "external_comm": "people",
+    "correction": "general",
+    "decision": "general",
+    "failure": "general",
     "repeated_topic": "general",
     "general": "general",
 }
