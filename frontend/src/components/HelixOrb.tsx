@@ -3,27 +3,28 @@
  *
  * "Ethereal Halo" — a calm, glowing artefact that floats transparently on the
  * desktop (no post-processing, so the Tauri window stays truly transparent —
- * the glow is built from additive sprites + emissive materials instead of a
- * full-screen bloom pass, which was forcing an opaque backing square):
+ * the glow is built from additive sprites/points + emissive materials instead
+ * of a full-screen bloom pass, which was forcing an opaque backing square):
  *
  *   1. TWO CROSSED WHITE HALOS — two fractured halos (6 chunky arc segments
  *      with gaps), each a WHITE GLOWING OUTLINE (EdgesGeometry → LineSegments,
  *      emissive white). Halo A tumbles on its X axis, Halo B spins on its Y
- *      axis, crossing like a slow gyroscope.
+ *      axis, crossing like a slow gyroscope. Both pulse with the voice.
  *
- *   2. GOLD CORE — a gold-glowing nucleus + an additive gold glow sprite at the
+ *   2. GOLD CORE — a gold-glowing nucleus + additive gold glow sprite at the
  *      centre, wrapped by 3 thin tilted GOLD orbital-ring outlines (atom motif).
  *
- *   3. ETHEREAL DOTS — ~40 soft-white additive glow points drifting gently but
- *      visibly (one Points object; positions updated via a typed array).
- *
- *   Glow is alpha-safe: additive sprites/points add light over the transparent
- *   framebuffer without writing an opaque background.
+ *   3. ETHEREAL DOTS + TETHERS — ~40 soft additive glow points drifting visibly
+ *      (one Points object, custom shader). Each dot has a faint connector line
+ *      to the core (one LineSegments). Both dot and tether glow BRIGHTER and
+ *      bigger near the core and fade as the dot drifts out, warming toward gold
+ *      near the gold core. All buffers are typed arrays updated in one useFrame
+ *      (no per-dot/per-line React objects).
  *
  * Voice reactivity (unchanged signature) is lerped each frame, calm/ethereal:
  *   idle — slow rotation + gentle core; listening — slightly brighter;
- *   thinking — a touch faster + brighter; speaking — audioLevel adds subtle
- *   core brightness + a little rotation.
+ *   thinking — a touch faster + brighter; speaking — audioLevel pulses the core
+ *   AND both halos together (brightness + scale + rotation bump).
  *
  * Palette: WHITE outer halos + GOLD inner rings/core. No aqua/cyan, no data.
  */
@@ -39,11 +40,12 @@ import {
   Euler,
   Float32BufferAttribute,
   Group,
+  LineBasicMaterial,
   LineSegments,
   Mesh,
   MeshStandardMaterial,
   Points,
-  PointsMaterial,
+  ShaderMaterial,
   Sprite,
   SpriteMaterial,
   TorusGeometry,
@@ -52,9 +54,6 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import type { VoiceState } from "../lib/types";
 
 const WHITE = "#ffffff";
-const SOFT_WHITE = "#f3f6ff";
-const GOLD = "#ffc247";
-const GOLD_HI = "#ffe9a8";
 const TWO_PI = Math.PI * 2;
 
 // --- Halo constants ---------------------------------------------------------
@@ -67,6 +66,12 @@ const WALL_SCALE = 1.7; // stretch tube along ring normal → chunky "wall" look
 // --- Core / dots ------------------------------------------------------------
 const ORBIT_R = 0.34;
 const DOT_COUNT = 40;
+const MIN_D = 0.45; // distance mapped to full brightness (close to core)
+const MAX_D = 1.95; // distance mapped to faint (far from core)
+
+// Colours as RGB triples for cheap per-frame lerping.
+const FAR_COL = [0.95, 0.965, 1.0]; // soft white (far)
+const GOLD_COL = [1.0, 0.7608, 0.2784]; // #ffc247 (near the gold core)
 
 /** Per-state behaviour knobs the animation lerps toward each frame. */
 const STATE_PARAMS: Record<VoiceState, { rot: number; bright: number }> = {
@@ -97,6 +102,34 @@ interface DotData {
   px: number; py: number; pz: number; // phases
 }
 
+// --- Distance-glow point shaders (per-point brightness + size + colour) -----
+const DOT_VERT = /* glsl */ `
+attribute float aBright;
+attribute vec3 aColor;
+varying float vBright;
+varying vec3 vColor;
+uniform float uSize;
+uniform float uPixelRatio;
+void main() {
+  vBright = aBright;
+  vColor = aColor;
+  vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  gl_Position = projectionMatrix * mv;
+  gl_PointSize = uSize * (0.5 + aBright * 1.3) * uPixelRatio / max(-mv.z, 0.1);
+}
+`;
+
+const DOT_FRAG = /* glsl */ `
+precision highp float;
+uniform sampler2D uTex;
+varying float vBright;
+varying vec3 vColor;
+void main() {
+  vec4 tex = texture2D(uTex, gl_PointCoord);
+  gl_FragColor = vec4(vColor * (0.4 + vBright * 1.6), tex.a * (0.28 + vBright * 0.72));
+}
+`;
+
 /** Soft radial-gradient sprite texture (white → transparent) for the glows. */
 function makeGlowTexture(): CanvasTexture {
   const size = 64;
@@ -118,8 +151,6 @@ export function HelixOrb({ voiceState, audioLevel }: OrbProps) {
   const glowTex = useMemo(makeGlowTexture, []);
 
   // --- White outline geometry for one fractured halo ------------------------
-  // Faceted arcs (low radialSegments) so EdgesGeometry yields clean longitudinal
-  // edges; a high threshold drops the gentle along-arc curvature steps.
   const haloEdges = useMemo(() => {
     const arc = TWO_PI / SEGMENTS - GAP;
     const parts: TorusGeometry[] = [];
@@ -136,7 +167,7 @@ export function HelixOrb({ voiceState, audioLevel }: OrbProps) {
     return edges;
   }, []);
 
-  // --- Ethereal dot field: data + a single additive-glow Points object ------
+  // --- Ethereal dot field data ----------------------------------------------
   const dots = useMemo<DotData[]>(() => {
     return Array.from({ length: DOT_COUNT }, () => {
       const u = Math.random() * 2 - 1;
@@ -147,7 +178,6 @@ export function HelixOrb({ voiceState, audioLevel }: OrbProps) {
         bx: r * s * Math.cos(theta),
         by: r * u,
         bz: r * s * Math.sin(theta),
-        // ~3-4× the previous motion so they clearly drift (still smooth).
         ax: 0.18 + Math.random() * 0.2,
         ay: 0.18 + Math.random() * 0.2,
         az: 0.18 + Math.random() * 0.2,
@@ -161,28 +191,49 @@ export function HelixOrb({ voiceState, audioLevel }: OrbProps) {
     });
   }, []);
 
+  // Single shader-driven Points object (per-point brightness/size/colour).
   const dotPoints = useMemo(() => {
     const geo = new BufferGeometry();
     geo.setAttribute("position", new Float32BufferAttribute(new Float32Array(DOT_COUNT * 3), 3));
-    const mat = new PointsMaterial({
-      map: glowTex,
-      color: new Color(SOFT_WHITE),
-      size: 0.22,
-      sizeAttenuation: true,
+    geo.setAttribute("aBright", new Float32BufferAttribute(new Float32Array(DOT_COUNT), 1));
+    geo.setAttribute("aColor", new Float32BufferAttribute(new Float32Array(DOT_COUNT * 3), 3));
+    const pixelRatio = Math.min(typeof window !== "undefined" ? window.devicePixelRatio : 1, 2);
+    const mat = new ShaderMaterial({
+      uniforms: {
+        uTex: { value: glowTex },
+        uSize: { value: 40 },
+        uPixelRatio: { value: pixelRatio },
+      },
+      vertexShader: DOT_VERT,
+      fragmentShader: DOT_FRAG,
       transparent: true,
-      opacity: 0.8,
+      depthWrite: false,
+      blending: AdditiveBlending,
+    });
+    return new Points(geo, mat);
+  }, [glowTex]);
+
+  // Single connector-line object: dot → core (2 verts/dot), per-vertex colour.
+  const connectors = useMemo(() => {
+    const geo = new BufferGeometry();
+    geo.setAttribute("position", new Float32BufferAttribute(new Float32Array(DOT_COUNT * 6), 3));
+    geo.setAttribute("color", new Float32BufferAttribute(new Float32Array(DOT_COUNT * 6), 3));
+    const mat = new LineBasicMaterial({
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.55,
       blending: AdditiveBlending,
       depthWrite: false,
       toneMapped: false,
     });
-    return new Points(geo, mat);
-  }, [glowTex]);
+    return new LineSegments(geo, mat);
+  }, []);
 
   // --- Additive gold glow sprite behind the nucleus -------------------------
   const coreGlow = useMemo(() => {
     const mat = new SpriteMaterial({
       map: glowTex,
-      color: new Color(GOLD),
+      color: new Color(GOLD_COL[0], GOLD_COL[1], GOLD_COL[2]),
       transparent: true,
       opacity: 0.9,
       blending: AdditiveBlending,
@@ -211,9 +262,20 @@ export function HelixOrb({ voiceState, audioLevel }: OrbProps) {
     p.rot += (target.rot + pulse * 0.3 - p.rot) * k;
     p.bright += (target.bright + pulse * 0.4 - p.bright) * k;
 
-    // Two crossed halos on different axes — slow, cinematic.
-    if (haloA.current) haloA.current.rotation.x += delta * 0.16 * p.rot;
-    if (haloB.current) haloB.current.rotation.y += delta * 0.13 * p.rot;
+    // --- Two crossed halos: voice-coupled brightness + scale + rotation -----
+    const haloSpeed = (1 + pulse * 0.7) * p.rot;
+    const haloScale = 1 + pulse * 0.07 + 0.008 * Math.sin(t * 2.2);
+    const haloOpacity = Math.min(1, 0.55 * p.bright + pulse * 0.45);
+    if (haloA.current) {
+      haloA.current.rotation.x += delta * 0.16 * haloSpeed;
+      haloA.current.scale.setScalar(haloScale);
+      (haloA.current.material as LineBasicMaterial).opacity = haloOpacity;
+    }
+    if (haloB.current) {
+      haloB.current.rotation.y += delta * 0.13 * haloSpeed;
+      haloB.current.scale.setScalar(haloScale);
+      (haloB.current.material as LineBasicMaterial).opacity = haloOpacity;
+    }
 
     // Gentle core drift + breathing gold nucleus/glow.
     if (coreGroup.current) coreGroup.current.rotation.y += delta * 0.08 * p.rot;
@@ -223,19 +285,55 @@ export function HelixOrb({ voiceState, audioLevel }: OrbProps) {
       const s = 1 + 0.05 * Math.sin(t * 1.4) + pulse * 0.35;
       nucleus.current.scale.setScalar(s);
     }
-    const glowS = 0.95 * p.bright + pulse * 0.5 + 0.05 * Math.sin(t * 1.4);
-    coreGlow.scale.setScalar(glowS);
+    coreGlow.scale.setScalar(0.95 * p.bright + pulse * 0.5 + 0.05 * Math.sin(t * 1.4));
     (coreGlow.material as SpriteMaterial).opacity = 0.7 * p.bright + pulse * 0.3;
 
-    // Ethereal dots — clearly drifting, smooth.
-    const pos = dotPoints.geometry.attributes.position.array as Float32Array;
+    // --- Dots + tethers: drift, distance-based glow, gold-near tint ----------
+    const dPos = dotPoints.geometry.attributes.position.array as Float32Array;
+    const dBright = dotPoints.geometry.attributes.aBright.array as Float32Array;
+    const dCol = dotPoints.geometry.attributes.aColor.array as Float32Array;
+    const lPos = connectors.geometry.attributes.position.array as Float32Array;
+    const lCol = connectors.geometry.attributes.color.array as Float32Array;
+    const span = MAX_D - MIN_D;
+
     for (let i = 0; i < dots.length; i++) {
       const d = dots[i];
-      pos[i * 3] = d.bx + Math.sin(t * d.fx + d.px) * d.ax;
-      pos[i * 3 + 1] = d.by + Math.sin(t * d.fy + d.py) * d.ay;
-      pos[i * 3 + 2] = d.bz + Math.sin(t * d.fz + d.pz) * d.az;
+      const x = d.bx + Math.sin(t * d.fx + d.px) * d.ax;
+      const y = d.by + Math.sin(t * d.fy + d.py) * d.ay;
+      const z = d.bz + Math.sin(t * d.fz + d.pz) * d.az;
+
+      // Closeness: 1 near the core, 0 far away.
+      const dist = Math.sqrt(x * x + y * y + z * z);
+      const closeness = Math.max(0, Math.min(1, (MAX_D - dist) / span));
+      const mix = closeness * 0.85; // warm toward gold near the core
+      const r = FAR_COL[0] + (GOLD_COL[0] - FAR_COL[0]) * mix;
+      const gg = FAR_COL[1] + (GOLD_COL[1] - FAR_COL[1]) * mix;
+      const b = FAR_COL[2] + (GOLD_COL[2] - FAR_COL[2]) * mix;
+      const glow = pulse * 0.25; // dots also lift a touch with the voice
+
+      // Dot point.
+      dPos[i * 3] = x;
+      dPos[i * 3 + 1] = y;
+      dPos[i * 3 + 2] = z;
+      dBright[i] = Math.min(1, closeness + glow);
+      dCol[i * 3] = r;
+      dCol[i * 3 + 1] = gg;
+      dCol[i * 3 + 2] = b;
+
+      // Tether: dot end (faint) → core end (brighter, gold). Fades with distance.
+      const lb = 0.12 + closeness * 0.9 + glow;
+      const j = i * 6;
+      lPos[j] = x; lPos[j + 1] = y; lPos[j + 2] = z;
+      lPos[j + 3] = 0; lPos[j + 4] = 0; lPos[j + 5] = 0;
+      lCol[j] = r * lb * 0.5; lCol[j + 1] = gg * lb * 0.5; lCol[j + 2] = b * lb * 0.5;
+      lCol[j + 3] = GOLD_COL[0] * lb; lCol[j + 4] = GOLD_COL[1] * lb; lCol[j + 5] = GOLD_COL[2] * lb;
     }
+
     dotPoints.geometry.attributes.position.needsUpdate = true;
+    dotPoints.geometry.attributes.aBright.needsUpdate = true;
+    dotPoints.geometry.attributes.aColor.needsUpdate = true;
+    connectors.geometry.attributes.position.needsUpdate = true;
+    connectors.geometry.attributes.color.needsUpdate = true;
   });
 
   return (
@@ -252,7 +350,8 @@ export function HelixOrb({ voiceState, audioLevel }: OrbProps) {
         <lineBasicMaterial color={WHITE} transparent opacity={0.9} toneMapped={false} />
       </lineSegments>
 
-      {/* Ethereal slow-drifting white glow points. */}
+      {/* Neuron → core tethers + ethereal drifting glow points. */}
+      <primitive object={connectors} />
       <primitive object={dotPoints} />
 
       {/* Gold ethereal core — glow sprite + nucleus + thin gold orbital rings. */}
@@ -260,18 +359,13 @@ export function HelixOrb({ voiceState, audioLevel }: OrbProps) {
         <primitive object={coreGlow} />
         <mesh ref={nucleus}>
           <sphereGeometry args={[0.07, 24, 24]} />
-          <meshStandardMaterial color={GOLD_HI} emissive={GOLD} emissiveIntensity={2.0} toneMapped={false} />
+          <meshStandardMaterial color="#ffe9a8" emissive="#ffc247" emissiveIntensity={2.0} toneMapped={false} />
         </mesh>
 
         {ORBIT_TILTS.map((e, i) => (
           <mesh key={i} rotation={e}>
             <torusGeometry args={[ORBIT_R, 0.005, 8, 64]} />
-            <meshStandardMaterial
-              color={GOLD}
-              emissive={GOLD}
-              emissiveIntensity={1.5}
-              toneMapped={false}
-            />
+            <meshStandardMaterial color="#ffc247" emissive="#ffc247" emissiveIntensity={1.5} toneMapped={false} />
           </mesh>
         ))}
       </group>
