@@ -36,12 +36,13 @@ import asyncio
 import hashlib
 import math
 import re
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from backend.events import MemoryUpdateEvent
+from backend.events import MemoryConfirmEvent, MemoryUpdateEvent
 from backend.logging_config import get_logger
 from backend.memory import database
 from backend.memory.evaluator import MemoryEvaluator
@@ -129,6 +130,20 @@ _MERGE_HINTS: tuple[str, ...] = (
 _EVIDENCE_HINTS: tuple[str, ...] = (
     "allergic", "allergy", "intolerant", "dietary", "gluten", "lactose",
 )
+
+# --- Memory Capture Overhaul — confirm-when-unsure bands ---------------------
+# An extracted ADD is stored silently when its confidence is at or above
+# AUTO_STORE; held for a Yes/No confirmation prompt when it sits in the
+# [CONFIRM_LOW, AUTO_STORE) band; and dropped below CONFIRM_LOW. An explicit
+# "remember…" request always auto-stores regardless of confidence. Confirmation
+# is ADD-only — UPDATE/DELETE keep auto-applying (16C/16D unchanged). Tunable.
+AUTO_STORE_CONFIDENCE: float = 0.70
+CONFIRM_LOW_CONFIDENCE: float = 0.45
+
+# How long a pending confirmation lives before a TTL sweep drops it (the user
+# never answered the Yes/No prompt). Swept on access (stash + confirm) and on the
+# periodic consolidation tick.
+PENDING_CONFIRM_TTL_S: float = 600.0  # 10 minutes
 
 # Ebbinghaus decay: a fact whose strength falls below this floor is archived
 # (``valid_to`` set) rather than recalled -- natural forgetting of stale,
@@ -302,6 +317,7 @@ def _build_memory_node(
     importance: float | None,
     confidence: float | None = None,
     access_count: int = 0,
+    domain: str | None = None,
 ) -> dict[str, Any]:
     """Build the minimal ``type:"memory"`` graph node for a live update (16F).
 
@@ -317,6 +333,10 @@ def _build_memory_node(
         "text_preview": (content or "")[:_GRAPH_PREVIEW_CHARS],
         "text_full": content,
         "category": category,
+        # The 10-category display DOMAIN (colour). New facts carry it directly;
+        # older facts (domain=None) are mapped from ``category`` by the graph
+        # endpoint's fallback, so the frontend always has a colour.
+        "domain": domain,
         "importance": importance,
         "confidence": confidence,
         "access_count": access_count,
@@ -385,6 +405,12 @@ class MemoryManager:
         # Optional and defaulting to None so every pre-16F caller/test that builds
         # the manager without a hub keeps working — the emit is then a no-op.
         self._hub = hub
+        # Memory Capture Overhaul: candidate ADDs whose confidence landed in the
+        # confirm band, awaiting a Yes/No from the Reasoning window. Keyed by a
+        # generated ``confirm_id``; each value carries the fact + its metadata and
+        # a ``created_at`` for the TTL sweep. In-RAM only (a missed confirmation is
+        # cheap to lose) and isolated from the 16C/16D write paths.
+        self._pending_confirms: dict[str, dict[str, Any]] = {}
 
     # --- Database kwargs ----------------------------------------------------
 
@@ -529,14 +555,21 @@ class MemoryManager:
             if person:
                 asyncio.create_task(self._upsert_person_async(person))
 
-            # Pre-filter (Phase 12A rules): the threshold gate also gates the LLM
-            # — an exchange that matched no rule scores 'general' (0.20) and never
-            # reaches the extractor, so idle chatter costs nothing. Only an
-            # exchange that already looks memorable is sent to the LLM below.
-            score, category = self._evaluator.score(user_text, reply)
-            if score < self._evaluator.threshold:
-                log.info("memory_consolidate_skip", category=category, score=score)
+            # Capture gate (Memory Capture Overhaul): the old hard
+            # ``score < threshold → skip`` dropped personal facts that score
+            # 'general' (a birthday never reached the LLM). It is replaced by a
+            # *light* chatter-skip — only clearly-trivial greeting/ack turns are
+            # dropped; everything with real content flows to the LLM extractor,
+            # which NOOPs genuine fluff. An explicit "remember…" request always
+            # passes. The signal ``score``/``category`` survive as a *hint*: the
+            # category is passed to the writers (and still drives the 16D
+            # write-policy), and the score gates only the rule *fallback* below.
+            explicit = self._evaluator.is_explicit_memory_request(user_text)
+            if not explicit and self._evaluator.is_chatter(user_text, reply):
+                log.info("memory_consolidate_skip_chatter")
                 return None
+
+            score, category = self._evaluator.score(user_text, reply)
 
             # Phase 16C: LLM-driven extraction (Haiku → phi3.5) when an extractor
             # is wired. It returns structured ADD/UPDATE/DELETE/NOOP operations;
@@ -555,14 +588,21 @@ class MemoryManager:
                 if extractions:
                     return await self._apply_extractions(
                         extractions, category=category, score=score,
-                        source=source, agent_id=agent_id,
+                        source=source, agent_id=agent_id, explicit=explicit,
                     )
                 # else: empty extraction → rule fallback below.
 
-            return await self._store_rule_fact(
-                user_text, reply, category, score=score, source=source,
-                agent_id=agent_id,
-            )
+            # Rule fallback (no LLM verdict — extractor absent, or both LLMs down).
+            # The keyword rules are brittle/precise, so keep the score gate HERE so
+            # an LLM outage never floods memory with low-signal 'general' turns;
+            # an explicit "remember…" request stores regardless.
+            if explicit or score >= self._evaluator.threshold:
+                return await self._store_rule_fact(
+                    user_text, reply, category, score=score, source=source,
+                    agent_id=agent_id,
+                )
+            log.info("memory_consolidate_skip_rule_fallback", score=score)
+            return None
         except Exception:  # noqa: BLE001 — consolidation must never break a turn
             log.warning("memory_consolidate_failed", exc_info=True)
             return None
@@ -580,6 +620,7 @@ class MemoryManager:
         created_by: str | None = None,
         confidence: float | None = None,
         write_policy: str | None = None,
+        domain: str | None = None,
     ) -> int:
         """Insert one fact into ``memory_facts`` and mirror it into FAISS.
 
@@ -603,6 +644,7 @@ class MemoryManager:
             created_by=created_by,
             confidence=confidence,
             write_policy=policy,
+            domain=domain,
             **self._db_kwargs(),
         )
         await asyncio.to_thread(
@@ -620,7 +662,7 @@ class MemoryManager:
             "add",
             _build_memory_node(
                 fact_id, content, category=category, importance=importance,
-                confidence=confidence,
+                confidence=confidence, domain=domain,
             ),
         )
         return fact_id
@@ -720,16 +762,23 @@ class MemoryManager:
         score: float,
         source: str,
         agent_id: str | None,
+        explicit: bool = False,
     ) -> int | None:
         """Apply a list of LLM extraction operations to memory.
 
         Returns the id of the last fact written/updated, or ``None`` when nothing
-        was written (every operation was a NOOP, or a DELETE/UPDATE found no
-        existing fact close enough to act on). ``created_by`` is taken from each
-        operation's provenance (``'user'`` vs ``'inference'``) and ``confidence``
-        from the model's per-fact score. The caller has already confirmed the
-        list is non-empty, so a ``None`` return here means "the LLM looked and
-        decided nothing", not "fall back to rules".
+        was written (every operation was a NOOP; a DELETE/UPDATE found no existing
+        fact close enough to act on; or every ADD was held for confirmation /
+        dropped). ``created_by`` is taken from each operation's provenance
+        (``'user'`` vs ``'inference'``) and ``confidence`` from the model's
+        per-fact score. The caller has already confirmed the list is non-empty, so
+        a ``None`` return here means "the LLM looked and nothing landed", not
+        "fall back to rules".
+
+        Memory Capture Overhaul: an ADD now runs through the confirm-when-unsure
+        band (:meth:`_add_or_confirm`) — auto-store, hold for a Yes/No, or drop —
+        keyed on its confidence and the ``explicit`` flag. UPDATE/DELETE keep
+        auto-applying (16C/16D unchanged); confirmation is ADD-only.
         """
         last_id: int | None = None
         for op in extractions:
@@ -760,17 +809,177 @@ class MemoryManager:
                     if resolved is not None:
                         last_id = resolved
                     continue
-                # No close enough existing fact → treat UPDATE as ADD.
+                # No close enough existing fact → treat UPDATE as ADD (and so it
+                # also runs through the confirm band).
 
             # ADD (or an UPDATE that found no target to revise).
-            last_id = await self._add_fact(
+            written = await self._add_or_confirm(
+                op, category=category, score=score, source=source,
+                agent_id=agent_id, explicit=explicit,
+            )
+            if written is not None:
+                last_id = written
+
+        return last_id
+
+    async def _add_or_confirm(
+        self,
+        op: Extraction,
+        *,
+        category: str,
+        score: float,
+        source: str,
+        agent_id: str | None,
+        explicit: bool,
+    ) -> int | None:
+        """Apply the confirm-when-unsure band to one ADD operation.
+
+        * ``explicit`` request, or ``confidence >= AUTO_STORE_CONFIDENCE`` →
+          store silently (the normal :meth:`_add_fact` path; the new neuron pops
+          via ``memory_update``). Returns the new fact id.
+        * ``CONFIRM_LOW_CONFIDENCE <= confidence < AUTO_STORE_CONFIDENCE`` → do
+          NOT store; stash the candidate and emit a ``memory_confirm`` so the
+          Reasoning window can ask the user Yes/No. Returns ``None``.
+        * ``confidence < CONFIRM_LOW_CONFIDENCE`` → drop. Returns ``None``.
+
+        The ``op.category`` is the 10-category DOMAIN (display colour); the signal
+        ``category`` argument is the evaluator's category (write-policy + the
+        ``memory_facts.category`` column) — the two are kept distinct.
+        """
+        domain = op.category
+        if explicit or op.confidence >= AUTO_STORE_CONFIDENCE:
+            fact_id = await self._add_fact(
                 op.fact, category=category, source=source, importance=score,
                 agent_id=agent_id, created_by=op.source, confidence=op.confidence,
                 write_policy=_choose_write_policy(category, op.fact, op.subject),
+                domain=domain,
             )
-            log.info("memory_extract_add", fact_id=last_id, created_by=op.source)
+            log.info(
+                "memory_extract_add", fact_id=fact_id, created_by=op.source,
+                explicit=explicit,
+            )
+            return fact_id
 
-        return last_id
+        if op.confidence >= CONFIRM_LOW_CONFIDENCE:
+            await self._stash_pending_confirm(
+                op, category=category, domain=domain, score=score,
+                source=source, agent_id=agent_id,
+            )
+            return None
+
+        log.info("memory_extract_drop_low_confidence", confidence=op.confidence)
+        return None
+
+    # --- Confirm-when-unsure: pending store + Yes/No resolution -------------
+
+    def _sweep_pending_confirms(self, *, now: float | None = None) -> int:
+        """Drop pending confirmations older than :data:`PENDING_CONFIRM_TTL_S`.
+
+        Cheap and synchronous — called on every stash/confirm access and from the
+        consolidation loop. Returns the number swept (for logging/tests).
+        """
+        clock = now if now is not None else datetime.now(timezone.utc).timestamp()
+        stale = [
+            cid
+            for cid, entry in self._pending_confirms.items()
+            if clock - entry.get("created_at", clock) > PENDING_CONFIRM_TTL_S
+        ]
+        for cid in stale:
+            self._pending_confirms.pop(cid, None)
+        if stale:
+            log.info("memory_confirm_swept", count=len(stale))
+        return len(stale)
+
+    def sweep_pending_confirms(self) -> int:
+        """Public TTL sweep hook for the consolidation loop. Never raises."""
+        try:
+            return self._sweep_pending_confirms()
+        except Exception:  # noqa: BLE001 — a sweep must never crash its loop
+            log.warning("memory_confirm_sweep_failed", exc_info=True)
+            return 0
+
+    async def _stash_pending_confirm(
+        self,
+        op: Extraction,
+        *,
+        category: str,
+        domain: str,
+        score: float,
+        source: str,
+        agent_id: str | None,
+    ) -> str:
+        """Hold a borderline ADD and emit a ``memory_confirm`` Yes/No prompt.
+
+        Stores the candidate (with all the metadata :meth:`_add_fact` will need on
+        a "store" decision) under a generated ``confirm_id`` and broadcasts a
+        :class:`MemoryConfirmEvent`. Nothing is written to memory yet. Returns the
+        ``confirm_id``. Self-contained: a broadcast failure never breaks the turn.
+        """
+        self._sweep_pending_confirms()
+        confirm_id = uuid.uuid4().hex
+        self._pending_confirms[confirm_id] = {
+            "fact": op.fact,
+            "category": category,  # signal category (write-policy + column)
+            "domain": domain,      # 10-category display domain
+            "subject": op.subject,
+            "score": score,
+            "source": source,
+            "agent_id": agent_id,
+            "created_by": op.source,
+            "confidence": op.confidence,
+            "created_at": datetime.now(timezone.utc).timestamp(),
+        }
+        try:
+            if self._hub is not None:
+                await self._hub.broadcast(
+                    MemoryConfirmEvent(
+                        confirm_id=confirm_id,
+                        fact=op.fact,
+                        category=domain,
+                        subject=op.subject or None,
+                    )
+                )
+        except Exception:  # noqa: BLE001 — a UI emit must never break a turn
+            log.warning("memory_confirm_emit_failed", exc_info=True)
+        log.info("memory_confirm_pending", confirm_id=confirm_id, domain=domain)
+        return confirm_id
+
+    async def confirm_pending(
+        self, confirm_id: str, decision: str
+    ) -> str | None:
+        """Resolve a held confirmation. Returns ``"stored"``/``"discarded"``.
+
+        ``decision`` is ``"store"`` (write the held fact via :meth:`_add_fact`,
+        which emits the ``memory_update`` so the neuron pops) or ``"discard"``
+        (drop it). Returns ``None`` when ``confirm_id`` is unknown or already
+        expired/resolved, so the endpoint can answer 404. Never raises — a
+        confirmation must not break anything.
+        """
+        self._sweep_pending_confirms()
+        entry = self._pending_confirms.pop(confirm_id, None)
+        if entry is None:
+            return None
+        if decision != "store":
+            log.info("memory_confirm_discarded", confirm_id=confirm_id)
+            return "discarded"
+        try:
+            await self._add_fact(
+                entry["fact"],
+                category=entry["category"],
+                source=entry["source"],
+                importance=entry["score"],
+                agent_id=entry.get("agent_id"),
+                created_by=entry.get("created_by"),
+                confidence=entry.get("confidence"),
+                write_policy=_choose_write_policy(
+                    entry["category"], entry["fact"], entry.get("subject", "")
+                ),
+                domain=entry.get("domain"),
+            )
+            log.info("memory_confirm_stored", confirm_id=confirm_id)
+        except Exception:  # noqa: BLE001 — a confirm write must not raise out
+            log.warning("memory_confirm_store_failed", exc_info=True)
+        return "stored"
 
     # --- Phase 16D: TOKI contradiction operators ----------------------------
 
@@ -1422,6 +1631,9 @@ __all__ = [
     "MIN_SEMANTIC_SCORE",
     "CANDIDATE_POOL_K",
     "UPDATE_SIMILARITY_THRESHOLD",
+    "AUTO_STORE_CONFIDENCE",
+    "CONFIRM_LOW_CONFIDENCE",
+    "PENDING_CONFIRM_TTL_S",
     "W_SEMANTIC",
     "W_KEYWORD",
     "W_RECENCY",

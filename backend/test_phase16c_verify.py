@@ -202,24 +202,28 @@ async def test_noop_skips_write(tmp_path) -> None:
     assert vs.entries == [], "NOOP must not mirror anything into FAISS"
 
 
-# --- 4. Pre-filter gates the LLM (no rule match → extractor not called) ------
+# --- 4. Chatter-skip gates the LLM (pure pleasantry → extractor not called) --
+#
+# Memory Capture Overhaul: the old hard ``score < 0.65`` gate is replaced by a
+# light chatter-skip. A substantive question like "what time is it" now DOES
+# reach the LLM (which NOOPs it), but a pure greeting/acknowledgement turn is
+# still gated out before any LLM call — which is what this test now asserts.
 
 
-async def test_prefilter_skips_llm_when_no_rule_matches(tmp_path) -> None:
+async def test_chatter_skip_gates_the_llm(tmp_path) -> None:
     db_path = await _make_db(tmp_path)
     vs = _FakeVectorStore()
-    # Real evaluator: this exchange matches no rule → scores 'general' (0.20),
-    # below the 0.65 threshold, so consolidate must return before the extractor.
+    # Would store if ever consulted — but pure chatter must gate it out first.
     extractor = _QueueExtractor([[Extraction("ADD", "x", 0.9, "x", "user")]])
     mgr = MemoryManager(
         db_path=db_path, vector_store=vs,
         evaluator=MemoryEvaluator(), extractor=extractor,
     )
 
-    result = await mgr.consolidate("what time is it", "It is noon.")
+    result = await mgr.consolidate("ok thanks", "You're most welcome, sir.")
 
     assert result is None
-    assert extractor.calls == [], "pre-filter must gate the LLM extraction call"
+    assert extractor.calls == [], "chatter-skip must gate the LLM extraction call"
     assert await _fact_count(db_path) == 0
 
 
@@ -324,7 +328,9 @@ async def test_created_by_set_user_vs_inference(tmp_path) -> None:
         [
             [
                 Extraction("ADD", "User's name is Sam.", 0.97, "user", "user"),
-                Extraction("ADD", "User likely works in tech.", 0.6,
+                # ≥0.70 so it auto-stores; mid-confidence would land in the
+                # memory-capture confirm band and be held pending instead.
+                Extraction("ADD", "User likely works in tech.", 0.8,
                            "user", "inference"),
             ]
         ]

@@ -14,7 +14,42 @@ import MemoryBrain from "../components/memory/MemoryBrain";
 import MemoryHoverPanel from "../components/memory/MemoryHoverPanel";
 import { fetchMemoryGraph } from "../lib/api";
 import { useStore } from "../lib/store";
+import { DOMAIN_HEX, DOMAIN_LABELS, DOMAIN_ORDER } from "../lib/memoryStyle";
 import type { MemoryNode } from "../lib/types";
+
+/** Collapsible category → color key. Unobtrusive glass card, doesn't block orbit. */
+function CategoryLegend() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="pointer-events-auto absolute bottom-3 right-3 z-20">
+      <div className="glass min-w-[120px] px-2 py-1.5">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="flex w-full items-center gap-1 text-[10px] uppercase tracking-widest text-helix-gold focus:outline-none"
+        >
+          <span>{open ? "▾" : "▸"}</span>
+          <span>Categories</span>
+        </button>
+        {open && (
+          <ul className="mt-1.5 space-y-1">
+            {DOMAIN_ORDER.map((d) => (
+              <li key={d} className="flex items-center gap-2">
+                <span
+                  className="inline-block h-2.5 w-2.5 shrink-0"
+                  style={{ background: DOMAIN_HEX[d], boxShadow: `0 0 5px ${DOMAIN_HEX[d]}` }}
+                />
+                <span className="text-[10px] tracking-wide text-helix-ink/80">
+                  {DOMAIN_LABELS[d] ?? d}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
 
 /** Lowercased searchable text for a node. */
 function nodeText(n: MemoryNode): string {
@@ -96,6 +131,9 @@ export function MemoryWindow() {
             {refreshing ? "…" : "↻ Refresh"}
           </button>
         </div>
+
+        {/* Category color key */}
+        <CategoryLegend />
 
         {/* Empty / sparse state */}
         {nodes.length === 0 && (

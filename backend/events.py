@@ -61,6 +61,7 @@ EventType = Literal[
     "tool_permissions",
     "shutdown",
     "memory_update",
+    "memory_confirm",
 ]
 
 
@@ -258,6 +259,31 @@ class MemoryUpdateEvent(Event):
 
 
 @dataclass(slots=True)
+class MemoryConfirmEvent(Event):
+    """Helix is unsure whether to remember a fact — ask the user (Memory Capture).
+
+    Broadcast when an extracted ADD lands in the confirm band (its confidence sits
+    between :data:`~backend.memory.manager.CONFIRM_LOW_CONFIDENCE` and
+    :data:`~backend.memory.manager.AUTO_STORE_CONFIDENCE`). The Reasoning window
+    renders a small "🧠 Remember this?" Yes/No card; the answer is sent back to
+    ``POST /api/memory/confirm`` with this ``confirm_id``. The fact is NOT stored
+    until the user says yes.
+
+    ``category`` is the 10-category display DOMAIN (drives the badge colour), not
+    the evaluator's signal category. ``fact`` may derive from untrusted content;
+    it rides this event as display data only and is never re-injected into a
+    model prompt by the frontend.
+    """
+
+    confirm_id: str
+    fact: str
+    category: str
+    subject: str | None = None
+    type: Literal["memory_confirm"] = "memory_confirm"
+    timestamp: str = field(default_factory=_utc_now_iso)
+
+
+@dataclass(slots=True)
 class ShutdownEvent(Event):
     """The backend is shutting down; windows should close (Phase 15B).
 
@@ -303,6 +329,7 @@ __all__ = [
     "CommsEvent",
     "ToolPermissionsEvent",
     "MemoryUpdateEvent",
+    "MemoryConfirmEvent",
     "ShutdownEvent",
     "serialize",
 ]

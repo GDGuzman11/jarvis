@@ -131,7 +131,10 @@ export interface MemoryFactNode extends MemoryNodeBase {
   last_recalled_at: string | null;
   conflicting_fact_ids: string | null;
   subject: string | null;
+  /** Legacy signal-category string (kept for back-compat). */
   category?: string | null;
+  /** One of the 10 locked categories — drives the node's base color. */
+  domain?: string | null;
 }
 
 /** A person profile (`type: "person"`). */
@@ -170,6 +173,21 @@ export interface MemoryUpdateEvent {
   timestamp: string;
 }
 
+/**
+ * Backend `memory_confirm` event — Helix is unsure whether to remember a fact
+ * and asks the user to confirm via the Reasoning window. `category` here is the
+ * DOMAIN (drives the badge color). `fact` is untrusted display-only text — it
+ * must never be echoed back into a model prompt.
+ */
+export interface MemoryConfirmEvent {
+  type: "memory_confirm";
+  confirm_id: string;
+  fact: string;
+  category: string;
+  subject?: string | null;
+  timestamp: string;
+}
+
 export type HelixEvent =
   | AgentUpdateEvent
   | TokenEvent
@@ -180,6 +198,7 @@ export type HelixEvent =
   | CommsEvent
   | ToolPermissionsEvent
   | MemoryUpdateEvent
+  | MemoryConfirmEvent
   | ShutdownEvent;
 
 /** A tool-call record as held in the store (args + eventual result). */

@@ -197,6 +197,28 @@ export async function fetchMemoryGraph(): Promise<MemoryGraph | null> {
 }
 
 /**
+ * Resolve a pending "Remember this?" prompt. POSTs to `/api/memory/confirm`
+ * with `{ confirm_id, decision }`. Resolves true on a 2xx, false otherwise
+ * (offline / route missing). The caller optimistically drops the card from the
+ * queue regardless, so a failed request can't leave a prompt stuck.
+ */
+export async function confirmMemory(
+  confirmId: string,
+  decision: "store" | "discard",
+): Promise<boolean> {
+  try {
+    const res = await fetch(`${API_BASE}/api/memory/confirm`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm_id: confirmId, decision }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Fetch the most recent tasks for one agent (newest first, max 5). Returns an
  * empty array on any error so the caller can render an empty log gracefully.
  */

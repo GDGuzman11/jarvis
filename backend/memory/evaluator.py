@@ -169,6 +169,55 @@ _OPEN_LOOP_RESOLVE_HINTS: tuple[str, ...] = (
 )
 
 
+# --- Capture gate (Memory Capture Overhaul) ---------------------------------
+# The light chatter-skip that replaces the old hard ``score < 0.65`` gate. A turn
+# is "chatter" only when it is very short AND every word is a pure greeting /
+# pleasantry / acknowledgement / filler — i.e. there is no substance an LLM could
+# possibly distil. Anything else (a question, a one-word noun, a statement) is
+# NOT chatter and flows on to the LLM extractor, which NOOPs genuine fluff. This
+# is deliberately conservative: the cost of a false negative (chatter slipping
+# through) is one Haiku call that returns ``[]``; a false positive (real content
+# wrongly skipped) silently loses a memory, so the bar to call something chatter
+# is high.
+_CHATTER_TOKENS: frozenset[str] = frozenset(
+    {
+        # greetings
+        "hi", "hii", "hey", "hello", "helloo", "yo", "hiya", "sup", "heya",
+        "morning", "afternoon", "evening", "night", "greetings",
+        # sign-offs
+        "bye", "goodbye", "cya", "later", "ttyl",
+        # acknowledgements / pleasantries
+        "thanks", "thank", "thx", "ty", "cheers", "ok", "okay", "k", "kk",
+        "cool", "nice", "great", "awesome", "perfect", "good", "fine", "sweet",
+        "yes", "yep", "yeah", "yup", "no", "nope", "nah", "sure", "alright",
+        "right", "gotcha", "ok!", "welcome", "please", "done", "mhm", "hmm",
+        "lol", "haha", "hah", "np", "indeed", "splendid", "lovely",
+        # light fillers that commonly pad an acknowledgement
+        "you", "u", "it", "that", "this", "the", "a", "an", "and", "is", "im",
+        "i", "to", "so", "very", "much", "for", "all", "mate", "sir", "helix",
+        "there", "now", "then", "well",
+    }
+)
+# Above this word count a turn is never treated as chatter (it is long enough to
+# plausibly carry substance worth an LLM look).
+_CHATTER_MAX_WORDS: int = 5
+
+# Tokeniser for the chatter test: words = letters/digits/apostrophes only, so
+# trailing punctuation never blocks a match ("thanks!" -> "thanks").
+_WORD_RE = re.compile(r"[a-z0-9']+")
+
+# Phrases that make a turn an explicit "remember this" request. When present the
+# turn always passes the gate AND its facts auto-store (skipping the confirm
+# band) — the user asked for it by name, so we never second-guess with a prompt.
+_EXPLICIT_MEMORY_PATTERNS: tuple[str, ...] = (
+    "remember this", "remember that", "remember my", "remember i ",
+    "remember to remember", "please remember", "remember,", "remember:",
+    "note that", "make a note", "take a note", "jot this down", "jot that down",
+    "save this", "keep in mind", "bear in mind", "don't forget", "dont forget",
+    "do not forget", "for the record", "remember",
+)
+
+
 # A pragmatic email matcher — good enough for Gmail/Slack context strings.
 _EMAIL_RE: str = r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
 
@@ -241,6 +290,49 @@ class MemoryEvaluator:
         """Convenience: ``True`` when the exchange scores at/above threshold."""
         value, _ = self.score(user_text, reply)
         return value >= self.threshold
+
+    # --- Capture gate (Memory Capture Overhaul) -----------------------------
+
+    def is_chatter(self, user_text: str, reply: str = "") -> bool:
+        """``True`` when a turn is pure greeting/pleasantry/ack with no substance.
+
+        This is the *light* capture gate that replaces the old hard
+        ``score < threshold`` skip. It returns ``True`` only for clearly-trivial
+        turns — empty/punctuation-only, or a short message whose every word is a
+        known greeting / acknowledgement / filler token. Everything else (a
+        question, a one-word noun, any statement carrying a content word) is NOT
+        chatter and reaches the LLM extractor, which is far better at judging
+        whether a real fact is present. The ``reply`` is accepted for signature
+        symmetry/future use but the decision rests on the user's words, where
+        substance lives.
+        """
+        text = (user_text or "").strip()
+        if not text:
+            return True
+        words = _WORD_RE.findall(text.lower())
+        if not words:
+            # Pure punctuation / emoji — nothing to remember.
+            return True
+        if len(words) > _CHATTER_MAX_WORDS:
+            return False
+        # Chatter only when EVERY word is a known greeting/pleasantry/filler; a
+        # single content word (a name, a place, "birthday", "broken") tips it
+        # into "send to the LLM".
+        return all(word in _CHATTER_TOKENS for word in words)
+
+    def is_explicit_memory_request(self, user_text: str) -> bool:
+        """``True`` when the user explicitly asked Helix to remember something.
+
+        Detects "remember (this/that)", "note that", "don't forget", "make a
+        note", "save this", "keep in mind" and similar. An explicit request
+        always passes the capture gate and forces its facts to auto-store
+        (bypassing the confirm-when-unsure band) — the user named the intent, so
+        Helix should not answer it with a confirmation prompt.
+        """
+        if not user_text or not user_text.strip():
+            return False
+        lowered = user_text.lower()
+        return any(pat in lowered for pat in _EXPLICIT_MEMORY_PATTERNS)
 
     # --- Open-loop detection (Phase 12D) ------------------------------------
 

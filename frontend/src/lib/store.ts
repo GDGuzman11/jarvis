@@ -15,6 +15,7 @@ import type {
   AgentStatus,
   ConnectionStatus,
   GmailMessage,
+  MemoryConfirmEvent,
   MemoryEdge,
   MemoryNode,
   SlackMessage,
@@ -140,6 +141,11 @@ export interface HelixStore {
     action: "add" | "update" | "recall",
     node: MemoryNode | null,
   ) => void;
+
+  // --- Memory confirm queue (Reasoning window "Remember this?" cards) ---
+  pendingConfirms: MemoryConfirmEvent[];
+  addPendingConfirm: (ev: MemoryConfirmEvent) => void;
+  removePendingConfirm: (confirmId: string) => void;
 }
 
 export const useStore = create<HelixStore>((set) => ({
@@ -321,4 +327,17 @@ export const useStore = create<HelixStore>((set) => ({
         memoryLastTouched: { id: node.id, action, at: Date.now() },
       };
     }),
+
+  pendingConfirms: [],
+  addPendingConfirm: (ev) =>
+    set((s) =>
+      // Dedup on confirm_id so a re-broadcast can't stack the same card.
+      s.pendingConfirms.some((c) => c.confirm_id === ev.confirm_id)
+        ? s
+        : { pendingConfirms: [...s.pendingConfirms, ev] },
+    ),
+  removePendingConfirm: (confirmId) =>
+    set((s) => ({
+      pendingConfirms: s.pendingConfirms.filter((c) => c.confirm_id !== confirmId),
+    })),
 }));

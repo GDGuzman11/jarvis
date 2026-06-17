@@ -361,6 +361,13 @@ _MEMORY_FACTS_NEW_COLUMNS: tuple[tuple[str, str], ...] = (
     ("superseded_by_fact_id", "INTEGER"),
     ("write_policy", "TEXT DEFAULT 'last-write-wins'"),
     ("conflicting_fact_ids", "TEXT"),
+    # --- Memory Capture Overhaul: 10-category display DOMAIN -------------
+    # The colour-coded category for the Memory window (personal/atlas/…/general).
+    # Deliberately SEPARATE from the existing ``category`` column (which carries
+    # the evaluator's signal category and drives the 16D write-policy). NULL on
+    # rows predating this change; the graph endpoint maps the legacy ``category``
+    # to a domain as a fallback for those.
+    ("domain", "TEXT"),
 )
 
 
@@ -785,6 +792,7 @@ async def save_memory_fact(
     confidence: float | None = None,
     source_turn_id: int | None = None,
     write_policy: str | None = None,
+    domain: str | None = None,
     db_path: Path | str = DEFAULT_DB_PATH,
 ) -> int:
     """Persist a single distilled memory fact and return its row id.
@@ -822,6 +830,9 @@ async def save_memory_fact(
     if write_policy is not None:
         columns.append("write_policy")
         values.append(write_policy)
+    if domain is not None:
+        columns.append("domain")
+        values.append(domain)
 
     placeholders = ", ".join("?" for _ in columns)
     col_sql = ", ".join(columns)
@@ -1201,8 +1212,8 @@ async def get_graph_facts(
     conn = await connect(db_path)
     try:
         cursor = await conn.execute(
-            "SELECT id, content, category, importance, access_count, confidence, "
-            "created_at, last_recalled_at, conflicting_fact_ids "
+            "SELECT id, content, category, domain, importance, access_count, "
+            "confidence, created_at, last_recalled_at, conflicting_fact_ids "
             "FROM memory_facts WHERE valid_to IS NULL "
             "ORDER BY importance DESC, id DESC LIMIT ?",
             (int(limit),),

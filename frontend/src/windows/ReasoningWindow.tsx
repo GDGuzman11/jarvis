@@ -9,7 +9,76 @@
 import { useState, useRef, useEffect, type KeyboardEvent } from "react";
 import { useStore } from "../lib/store";
 import type { ChatMessage } from "../lib/store";
+import type { MemoryConfirmEvent } from "../lib/types";
+import { confirmMemory } from "../lib/api";
+import { DOMAIN_LABELS, domainColorCss } from "../lib/memoryStyle";
 import WindowFrame from "../components/WindowFrame";
+
+/**
+ * "Remember this?" prompt — Helix is unsure whether to store a fact. Yes →
+ * store, No → discard; either way the card is dropped from the queue (optimistic
+ * so a failed request can't wedge it). `fact` is untrusted display-only text.
+ */
+function MemoryConfirmCard({ confirm }: { confirm: MemoryConfirmEvent }) {
+  const removePendingConfirm = useStore((s) => s.removePendingConfirm);
+  const [busy, setBusy] = useState(false);
+  const color = domainColorCss(confirm.category);
+  const badge = (DOMAIN_LABELS[confirm.category?.toLowerCase()] ?? confirm.category ?? "general").toUpperCase();
+
+  async function decide(decision: "store" | "discard") {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await confirmMemory(confirm.confirm_id, decision);
+    } finally {
+      removePendingConfirm(confirm.confirm_id);
+    }
+  }
+
+  return (
+    <div className="glass flex items-center gap-2 p-2.5">
+      <span className="shrink-0 text-sm" aria-hidden>🧠</span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-bold uppercase tracking-widest text-helix-gold/80">
+            Remember this?
+          </span>
+          <span
+            className="shrink-0 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider"
+            style={{
+              color,
+              border: `1px solid ${color}`,
+              background: `${color}1f`,
+            }}
+          >
+            {badge}
+          </span>
+        </div>
+        <p className="mt-0.5 truncate text-xs text-helix-ink" title={confirm.fact}>
+          {confirm.fact}
+        </p>
+      </div>
+      <div className="flex shrink-0 gap-1.5">
+        <button
+          type="button"
+          onClick={() => void decide("store")}
+          disabled={busy}
+          className="hud-btn disabled:opacity-40"
+        >
+          Yes
+        </button>
+        <button
+          type="button"
+          onClick={() => void decide("discard")}
+          disabled={busy}
+          className="hud-btn disabled:opacity-40"
+        >
+          No
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function ToolCallCard({
   toolName,
@@ -76,6 +145,8 @@ export function ReasoningWindow() {
   const sessionCostUsd = useStore((s) => s.sessionCostUsd);
   const addUserMessage = useStore((s) => s.addUserMessage);
   const voiceState = useStore((s) => s.voiceState);
+  const pendingConfirms = useStore((s) => s.pendingConfirms);
+  const pendingConfirm = pendingConfirms[0];
 
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -175,6 +246,13 @@ export function ReasoningWindow() {
             ))
           )}
         </div>
+
+        {/* Memory confirm prompt — oldest pending only, one at a time */}
+        {pendingConfirm && (
+          <div className="shrink-0">
+            <MemoryConfirmCard key={pendingConfirm.confirm_id} confirm={pendingConfirm} />
+          </div>
+        )}
 
         {/* Text input — type a message when mic isn't available */}
         <div className="shrink-0 space-y-1">

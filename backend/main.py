@@ -273,6 +273,11 @@ async def _consolidation_loop(memory_manager: MemoryManager) -> None:
         except Exception:  # noqa: BLE001 — never crash the loop on a bad pass
             log.warning("consolidation_loop_pass_failed", exc_info=True)
 
+        # Memory Capture Overhaul: expire any unanswered "remember this?" prompts
+        # so the pending-confirm dict never grows unbounded. Synchronous + cheap;
+        # the helper swallows its own errors.
+        memory_manager.sweep_pending_confirms()
+
         # Phase 16D: nightly decay, once per day, AFTER consolidation.
         try:
             today = datetime.now().date()
@@ -870,6 +875,30 @@ GRAPH_MAX_EDGES: int = 2000
 GRAPH_PREVIEW_CHARS: int = 120
 
 
+# Map the evaluator's legacy signal ``category`` onto a 10-category DOMAIN, used
+# only as a fallback for facts written before the ``domain`` column existed (their
+# ``domain`` is NULL). New facts carry ``domain`` directly. Anything unmapped →
+# "general", so the frontend always has a colour.
+_CATEGORY_TO_DOMAIN_FALLBACK: dict[str, str] = {
+    "preference": "personal",
+    "instruction": "personal",
+    "open_loop": "personal",
+    "correction": "project",
+    "decision": "project",
+    "failure": "project",
+    "app_work": "project",
+    "agent_outcome": "project",
+    "external_comm": "people",
+    "repeated_topic": "general",
+    "general": "general",
+}
+
+
+def _fallback_domain(category: str | None) -> str:
+    """Derive a display domain from the legacy signal ``category`` (NULL-safe)."""
+    return _CATEGORY_TO_DOMAIN_FALLBACK.get((category or "").lower(), "general")
+
+
 def _fact_to_graph_node(row: dict[str, Any]) -> dict[str, Any]:
     """Shape one active ``memory_facts`` row into a ``type:"memory"`` node."""
     content = row.get("content") or ""
@@ -888,6 +917,9 @@ def _fact_to_graph_node(row: dict[str, Any]) -> dict[str, Any]:
         # No dedicated subject column on memory_facts yet; reserved in the shape.
         "subject": None,
         "category": row.get("category"),
+        # 10-category display DOMAIN (colour). Prefer the stored value; fall back
+        # to mapping the legacy signal category for facts predating the column.
+        "domain": row.get("domain") or _fallback_domain(row.get("category")),
     }
 
 
@@ -1034,6 +1066,38 @@ async def memory_graph_endpoint() -> dict[str, Any]:
 
     log.info("memory_graph_served", nodes=len(nodes), edges=len(edges))
     return {"nodes": nodes, "edges": edges}
+
+
+@app.post("/api/memory/confirm", tags=["memory"])
+async def memory_confirm_endpoint(
+    confirm_id: str = Body(..., embed=True),
+    decision: str = Body(..., embed=True),
+) -> dict[str, str]:
+    """Resolve a held "remember this?" confirmation (Memory Capture Overhaul).
+
+    The Reasoning window's Yes/No card calls this with the ``confirm_id`` from a
+    ``memory_confirm`` event. ``decision`` is ``"store"`` (write the held fact —
+    a ``memory_update`` then fires so the neuron pops) or ``"discard"`` (drop it).
+    Returns ``404`` when the id is unknown or already expired/resolved.
+    """
+    if decision not in ("store", "discard"):
+        raise HTTPException(
+            status_code=400, detail="decision must be 'store' or 'discard'"
+        )
+
+    memory_manager: MemoryManager | None = getattr(
+        app.state, "memory_manager", None
+    )
+    if memory_manager is None:
+        raise HTTPException(status_code=503, detail="memory not ready")
+
+    result = await memory_manager.confirm_pending(confirm_id, decision)
+    if result is None:
+        raise HTTPException(
+            status_code=404, detail="unknown or expired confirm_id"
+        )
+    log.info("memory_confirm_resolved", decision=decision, result=result)
+    return {"status": result}
 
 
 def _is_allowed_ws_origin(origin: str | None) -> bool:

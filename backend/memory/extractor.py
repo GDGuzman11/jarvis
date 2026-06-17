@@ -54,6 +54,19 @@ EXTRACTION_MAX_TOKENS: int = 700
 _VALID_ACTIONS: frozenset[str] = frozenset({"ADD", "UPDATE", "DELETE", "NOOP"})
 _VALID_SOURCES: frozenset[str] = frozenset({"user", "inference"})
 
+# The 10-category DOMAIN taxonomy (Memory Capture Overhaul). This is the
+# colour-coded, display-facing category for the Memory window — distinct from the
+# evaluator's signal ``category`` (preference/decision/…), which still drives the
+# 16D contradiction write-policy. Stored in the new ``memory_facts.domain``
+# column. Unknown/missing values are coerced to ``general`` during parsing.
+_VALID_DOMAINS: frozenset[str] = frozenset(
+    {
+        "personal", "atlas", "ben", "kado", "sentinel", "vega", "quill",
+        "project", "people", "general",
+    }
+)
+_DEFAULT_DOMAIN: str = "general"
+
 # Open-loop (reminder/follow-up) actions the open-loop extractor may return.
 _VALID_OPEN_LOOP_ACTIONS: frozenset[str] = frozenset(
     {"CREATE", "RESOLVE", "NOOP"}
@@ -78,11 +91,26 @@ EXTRACTION_SYSTEM_PROMPT: str = (
     "Also classify each fact's source:\n"
     "  user      - stated directly by the user.\n"
     "  inference - you inferred it; it was not stated verbatim.\n\n"
+    "Also assign each fact a domain category (exactly one of):\n"
+    "  personal - about the user (Gabe): birthdays, preferences, family, "
+    "health, location, personal life.\n"
+    "  atlas    - work in orchestration / planning / task routing.\n"
+    "  ben      - work in frontend / UI / visual design.\n"
+    "  kado     - work in backend / database / voice pipeline / memory.\n"
+    "  sentinel - work in security / audits / key rotation.\n"
+    "  vega     - work in marketing / campaigns / social strategy.\n"
+    "  quill    - work in content / copy / drafting / documentation.\n"
+    "  project  - cross-cutting Helix build: decisions, deadlines, architecture "
+    "spanning more than one agent's domain.\n"
+    "  people   - external contacts the user mentions (not the user themselves).\n"
+    "  general  - anything that fits none of the above.\n\n"
     "Return ONLY a JSON array. No prose, no markdown, no code fences. Each "
     "element is an object with exactly these keys:\n"
     '  {"action": "ADD|UPDATE|DELETE|NOOP", "fact": "<concise third-person '
     'declarative statement>", "confidence": <number 0.0-1.0>, "subject": '
-    '"<who or what the fact is about>", "source": "user|inference"}\n\n'
+    '"<who or what the fact is about>", "source": "user|inference", '
+    '"category": "personal|atlas|ben|kado|sentinel|vega|quill|project|people|'
+    'general"}\n\n'
     "Rules:\n"
     "- Write each \"fact\" as a compact, self-contained statement, e.g. "
     '"User lives in Boston." Do not quote the raw transcript.\n'
@@ -144,6 +172,12 @@ class Extraction:
     source:
         Provenance — ``'user'`` (stated directly) or ``'inference'`` (derived).
         Maps onto ``memory_facts.created_by``.
+    category:
+        The 10-category DOMAIN label (one of :data:`_VALID_DOMAINS`). Maps onto
+        the new ``memory_facts.domain`` column and drives the Memory window's
+        colour. Distinct from the evaluator's signal category (which drives the
+        16D write-policy). Defaults to ``'general'`` so every pre-existing
+        positional ``Extraction(...)`` construction keeps working unchanged.
     """
 
     action: str
@@ -151,6 +185,7 @@ class Extraction:
     confidence: float
     subject: str
     source: str
+    category: str = _DEFAULT_DOMAIN
 
 
 @dataclass(frozen=True)
@@ -253,6 +288,9 @@ def _normalise(raw_items: list[Any]) -> list[Extraction]:
         source = str(item.get("source", "inference")).strip().lower()
         if source not in _VALID_SOURCES:
             source = "inference"
+        category = str(item.get("category", _DEFAULT_DOMAIN) or "").strip().lower()
+        if category not in _VALID_DOMAINS:
+            category = _DEFAULT_DOMAIN
         out.append(
             Extraction(
                 action=action,
@@ -260,6 +298,7 @@ def _normalise(raw_items: list[Any]) -> list[Extraction]:
                 confidence=_coerce_confidence(item.get("confidence", 0.8)),
                 subject=str(item.get("subject", "") or "").strip(),
                 source=source,
+                category=category,
             )
         )
     return out

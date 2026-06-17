@@ -32,7 +32,8 @@
 - **PHASE 16F COMPLETE (2026-06-17)** ✅: **Data-driven 3D memory brain** — a dedicated opaque `memory` Tauri window (760×760, below the orb). Backend: `GET /api/memory/graph` → `{nodes,edges}` (nodes = active `memory_facts` `type:"memory"` + `people` `type:"person"`, extensible for future `type:"project"`; edges = pairwise FAISS cosine >0.5 via `index.reconstruct`, capped; guarded, never 500) + `memory_update` WS event emitted on fact add (hub injected into `MemoryManager`). Frontend: R3F brain — instanced neurons in a hand-rolled 3D force layout (similarity attraction + repulsion + core tether + drift), gold/white/red/aqua styling by node type/importance/recall, core nucleus, similarity edges + core tethers, drei `OrbitControls`, hover HUD panel, live neuron-pop on `memory_update`, **bloom** (`@react-three/postprocessing`, safe — opaque window; orb stays composer-free/transparent), search + "memory still forming" empty state. Verified 8/8 by debugger-agent. Suite **221/221**; `pnpm build` clean. *(Visual tuning pass pending user — `start_helix.bat`. Live-popped neurons carry a minimal field set until the next `fetchMemoryGraph` refetch — by design.)*
 - **Next Task** (user's choice): options are **Phase 16E** (optional memory polish — ColBERT re-rank + nightly self-reflection), **Phase 17** (Computer Eyes & Hands — desktop vision + control), **packaging** (`pnpm tauri build` → installer), or visual tuning of the 16F brain. No active task assigned.
 - **Blockers**: Dedicated microphone not yet purchased — voice E2E tests deferred to Pending.
-- **Test State**: **221/221 passing** (secret-scan green; +11 Phase 16F memory-graph tests, 2026-06-17) · `pnpm build` clean.
+- **MEMORY CAPTURE OVERHAUL COMPLETE (2026-06-17)** ✅: Fixed the bug where Helix dropped birthdays/personal facts (brittle keyword gate `score<0.65` blocked the LLM). Now **LLM-as-judge** (light chatter-skip → extractor judges importance), classifies into the **10-category domain taxonomy** (new `memory_facts.domain` column — `category`/16D untouched), **confirm-when-unsure** (0.45–0.70 → Reasoning-window Yes/No card via `MemoryConfirmEvent` + `POST /api/memory/confirm`), and **category color-coding + legend** in the Memory window. Verified 8/8 by debugger-agent. Suite **233/233**. See "Memory Capture Policy & Category Taxonomy".
+- **Test State**: **233/233 passing** (secret-scan green; +12 memory-capture tests, 2026-06-17) · `pnpm build` clean.
 - **Build Started**: 2026-06-02
 
 ---
@@ -88,6 +89,27 @@
 | Security | Sentinel | Vulnerability scans, key rotation, audits |
 | Marketing | Vega | Campaign planning, social content strategy |
 | Content Creator | Quill | Drafts posts, emails, copy, documentation |
+
+### Memory Capture Policy & Category Taxonomy (✅ BUILT & verified 8/8, 2026-06-17)
+*How Helix decides what to remember, how memories are categorized, and how the Memory-brain window colors them. Replaces the old brittle keyword gate (which dropped birthdays/personal facts because the LLM extractor was gated behind narrow Phase-12A keyword patterns at `manager.py:536`, `score < threshold 0.65 → skip`).*
+
+- **Capture policy = LLM-as-judge.** The keyword pre-filter shrinks to a cheap *chatter-skip only* (pleasantries/very-short turns); anything with substance reaches the 16C LLM extractor, which judges importance + assigns a category + returns NOOP for fluff. Captures personal + dev + agent info; drops idle chatter.
+- **Confirmation = auto-store + confirm-when-unsure.** Bands: ADD ≥`AUTO_STORE_CONFIDENCE 0.70` (or explicit "remember") → store silently; `0.45–0.70` → held in a pending dict + `MemoryConfirmEvent` → **Reasoning-window "🧠 Remember this?" Yes/No card** → `POST /api/memory/confirm {confirm_id, decision}` (store→`_add_fact`+`memory_update`; discard→drop; 10-min TTL); `<0.45` → dropped. ADD-only (UPDATE/DELETE auto-apply). Capture gate lightened (`evaluator.is_chatter`/`is_explicit_memory_request`) so personal facts/birthdays reach the LLM. Domain stored in the NEW `memory_facts.domain` column (signal `category` + 16D `_choose_write_policy` untouched). Suite **233/233**.
+- **10-category taxonomy + colors (Memory window ONLY — does NOT touch the orb/hub/global gold-white theme):**
+  | Category | Scope | Color |
+  |---|---|---|
+  | Personal | the user (Gabe): birthday, preferences, family, health, location | gold `#ffc247` |
+  | Atlas (Lead) | orchestration, planning, delegation | platinum `#f0ead6` |
+  | Ben (Frontend) | UI, design, React | blue `#5ab0ff` |
+  | Kado (Backend) | APIs, DB, voice, memory, performance | green `#4fd18b` |
+  | Sentinel (Security) | audits, keys, vulnerabilities | red `#ff5a5a` |
+  | Vega (Marketing) | campaigns, social, strategy | magenta `#ff6fd0` |
+  | Quill (Content) | copy, docs, posts | amber `#ff9e42` |
+  | Project | cross-cutting Helix build / decisions / deadlines | aqua `#3fe3d0` |
+  | People | external contacts | purple `#b06fff` |
+  | General | anything else worth keeping | gray `#9a9488` |
+  - **States are layered, not categories**: contradiction → pulsing red ring; recently-recalled → brightness pulse; search hit → bright/enlarge — so they never fight the category palette.
+- **⭐ AGENT-COLOR CONVENTION (remember when designing the agents):** when the 6 agents are designed (their thinking / what they persist), **any memory an agent stores MUST be tagged with that agent's category so it shows in the agent's assigned color** — Atlas=platinum, Ben=blue, Kado=green, Sentinel=red, Vega=magenta, Quill=amber. (Agent-authored facts carry their `agent_id`; the graph endpoint maps that → category → color.)
 
 ### Design Aesthetic
 **Champagne-gold / near-black / white HUD** (hub redesign 2026-06-16 — replaced the prior cyan theme). Tokens are `--color-helix-*` in `frontend/src/index.css`: bg `#08080a`, primary gold `#ffc247`, gold highlight `#ffe9a8`, white ink `#ffffff`, muted `#9a9488`, **cool aqua accent `#3fe3d0`/`#8ffaec`** (live states: online/listening/speaking/working), alert **red `#FF5A5A`** (failures only: error/offline/shutdown). Iron Man HUD — angular, futuristic, high-contrast, sharp edges, glowing outlines, no rounded corners. *(NOTE: do NOT reintroduce cyan `#00d4ff` or `jarvis-*` tokens — the rename is complete. New frontend work uses `helix-*` tokens + `.text-glow-gold`/`.text-glow-accent`.)*
