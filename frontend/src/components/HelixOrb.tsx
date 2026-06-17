@@ -66,6 +66,7 @@ const DOT_COUNT = 50; // free-flowing dots
 const WHITE = "#eef2f7";
 const GOLD = "#ffc247";
 const GOLD_HI = "#ffe9a8";
+const AQUA = "#3fe3d0"; // gyroscope orbital rings
 
 const TWO_PI = Math.PI * 2;
 
@@ -195,6 +196,8 @@ export function HelixOrb({ voiceState, audioLevel }: OrbProps) {
 
   // --- Refs ----------------------------------------------------------------
   const helixGroup = useRef<Group>(null);
+  const ringA = useRef<Group>(null);
+  const ringB = useRef<Group>(null);
   const dotsMesh = useRef<InstancedMesh>(null);
   const lineRef = useRef<LineSegments>(null);
   const keyLight = useRef<DirectionalLight>(null);
@@ -237,6 +240,11 @@ export function HelixOrb({ voiceState, audioLevel }: OrbProps) {
     // Subtle light response (no glow — just dimensional brightness).
     if (keyLight.current) keyLight.current.intensity = 1.15 * p.bright;
     if (rimLight.current) rimLight.current.intensity = 0.5 * p.bright;
+
+    // Counter-rotating aqua gyroscope rings (own spin, calm, reacts subtly).
+    const ringSpin = 0.22 + p.spin * 0.35;
+    if (ringA.current) ringA.current.rotation.y += delta * ringSpin;
+    if (ringB.current) ringB.current.rotation.y -= delta * ringSpin * 0.85;
 
     // Advance the shared drift clock.
     driftT.current += delta * p.drift;
@@ -311,6 +319,20 @@ export function HelixOrb({ voiceState, audioLevel }: OrbProps) {
             />
           </mesh>
         ))}
+      </group>
+
+      {/* Two counter-rotating aqua gyroscope rings encircling the helix. */}
+      <group ref={ringA}>
+        <mesh rotation={[0.55, 0, 0]}>
+          <torusGeometry args={[1.15, 0.012, 12, 96]} />
+          <meshStandardMaterial color={AQUA} roughness={0.3} metalness={0.4} />
+        </mesh>
+      </group>
+      <group ref={ringB}>
+        <mesh rotation={[-0.5, 0, 0.7]}>
+          <torusGeometry args={[1.3, 0.011, 12, 96]} />
+          <meshStandardMaterial color={AQUA} roughness={0.3} metalness={0.4} />
+        </mesh>
       </group>
 
       {/* Free-flowing dots. */}
